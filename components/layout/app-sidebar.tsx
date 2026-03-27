@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  BarChart3,
   Building2,
   Car,
   DollarSign,
@@ -55,6 +56,12 @@ const navGroups = [
     label: "Finanzas",
     items: [
       { title: "Comisiones", href: "/commissions", icon: DollarSign },
+    ],
+  },
+  {
+    label: "Analytics",
+    items: [
+      { title: "Analytics", href: "/analytics/demand", icon: BarChart3 },
     ],
   },
 ];

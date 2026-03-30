@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { getLocation } from "@/lib/queries/locations";
 import { getRentalCompanies } from "@/lib/queries/rental-companies";
+import { getCities } from "@/lib/queries/cities";
 import { LocationForm } from "@/components/forms/location-form";
 
 export default async function EditLocationPage({
@@ -17,7 +18,10 @@ export default async function EditLocationPage({
     notFound();
   }
 
-  const rentalCompanies = await getRentalCompanies();
+  const [rentalCompanies, cities] = await Promise.all([
+    getRentalCompanies(),
+    getCities(),
+  ]);
 
   return (
     <div className="space-y-6">
@@ -26,6 +30,7 @@ export default async function EditLocationPage({
         defaultValues={location}
         id={id}
         rentalCompanies={rentalCompanies}
+        cities={cities}
       />
     </div>
   );

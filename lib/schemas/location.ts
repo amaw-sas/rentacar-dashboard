@@ -7,6 +7,10 @@ export const locationSchema = z.object({
   city: z.string().default(""),
   address: z.string().default(""),
   schedule: z.record(z.string(), z.string()).default({}),
+  city_id: z.preprocess(
+    (val) => (val === "" || val === undefined ? null : val),
+    z.string().uuid("ID de ciudad inválido").nullable().default(null)
+  ),
   slug: z.string().default(""),
   status: z.enum(["active", "inactive"]).default("active"),
 });

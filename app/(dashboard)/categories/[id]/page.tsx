@@ -2,10 +2,15 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getVehicleCategory } from "@/lib/queries/vehicle-categories";
 import { getCategoryPricing } from "@/lib/queries/category-pricing";
+import { getCategoryModels } from "@/lib/queries/category-models";
+import { getCategoryVisibility } from "@/lib/queries/category-city-visibility";
+import { getCities } from "@/lib/queries/cities";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CategoryPricingTable } from "@/components/layout/category-pricing-table";
+import { CategoryModelsTable } from "@/components/layout/category-models-table";
+import { CategoryVisibilitySection } from "@/components/layout/category-visibility-section";
 
 export default async function CategoryDetailPage({
   params,
@@ -21,7 +26,12 @@ export default async function CategoryDetailPage({
     notFound();
   }
 
-  const pricing = await getCategoryPricing(id);
+  const [pricing, models, visibleCityIds, allCities] = await Promise.all([
+    getCategoryPricing(id),
+    getCategoryModels(id),
+    getCategoryVisibility(id),
+    getCities(),
+  ]);
 
   return (
     <div className="space-y-6">
@@ -88,7 +98,18 @@ export default async function CategoryDetailPage({
         </CardContent>
       </Card>
 
+      <CategoryModelsTable categoryId={id} models={models} />
+
       <CategoryPricingTable categoryId={id} pricing={pricing} />
+
+      <CategoryVisibilitySection
+        categoryId={id}
+        currentMode={
+          (category.visibility_mode as "all" | "restricted") ?? "all"
+        }
+        visibleCityIds={visibleCityIds}
+        allCities={allCities.map((c) => ({ id: c.id, name: c.name }))}
+      />
     </div>
   );
 }

@@ -27,9 +27,10 @@ interface LocationFormProps {
   defaultValues?: Partial<LocationFormData>;
   id?: string;
   rentalCompanies: { id: string; name: string }[];
+  cities?: { id: string; name: string }[];
 }
 
-export function LocationForm({ defaultValues, id, rentalCompanies }: LocationFormProps) {
+export function LocationForm({ defaultValues, id, rentalCompanies, cities }: LocationFormProps) {
   const router = useRouter();
   const isEditing = !!id;
 
@@ -48,6 +49,7 @@ export function LocationForm({ defaultValues, id, rentalCompanies }: LocationFor
       name: "",
       city: "",
       address: "",
+      city_id: null,
       slug: "",
       status: "active",
       ...defaultValues,
@@ -56,6 +58,7 @@ export function LocationForm({ defaultValues, id, rentalCompanies }: LocationFor
 
   const status = watch("status");
   const rentalCompanyId = watch("rental_company_id");
+  const cityId = watch("city_id");
 
   async function onSubmit(data: LocationFormData) {
     const formData = new FormData();
@@ -122,9 +125,33 @@ export function LocationForm({ defaultValues, id, rentalCompanies }: LocationFor
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="city">Ciudad</Label>
+            <Label htmlFor="city">Ciudad (texto)</Label>
             <Input id="city" {...register("city")} />
           </div>
+
+          {cities && cities.length > 0 && (
+            <div className="space-y-2">
+              <Label htmlFor="city_id">Ciudad (referencia)</Label>
+              <Select
+                value={cityId ?? "__none__"}
+                onValueChange={(value) =>
+                  setValue("city_id", value === "__none__" ? null : value)
+                }
+              >
+                <SelectTrigger id="city_id">
+                  <SelectValue placeholder="Seleccionar ciudad (opcional)" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">Sin asignar</SelectItem>
+                  {cities.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
 
           <div className="space-y-2 sm:col-span-2">
             <Label htmlFor="address">Dirección</Label>

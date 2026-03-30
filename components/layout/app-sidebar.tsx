@@ -5,6 +5,7 @@ import {
   Building2,
   Car,
   DollarSign,
+  Globe,
   LayoutDashboard,
   LogOut,
   MapPin,
@@ -43,6 +44,7 @@ const navGroups = [
       { title: "Rentadoras", href: "/rental-companies", icon: Building2 },
       { title: "Sucursales", href: "/locations", icon: MapPin },
       { title: "Categorías", href: "/categories", icon: Car },
+      { title: "Ciudades", href: "/cities", icon: Globe },
     ],
   },
   {

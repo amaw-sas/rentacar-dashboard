@@ -9,6 +9,7 @@ import {
   LayoutDashboard,
   LogOut,
   MapPin,
+  Store,
   Tags,
   UserRound,
   Users,
@@ -45,6 +46,7 @@ const navGroups = [
       { title: "Sucursales", href: "/locations", icon: MapPin },
       { title: "Categorías", href: "/categories", icon: Car },
       { title: "Ciudades", href: "/cities", icon: Globe },
+      { title: "Franquicias", href: "/franchises", icon: Store },
     ],
   },
   {

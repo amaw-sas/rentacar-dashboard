@@ -23,6 +23,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { ImageUpload } from "@/components/forms/image-upload";
 
 interface RentalCompanyOption {
   id: string;
@@ -71,6 +72,7 @@ export function VehicleCategoryForm({
   const transmission = watch("transmission");
   const status = watch("status");
   const hasAc = watch("has_ac");
+  const imageUrl = watch("image_url");
 
   async function onSubmit(data: VehicleCategoryFormData) {
     const formData = new FormData();
@@ -139,6 +141,14 @@ export function VehicleCategoryForm({
           <div className="space-y-2">
             <Label htmlFor="description">Descripción</Label>
             <Input id="description" {...register("description")} />
+          </div>
+
+          <div className="space-y-2 sm:col-span-2">
+            <Label>Imagen de categoría</Label>
+            <ImageUpload
+              value={imageUrl ?? ""}
+              onChange={(url) => setValue("image_url", url)}
+            />
           </div>
 
           <div className="space-y-2">

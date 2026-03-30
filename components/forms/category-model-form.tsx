@@ -23,6 +23,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { ImageUpload } from "@/components/forms/image-upload";
 
 interface CategoryModelFormProps {
   categoryId: string;
@@ -62,6 +63,7 @@ export function CategoryModelForm({
 
   const isDefault = watch("is_default");
   const status = watch("status");
+  const imageUrl = watch("image_url");
 
   async function onSubmit(data: CategoryModelFormData) {
     const formData = new FormData();
@@ -105,8 +107,11 @@ export function CategoryModelForm({
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="image_url">URL de imagen</Label>
-            <Input id="image_url" {...register("image_url")} />
+            <Label>Imagen</Label>
+            <ImageUpload
+              value={imageUrl ?? ""}
+              onChange={(url) => setValue("image_url", url)}
+            />
           </div>
 
           <div className="space-y-2 sm:col-span-2">

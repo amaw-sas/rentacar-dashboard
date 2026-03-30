@@ -16,6 +16,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 interface CategoryModelFormProps {
   categoryId: string;
@@ -54,6 +61,7 @@ export function CategoryModelForm({
   });
 
   const isDefault = watch("is_default");
+  const status = watch("status");
 
   async function onSubmit(data: CategoryModelFormData) {
     const formData = new FormData();
@@ -117,6 +125,24 @@ export function CategoryModelForm({
             <Label htmlFor="is_default" className="font-normal">
               Modelo por defecto
             </Label>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="model-status">Estado</Label>
+            <Select
+              value={status}
+              onValueChange={(v) =>
+                setValue("status", v as "active" | "inactive")
+              }
+            >
+              <SelectTrigger id="model-status">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="active">Activo</SelectItem>
+                <SelectItem value="inactive">Inactivo</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
 
           {errors.root && (

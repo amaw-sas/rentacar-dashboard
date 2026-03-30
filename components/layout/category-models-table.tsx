@@ -51,90 +51,64 @@ export function CategoryModelsTable({
           />
         )}
 
-        {editingId && editingRecord && (
-          <CategoryModelForm
-            categoryId={categoryId}
-            id={editingId}
-            defaultValues={{
-              category_id: editingRecord.category_id,
-              name: editingRecord.name,
-              description: editingRecord.description,
-              image_url: editingRecord.image_url,
-              is_default: editingRecord.is_default,
-              status: editingRecord.status as "active" | "inactive",
-            }}
-            onCancel={() => setEditingId(null)}
-          />
-        )}
-
         {models.length === 0 && !showForm ? (
           <p className="text-sm text-muted-foreground">
-            No hay modelos registrados para esta categoria.
+            No hay modelos registrados para esta categoría.
           </p>
         ) : (
-          <div className="overflow-hidden rounded-lg border border-border">
-            <table className="w-full caption-bottom text-sm">
-              <thead className="border-b border-border bg-muted/50">
-                <tr>
-                  <th className="h-10 px-3 text-left align-middle font-medium text-muted-foreground">
-                    Nombre
-                  </th>
-                  <th className="h-10 px-3 text-left align-middle font-medium text-muted-foreground">
-                    Descripcion
-                  </th>
-                  <th className="h-10 px-3 text-left align-middle font-medium text-muted-foreground">
-                    Por defecto
-                  </th>
-                  <th className="h-10 px-3 text-left align-middle font-medium text-muted-foreground">
-                    Estado
-                  </th>
-                  <th className="h-10 px-3 text-left align-middle font-medium text-muted-foreground">
-                    Acciones
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="[&_tr:last-child]:border-0">
-                {models.map((model) => (
-                  <tr
-                    key={model.id}
-                    className="border-b border-border transition-colors hover:bg-muted/50"
-                  >
-                    <td className="px-3 py-2 align-middle font-medium">
-                      {model.name}
-                    </td>
-                    <td className="px-3 py-2 align-middle">
-                      {model.description || "—"}
-                    </td>
-                    <td className="px-3 py-2 align-middle">
-                      {model.is_default ? (
-                        <Badge variant="default">Si</Badge>
-                      ) : (
-                        "No"
+          <div className="space-y-4">
+            {models.map((model) =>
+              editingId === model.id ? (
+                <CategoryModelForm
+                  key={model.id}
+                  categoryId={categoryId}
+                  id={model.id}
+                  defaultValues={{
+                    category_id: model.category_id,
+                    name: model.name,
+                    description: model.description,
+                    image_url: model.image_url,
+                    is_default: model.is_default,
+                    status: model.status as "active" | "inactive",
+                  }}
+                  onCancel={() => setEditingId(null)}
+                />
+              ) : (
+                <div
+                  key={model.id}
+                  className="flex items-center justify-between rounded-lg border border-border p-3"
+                >
+                  <div className="flex items-center gap-3">
+                    <div>
+                      <p className="font-medium">{model.name}</p>
+                      {model.description && (
+                        <p className="text-sm text-muted-foreground">
+                          {model.description}
+                        </p>
                       )}
-                    </td>
-                    <td className="px-3 py-2 align-middle">
-                      <Badge
-                        variant={
-                          model.status === "active" ? "default" : "secondary"
-                        }
-                      >
-                        {model.status === "active" ? "Activo" : "Inactivo"}
-                      </Badge>
-                    </td>
-                    <td className="px-3 py-2 align-middle">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => setEditingId(model.id)}
-                        disabled={!!editingId || showForm}
-                      >
-                        Editar
-                      </Button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                    </div>
+                    {model.is_default && (
+                      <Badge variant="default">Por defecto</Badge>
+                    )}
+                    <Badge
+                      variant={
+                        model.status === "active" ? "outline" : "secondary"
+                      }
+                    >
+                      {model.status === "active" ? "Activo" : "Inactivo"}
+                    </Badge>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setEditingId(model.id)}
+                    disabled={!!editingId || showForm}
+                  >
+                    Editar
+                  </Button>
+                </div>
+              ),
+            )}
           </div>
         )}
       </CardContent>

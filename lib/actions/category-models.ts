@@ -59,3 +59,21 @@ export async function updateCategoryModel(
   revalidatePath(`/categories/${parsed.data.category_id}`);
   return {};
 }
+
+export async function deleteCategoryModel(
+  id: string,
+  categoryId: string,
+): Promise<{ error?: string }> {
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("category_models")
+    .delete()
+    .eq("id", id);
+
+  if (error) {
+    return { error: error.message };
+  }
+
+  revalidatePath(`/categories/${categoryId}`);
+  return {};
+}

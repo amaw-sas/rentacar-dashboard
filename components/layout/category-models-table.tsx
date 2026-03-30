@@ -1,10 +1,13 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CategoryModelForm } from "@/components/forms/category-model-form";
+import { deleteCategoryModel } from "@/lib/actions/category-models";
 
 interface CategoryModelRecord {
   id: string;
@@ -25,8 +28,18 @@ export function CategoryModelsTable({
   categoryId,
   models,
 }: CategoryModelsTableProps) {
+  const router = useRouter();
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  async function handleDelete(modelId: string) {
+    if (!confirm("¿Eliminar este modelo?")) return;
+    setDeletingId(modelId);
+    await deleteCategoryModel(modelId, categoryId);
+    setDeletingId(null);
+    router.refresh();
+  }
 
   const editingRecord = editingId
     ? models.find((m) => m.id === editingId)
@@ -98,14 +111,25 @@ export function CategoryModelsTable({
                       {model.status === "active" ? "Activo" : "Inactivo"}
                     </Badge>
                   </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setEditingId(model.id)}
-                    disabled={!!editingId || showForm}
-                  >
-                    Editar
-                  </Button>
+                  <div className="flex gap-1">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setEditingId(model.id)}
+                      disabled={!!editingId || showForm}
+                    >
+                      Editar
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 text-destructive hover:text-destructive"
+                      onClick={() => handleDelete(model.id)}
+                      disabled={deletingId === model.id}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </div>
               ),
             )}

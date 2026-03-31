@@ -1,0 +1,22 @@
+{
+  "name": "rentacar-localiza-proxy",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "cors": "^2.8.5",
+    "xml2js": "^0.6.2"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/cors": "^2.8.17",
+    "@types/xml2js": "^0.4.14",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}

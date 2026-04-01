@@ -26,29 +26,44 @@ interface ReservationParams {
 }
 
 export function buildVehAvailRateXML(params: AvailabilityParams): string {
-  return `<?xml version="1.0" encoding="utf-8"?>
-<soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-  xmlns:xsd="http://www.w3.org/2001/XMLSchema"
-  xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
-  <soap:Body>
-    <OTA_VehAvailRateRQ xmlns="http://www.opentravel.org/OTA/2003/05"
-      EchoToken="${params.token}">
-      <POS>
-        <Source>
-          <RequestorID Type="5" ID="${params.requestorId}" />
-        </Source>
-      </POS>
-      <VehAvailRQCore>
-        <VehRentalCore>
-          <PickUpLocation LocationCode="${params.pickupLocation}" />
-          <ReturnLocation LocationCode="${params.returnLocation}" />
-          <PickUpDateTime>${params.pickupDateTime}</PickUpDateTime>
-          <ReturnDateTime>${params.returnDateTime}</ReturnDateTime>
-        </VehRentalCore>
-      </VehAvailRQCore>
-    </OTA_VehAvailRateRQ>
-  </soap:Body>
-</soap:Envelope>`;
+  // XML structure matches Localiza legacy Laravel integration exactly
+  return `<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/">
+  <s:Body
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+    <OTA_VehAvailRate
+      xmlns="http://tempuri.org/">
+      <OTA_VehAvailRateRQ PrimaryLangID="esp"
+        RetransmissionIndicator="false" TransactionStatusCode="Start" Version="0"
+        TimeStamp="0001-01-01T00:00:00" EchoToken="${params.token}"
+        MaxPerVendorInd="false">
+        <POS>
+          <Source ISOCountry="CO">
+            <RequestorID
+              ID="${params.requestorId}" Type="5" xmlns="http://www.opentravel.org/OTA/2003/05" />
+          </Source>
+        </POS>
+        <VehAvailRQCore>
+          <VehRentalCore PickUpDateTime="${params.pickupDateTime}"
+            ReturnDateTime="${params.returnDateTime}"
+            xmlns="http://www.opentravel.org/OTA/2003/05">
+            <PickUpLocation
+              LocationCode="${params.pickupLocation}" CodeContext="internal code" />
+            <ReturnLocation
+              LocationCode="${params.returnLocation}" CodeContext="internal code" />
+          </VehRentalCore>
+          <Customer
+            xmlns="http://www.opentravel.org/OTA/2003/05">
+            <Primary>
+              <CitizenCountryName
+                Code="CO" />
+            </Primary>
+          </Customer>
+        </VehAvailRQCore>
+      </OTA_VehAvailRateRQ>
+    </OTA_VehAvailRate>
+  </s:Body>
+</s:Envelope>`;
 }
 
 export function buildVehResXML(params: ReservationParams): string {

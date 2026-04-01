@@ -15,12 +15,37 @@ function extractAvailability(parsed: Record<string, unknown>): Record<string, un
   try {
     const envelope = parsed["Envelope"] as Record<string, unknown>;
     const body = envelope["Body"] as Record<string, unknown>;
-    const rs = body["OTA_VehAvailRateRS"] as Record<string, unknown>;
+    // Localiza wraps response in OTA_VehAvailRateResponse
+    const wrapper = (body["OTA_VehAvailRateResponse"] || body) as Record<string, unknown>;
+    const rs = (wrapper["OTA_VehAvailRateRS"] || body["OTA_VehAvailRateRS"]) as Record<string, unknown>;
+
+    // Check for Localiza errors
+    if (rs["Errors"]) {
+      const errors = rs["Errors"] as Record<string, unknown>;
+      const error = errors["Error"] as Record<string, unknown>;
+      const message = error?.["_"] || JSON.stringify(error);
+      console.error("Localiza API error:", message);
+      return [];
+    }
+
     const core = rs["VehAvailRSCore"] as Record<string, unknown>;
     const vendorAvails = core["VehVendorAvails"] as Record<string, unknown>;
 
-    let avails = vendorAvails["VehAvails"];
-    if (!Array.isArray(avails)) avails = avails ? [avails] : [];
+    // VehVendorAvail is an array of vendors, collect all VehAvails from each
+    let vendorAvailList = vendorAvails["VehVendorAvail"];
+    if (!Array.isArray(vendorAvailList)) vendorAvailList = vendorAvailList ? [vendorAvailList] : [];
+
+    const allAvails: Record<string, unknown>[] = [];
+    for (const vendor of vendorAvailList as Record<string, unknown>[]) {
+      const vehAvails = vendor["VehAvails"];
+      if (!vehAvails) continue;
+      let availItems = (vehAvails as Record<string, unknown>)["VehAvail"];
+      if (!availItems) continue;
+      if (!Array.isArray(availItems)) availItems = [availItems];
+      allAvails.push(...(availItems as Record<string, unknown>[]));
+    }
+
+    let avails: unknown[] = allAvails;
 
     const attr = (obj: unknown, field: string): string => {
       if (!obj || typeof obj !== "object") return "";
@@ -34,8 +59,8 @@ function extractAvailability(parsed: Record<string, unknown>): Record<string, un
     };
 
     return (avails as Record<string, unknown>[]).map((avail) => {
-      const va = avail["VehAvail"] as Record<string, unknown>;
-      const vac = va["VehAvailCore"] as Record<string, unknown>;
+      // avail is already a VehAvail node
+      const vac = avail["VehAvailCore"] as Record<string, unknown>;
       const vehicle = vac["Vehicle"];
       const rentalRate = vac["RentalRate"] as Record<string, unknown>;
       const totalCharge = vac["TotalCharge"];
@@ -62,7 +87,7 @@ function extractAvailability(parsed: Record<string, unknown>): Record<string, un
       const ivaFee = feeList.find((f) => attr(f, "Purpose") === "7");
       const returnFee = feeList.find((f) => attr(f, "Purpose") === "38");
 
-      const availInfo = va["VehAvailInfo"] as Record<string, unknown> | undefined;
+      const availInfo = avail["VehAvailInfo"] as Record<string, unknown> | undefined;
       let coverages: unknown[] = [];
       if (availInfo?.["PricedCoverages"]) {
         const cl = (availInfo["PricedCoverages"] as Record<string, unknown>)["PricedCoverage"];

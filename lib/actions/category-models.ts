@@ -19,6 +19,14 @@ export async function createCategoryModel(
   }
 
   const supabase = await createClient();
+
+  if (parsed.data.is_default) {
+    await supabase
+      .from("category_models")
+      .update({ is_default: false })
+      .eq("category_id", parsed.data.category_id);
+  }
+
   const { error } = await supabase
     .from("category_models")
     .insert(parsed.data);
@@ -47,6 +55,14 @@ export async function updateCategoryModel(
   }
 
   const supabase = await createClient();
+
+  if (parsed.data.is_default) {
+    await supabase
+      .from("category_models")
+      .update({ is_default: false })
+      .eq("category_id", parsed.data.category_id);
+  }
+
   const { error } = await supabase
     .from("category_models")
     .update(parsed.data)

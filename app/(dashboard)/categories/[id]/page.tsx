@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { ArrowLeft } from "lucide-react";
 import { getVehicleCategory } from "@/lib/queries/vehicle-categories";
 import { getCategoryPricing } from "@/lib/queries/category-pricing";
 import { getCategoryModels } from "@/lib/queries/category-models";
@@ -36,7 +37,7 @@ export default async function CategoryDetailPage({
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">{category.name}</h1>
+        <div className="flex items-center gap-3"><Button variant="outline" size="icon" asChild><Link href="/categories"><ArrowLeft className="h-4 w-4" /></Link></Button><h1 className="text-2xl font-semibold">{category.name}</h1></div>
         <Button asChild>
           <Link href={`/categories/${id}/edit`}>Editar</Link>
         </Button>

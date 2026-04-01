@@ -42,6 +42,7 @@ export function DataTable<TData>({
     getPaginationRowModel: getPaginationRowModel(),
     onSortingChange: setSorting,
     onColumnFiltersChange: setColumnFilters,
+    initialState: { pagination: { pageSize: 20 } },
     state: { sorting, columnFilters },
   })
 

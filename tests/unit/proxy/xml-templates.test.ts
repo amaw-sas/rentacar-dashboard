@@ -15,8 +15,8 @@ describe("buildVehAvailRateXML", () => {
     expect(xml).toContain('EchoToken="test-token-123"');
     expect(xml).toContain('ID="AGENCY1"');
     expect(xml).toContain('LocationCode="AABOT"');
-    expect(xml).toContain("<PickUpDateTime>2026-04-01T09:00:00</PickUpDateTime>");
-    expect(xml).toContain("<ReturnDateTime>2026-04-05T09:00:00</ReturnDateTime>");
+    expect(xml).toContain('PickUpDateTime="2026-04-01T09:00:00"');
+    expect(xml).toContain('ReturnDateTime="2026-04-05T09:00:00"');
   });
 });
 

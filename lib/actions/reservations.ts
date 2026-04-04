@@ -7,6 +7,10 @@ import {
   VALID_TRANSITIONS,
   type ReservationStatus,
 } from "@/lib/schemas/reservation";
+import {
+  sendReservationNotifications,
+  sendReservationRequestEmail,
+} from "@/lib/email/notifications";
 
 function parseBooleanField(value: FormDataEntryValue | null): boolean {
   return value === "true";
@@ -52,6 +56,24 @@ export async function createReservation(
 
   if (error) {
     return { error: error.message };
+  }
+
+  // Fetch inserted reservation ID for email notification
+  const { data: inserted } = await supabase
+    .from("reservations")
+    .select("id")
+    .eq("customer_id", parsed.data.customer_id)
+    .eq("pickup_date", parsed.data.pickup_date)
+    .eq("category_code", parsed.data.category_code)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .single();
+
+  if (inserted) {
+    // Non-blocking: log errors but don't fail the action
+    sendReservationRequestEmail(inserted.id, parsed.data.franchise).catch(
+      (err) => console.error("[email] Reservation request email failed:", err)
+    );
   }
 
   revalidatePath("/reservations");
@@ -110,6 +132,13 @@ export async function updateReservationStatus(
     };
   }
 
+  // Fetch franchise before update for email notification
+  const { data: reservationData } = await supabase
+    .from("reservations")
+    .select("franchise")
+    .eq("id", id)
+    .single();
+
   const { error } = await supabase
     .from("reservations")
     .update({ status: newStatus })
@@ -117,6 +146,17 @@ export async function updateReservationStatus(
 
   if (error) {
     return { error: error.message };
+  }
+
+  // Non-blocking: send email notifications
+  if (reservationData?.franchise) {
+    sendReservationNotifications(
+      id,
+      newStatus as ReservationStatus,
+      reservationData.franchise
+    ).catch((err) =>
+      console.error("[email] Status notification failed:", err)
+    );
   }
 
   revalidatePath("/reservations");

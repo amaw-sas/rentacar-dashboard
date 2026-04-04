@@ -119,6 +119,7 @@ export async function sendReservationNotifications(
     const categoryName = (reservation.categories as { name: string })?.name ?? reservation.category_code;
 
     const localizaEmail = process.env.LOCALIZA_NOTIFICATION_EMAIL;
+    const localizaBcc = process.env.LOCALIZA_NOTIFICATION_BCC_EMAIL;
 
     if (status === "reservado") {
       const html = await renderEmail(
@@ -202,6 +203,7 @@ export async function sendReservationNotifications(
           to: localizaEmail,
           subject: "Notificación de reserva en espera",
           html: localizaHtml,
+          bcc: localizaBcc,
         });
       }
     }
@@ -252,6 +254,7 @@ export async function sendReservationNotifications(
         to: localizaEmail,
         subject: "Notificación de reserva con seguro total",
         html,
+        bcc: localizaBcc,
       });
     }
   } catch (error) {

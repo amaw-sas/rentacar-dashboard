@@ -11,6 +11,7 @@ import {
   sendReservationNotifications,
   sendReservationRequestEmail,
 } from "@/lib/email/notifications";
+import { sendStatusWhatsApp } from "@/lib/wati/notifications";
 
 function parseBooleanField(value: FormDataEntryValue | null): boolean {
   return value === "true";
@@ -148,7 +149,7 @@ export async function updateReservationStatus(
     return { error: error.message };
   }
 
-  // Non-blocking: send email notifications
+  // Non-blocking: send email + WhatsApp notifications
   if (reservationData?.franchise) {
     sendReservationNotifications(
       id,
@@ -156,6 +157,10 @@ export async function updateReservationStatus(
       reservationData.franchise
     ).catch((err) =>
       console.error("[email] Status notification failed:", err)
+    );
+
+    sendStatusWhatsApp(id, newStatus as ReservationStatus).catch((err) =>
+      console.error("[wati] Status notification failed:", err)
     );
   }
 

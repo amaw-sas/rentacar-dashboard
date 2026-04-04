@@ -1,0 +1,28 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/pickup-reminders?type=week",
+      "schedule": "0 13 * * *"
+    },
+    {
+      "path": "/api/cron/pickup-reminders?type=three-days",
+      "schedule": "0 13 * * *"
+    },
+    {
+      "path": "/api/cron/pickup-reminders?type=same-day-morning",
+      "schedule": "0 12 * * *"
+    },
+    {
+      "path": "/api/cron/pickup-reminders?type=same-day-late",
+      "schedule": "0 23 * * *"
+    },
+    {
+      "path": "/api/cron/pickup-reminders?type=post-morning",
+      "schedule": "0 14 * * *"
+    },
+    {
+      "path": "/api/cron/pickup-reminders?type=post-late",
+      "schedule": "0 0 * * *"
+    }
+  ]
+}

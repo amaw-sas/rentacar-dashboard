@@ -33,6 +33,7 @@ yarn-error.log*
 # env files
 .env*
 !.env.local.example
+!.env.staging.example
 
 # vercel
 .vercel
@@ -53,3 +54,4 @@ next-env.d.ts
 /.brainstorm/
 /.visual-companion/
 /docs/specs/
+.env*.local

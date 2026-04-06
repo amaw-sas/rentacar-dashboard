@@ -66,6 +66,23 @@ export function buildVehAvailRateXML(params: AvailabilityParams): string {
 </s:Envelope>`;
 }
 
+export function buildVehRetResXML(token: string, reservationCode: string): string {
+  return `<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/">
+  <s:Body
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+    <OTA_VehRetRes xmlns="http://tempuri.org/">
+      <OTA_VehRetResRQ EchoToken="${token}">
+        <VehRetResRQCore>
+          <UniqueID Type="14" ID="${reservationCode}"
+            xmlns="http://www.opentravel.org/OTA/2003/05" />
+        </VehRetResRQCore>
+      </OTA_VehRetResRQ>
+    </OTA_VehRetRes>
+  </s:Body>
+</s:Envelope>`;
+}
+
 export function buildVehResXML(params: ReservationParams): string {
   return `<?xml version="1.0" encoding="utf-8"?>
 <soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"

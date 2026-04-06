@@ -4,6 +4,7 @@ import cors from "cors";
 import { apiKeyAuth } from "./middleware/api-key";
 import availabilityRouter from "./localiza/availability";
 import reservationRouter from "./localiza/reservation";
+import checkStatusRouter from "./localiza/check-status";
 
 const app = express();
 const port = parseInt(process.env.PORT || "3001");
@@ -19,6 +20,7 @@ app.get("/health", (_req, res) => {
 // Protected routes
 app.use("/api/localiza/availability", apiKeyAuth, availabilityRouter);
 app.use("/api/localiza/reservation", apiKeyAuth, reservationRouter);
+app.use("/api/localiza/check-status", apiKeyAuth, checkStatusRouter);
 
 app.listen(port, () => {
   console.log(`Localiza proxy running on port ${port}`);

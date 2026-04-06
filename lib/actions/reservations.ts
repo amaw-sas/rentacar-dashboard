@@ -12,6 +12,7 @@ import {
   sendReservationRequestEmail,
 } from "@/lib/email/notifications";
 import { sendStatusWhatsApp } from "@/lib/wati/notifications";
+import { syncReservationToGhl } from "@/lib/ghl/sync";
 
 function parseBooleanField(value: FormDataEntryValue | null): boolean {
   return value === "true";
@@ -74,6 +75,9 @@ export async function createReservation(
     // Non-blocking: log errors but don't fail the action
     sendReservationRequestEmail(inserted.id, parsed.data.franchise).catch(
       (err) => console.error("[email] Reservation request email failed:", err)
+    );
+    syncReservationToGhl(inserted.id).catch((err) =>
+      console.error("[ghl] Reservation sync failed:", err)
     );
   }
 
@@ -161,6 +165,10 @@ export async function updateReservationStatus(
 
     sendStatusWhatsApp(id, newStatus as ReservationStatus).catch((err) =>
       console.error("[wati] Status notification failed:", err)
+    );
+
+    syncReservationToGhl(id).catch((err) =>
+      console.error("[ghl] Reservation sync failed:", err)
     );
   }
 

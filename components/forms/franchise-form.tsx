@@ -22,6 +22,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { ImageUpload } from "@/components/forms/image-upload";
 
 interface FranchiseFormProps {
   defaultValues?: Partial<FranchiseFormData>;
@@ -56,6 +57,7 @@ export function FranchiseForm({ defaultValues, id }: FranchiseFormProps) {
   });
 
   const status = watch("status");
+  const logoUrl = watch("logo_url");
 
   async function onSubmit(data: FranchiseFormData) {
     const formData = new FormData();
@@ -117,9 +119,29 @@ export function FranchiseForm({ defaultValues, id }: FranchiseFormProps) {
                 <Input id="whatsapp" {...register("whatsapp")} />
               </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="logo_url">URL del logo</Label>
-                <Input id="logo_url" {...register("logo_url")} />
+              <div className="space-y-2 sm:col-span-2">
+                <Label>Logo</Label>
+                <ImageUpload
+                  value={logoUrl ?? ""}
+                  onChange={(url) => setValue("logo_url", url)}
+                />
+                {logoUrl && (
+                  <div className="flex items-center gap-2 mt-2">
+                    <Input
+                      readOnly
+                      value={logoUrl}
+                      className="text-xs text-muted-foreground"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => navigator.clipboard.writeText(logoUrl)}
+                    >
+                      Copiar URL
+                    </Button>
+                  </div>
+                )}
               </div>
             </div>
           </div>

@@ -33,41 +33,64 @@ export function EmailLayout({
       <Head />
       <Body style={body}>
         <Container style={container}>
+          {/* Header with logo or brand name */}
           <Section style={{ ...header, backgroundColor: franchiseColor }}>
             {franchiseLogo ? (
               <Img
                 src={franchiseLogo}
                 alt={franchiseName}
-                height="50"
-                style={{ margin: "0 auto" }}
+                height="44"
+                style={{ margin: "0 auto", display: "block" }}
               />
             ) : (
               <Text style={headerTitle}>{franchiseName}</Text>
             )}
           </Section>
 
+          {/* Accent line below header */}
+          <Section
+            style={{
+              height: "4px",
+              backgroundColor: franchiseColor,
+              opacity: 0.3,
+            }}
+          />
+
+          {/* Content */}
           <Section style={content}>{children}</Section>
 
-          <Hr style={divider} />
+          {/* Footer */}
+          <Section style={footerSection}>
+            <Hr style={divider} />
 
-          <Section style={footer}>
             {franchiseLogo && (
               <Img
                 src={franchiseLogo}
                 alt={franchiseName}
-                height="30"
-                style={{ margin: "0 auto 12px" }}
+                height="28"
+                style={{ margin: "0 auto 16px", display: "block", opacity: 0.7 }}
               />
             )}
-            <Text style={footerText}>
-              <Link href={franchiseWebsite} style={{ color: franchiseColor }}>
-                {franchiseWebsite}
+
+            <Text style={footerBrand}>
+              <Link
+                href={franchiseWebsite}
+                style={{ color: franchiseColor, textDecoration: "none", fontWeight: 600 }}
+              >
+                {franchiseWebsite.replace(/^https?:\/\//, "")}
               </Link>
             </Text>
-            <Text style={footerText}>Tel: {franchisePhone}</Text>
-            <Text style={footerText}>
-              &copy; {new Date().getFullYear()} {franchiseName}. Todos los
-              derechos reservados.
+
+            {franchisePhone && (
+              <Text style={footerText}>
+                <Link href={`tel:${franchisePhone}`} style={{ color: "#71717a", textDecoration: "none" }}>
+                  {franchisePhone}
+                </Link>
+              </Text>
+            )}
+
+            <Text style={footerCopy}>
+              &copy; {new Date().getFullYear()} {franchiseName}. Todos los derechos reservados.
             </Text>
           </Section>
         </Container>
@@ -79,45 +102,62 @@ export function EmailLayout({
 const body = {
   backgroundColor: "#f4f4f5",
   fontFamily:
-    '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
+    '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
   margin: "0",
-  padding: "0",
+  padding: "40px 0",
 };
 
 const container = {
-  maxWidth: "600px",
+  maxWidth: "560px",
   margin: "0 auto",
   backgroundColor: "#ffffff",
+  borderRadius: "12px",
+  overflow: "hidden" as const,
+  boxShadow: "0 1px 3px rgba(0, 0, 0, 0.08)",
 };
 
 const header = {
-  padding: "24px",
+  padding: "28px 24px",
   textAlign: "center" as const,
 };
 
 const headerTitle = {
   color: "#ffffff",
-  fontSize: "24px",
-  fontWeight: "bold" as const,
+  fontSize: "22px",
+  fontWeight: "700" as const,
   margin: "0",
+  letterSpacing: "-0.3px",
 };
 
 const content = {
-  padding: "32px 24px",
+  padding: "32px 32px 24px",
+};
+
+const footerSection = {
+  padding: "0 32px 28px",
 };
 
 const divider = {
   borderColor: "#e4e4e7",
-  margin: "0",
+  margin: "0 0 24px",
 };
 
-const footer = {
-  padding: "24px",
+const footerBrand = {
+  fontSize: "13px",
+  margin: "0 0 4px",
   textAlign: "center" as const,
 };
 
 const footerText = {
   color: "#71717a",
   fontSize: "12px",
-  margin: "4px 0",
+  margin: "0 0 4px",
+  textAlign: "center" as const,
+};
+
+const footerCopy = {
+  color: "#a1a1aa",
+  fontSize: "11px",
+  margin: "12px 0 0",
+  textAlign: "center" as const,
 };

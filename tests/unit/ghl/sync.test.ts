@@ -72,10 +72,10 @@ describe("syncReservationToGhl", () => {
   it("upserts contact and creates opportunity when configured", async () => {
     const { getGhlConfig } = await import("@/lib/ghl/config");
     vi.mocked(getGhlConfig).mockReturnValue({
-      apiKey: "test-key",
-      locationId: "loc-123",
-      pipelineId: "pipe-456",
-      stages: {} as Record<string, string>,
+      api_key: "test-key",
+      location_id: "loc-123",
+      pipeline_id: "pipe-456",
+      stages: { pendiente: "s1", reservado: "s2", pendiente_modificar: "s3", utilizado: "s4", sin_disponibilidad: "s5", mensualidad: "s6" },
     });
 
     const { createClient } = await import("@/lib/supabase/server");

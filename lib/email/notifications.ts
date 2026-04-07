@@ -8,6 +8,8 @@ import { ReservationRequestEmail } from "./templates/reservation-request";
 import { PendingLocalizaEmail } from "./templates/pending-localiza";
 import { TotalInsuranceLocalizaEmail } from "./templates/total-insurance-localiza";
 import type { ReservationStatus } from "@/lib/schemas/reservation";
+import { format } from "date-fns";
+import { es } from "date-fns/locale";
 
 const FRANCHISE_BRANDING: Record<
   string,
@@ -96,6 +98,19 @@ async function getFranchiseBranding(
   };
 }
 
+function formatDate(dateStr: string): string {
+  return format(new Date(dateStr + "T12:00:00"), "d 'de' MMMM yyyy", { locale: es });
+}
+
+function formatHour(hourStr: string): string {
+  const parts = hourStr.split(":");
+  const h = parseInt(parts[0]);
+  const m = parts[1] || "00";
+  const ampm = h >= 12 ? "PM" : "AM";
+  const h12 = h > 12 ? h - 12 : h === 0 ? 12 : h;
+  return h12 + ":" + m + " " + ampm;
+}
+
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export async function sendReservationNotifications(
@@ -129,11 +144,11 @@ export async function sendReservationNotifications(
           customerName,
           categoryName,
           pickupLocation,
-          pickupDate: reservation.pickup_date,
-          pickupHour: reservation.pickup_hour,
+          pickupDate: formatDate(reservation.pickup_date),
+          pickupHour: formatHour(reservation.pickup_hour),
           returnLocation,
-          returnDate: reservation.return_date,
-          returnHour: reservation.return_hour,
+          returnDate: formatDate(reservation.return_date),
+          returnHour: formatHour(reservation.return_hour),
           selectedDays: reservation.selected_days,
           reserveCode: reservation.reservation_code ?? "",
           totalPrice: reservation.total_price,
@@ -162,11 +177,11 @@ export async function sendReservationNotifications(
           customerName,
           categoryName,
           pickupLocation,
-          pickupDate: reservation.pickup_date,
-          pickupHour: reservation.pickup_hour,
+          pickupDate: formatDate(reservation.pickup_date),
+          pickupHour: formatHour(reservation.pickup_hour),
           returnLocation,
-          returnDate: reservation.return_date,
-          returnHour: reservation.return_hour,
+          returnDate: formatDate(reservation.return_date),
+          returnHour: formatHour(reservation.return_hour),
           selectedDays: reservation.selected_days,
         })
       );
@@ -187,11 +202,11 @@ export async function sendReservationNotifications(
             customerName,
             categoryName,
             pickupLocation,
-            pickupDate: reservation.pickup_date,
-            pickupHour: reservation.pickup_hour,
+            pickupDate: formatDate(reservation.pickup_date),
+            pickupHour: formatHour(reservation.pickup_hour),
             returnLocation,
-            returnDate: reservation.return_date,
-            returnHour: reservation.return_hour,
+            returnDate: formatDate(reservation.return_date),
+            returnHour: formatHour(reservation.return_hour),
             selectedDays: reservation.selected_days,
             reserveCode: reservation.reservation_code,
             extraDriver: reservation.extra_driver,
@@ -217,8 +232,8 @@ export async function sendReservationNotifications(
           ...branding,
           customerName,
           categoryName,
-          pickupDate: reservation.pickup_date,
-          returnDate: reservation.return_date,
+          pickupDate: formatDate(reservation.pickup_date),
+          returnDate: formatDate(reservation.return_date),
           pickupLocation,
         })
       );
@@ -240,11 +255,11 @@ export async function sendReservationNotifications(
           customerName,
           categoryName,
           pickupLocation,
-          pickupDate: reservation.pickup_date,
-          pickupHour: reservation.pickup_hour,
+          pickupDate: formatDate(reservation.pickup_date),
+          pickupHour: formatHour(reservation.pickup_hour),
           returnLocation,
-          returnDate: reservation.return_date,
-          returnHour: reservation.return_hour,
+          returnDate: formatDate(reservation.return_date),
+          returnHour: formatHour(reservation.return_hour),
           selectedDays: reservation.selected_days,
           reserveCode: reservation.reservation_code,
           extraDriver: reservation.extra_driver,
@@ -296,11 +311,11 @@ export async function sendReservationRequestEmail(
         customerPhone: customer.phone,
         categoryName,
         pickupLocation,
-        pickupDate: reservation.pickup_date,
-        pickupHour: reservation.pickup_hour,
+        pickupDate: formatDate(reservation.pickup_date),
+        pickupHour: formatHour(reservation.pickup_hour),
         returnLocation,
-        returnDate: reservation.return_date,
-        returnHour: reservation.return_hour,
+        returnDate: formatDate(reservation.return_date),
+        returnHour: formatHour(reservation.return_hour),
         selectedDays: reservation.selected_days,
       })
     );

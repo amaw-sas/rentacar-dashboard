@@ -13,9 +13,9 @@ const FRANCHISE_BRANDING: Record<
   string,
   { color: string; website: string }
 > = {
-  alquilatucarro: { color: "#0d6efd", website: "https://alquilatucarro.com" },
-  alquilame: { color: "#dc3545", website: "https://alquilame.com" },
-  alquicarros: { color: "#fd7e14", website: "https://alquicarros.com" },
+  alquilatucarro: { color: "#030678", website: "https://alquilatucarro.com" },
+  alquilame: { color: "#cc022b", website: "https://alquilame.com" },
+  alquicarros: { color: "#ef9600", website: "https://alquicarros.com" },
 };
 
 interface ReservationData {
@@ -59,8 +59,7 @@ async function fetchReservationContext(reservationId: string) {
       *,
       customers (first_name, last_name, email, phone),
       pickup_location:locations!pickup_location_id (name),
-      return_location:locations!return_location_id (name),
-      categories:vehicle_categories!category_code (name)
+      return_location:locations!return_location_id (name)
     `
     )
     .eq("id", reservationId)
@@ -97,6 +96,8 @@ async function getFranchiseBranding(
   };
 }
 
+const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 export async function sendReservationNotifications(
   reservationId: string,
   status: ReservationStatus,
@@ -116,7 +117,7 @@ export async function sendReservationNotifications(
     const customerEmail = customer.email;
     const pickupLocation = (reservation.pickup_location as { name: string })?.name ?? "";
     const returnLocation = (reservation.return_location as { name: string })?.name ?? "";
-    const categoryName = (reservation.categories as { name: string })?.name ?? reservation.category_code;
+    const categoryName = reservation.category_code;
 
     const localizaEmail = process.env.LOCALIZA_NOTIFICATION_EMAIL;
     const localizaBcc = process.env.LOCALIZA_NOTIFICATION_BCC_EMAIL;
@@ -177,6 +178,8 @@ export async function sendReservationNotifications(
         html: clientHtml,
       });
 
+      await delay(2000);
+
       if (localizaEmail) {
         const localizaHtml = await renderEmail(
           PendingLocalizaEmail({
@@ -230,6 +233,7 @@ export async function sendReservationNotifications(
 
     // Total insurance notification to Localiza (independent of status)
     if (reservation.total_insurance > 0 && localizaEmail) {
+      await delay(2000);
       const html = await renderEmail(
         TotalInsuranceLocalizaEmail({
           ...branding,
@@ -282,7 +286,7 @@ export async function sendReservationRequestEmail(
     const customerName = `${customer.first_name} ${customer.last_name}`;
     const pickupLocation = (reservation.pickup_location as { name: string })?.name ?? "";
     const returnLocation = (reservation.return_location as { name: string })?.name ?? "";
-    const categoryName = (reservation.categories as { name: string })?.name ?? reservation.category_code;
+    const categoryName = reservation.category_code;
 
     const html = await renderEmail(
       ReservationRequestEmail({

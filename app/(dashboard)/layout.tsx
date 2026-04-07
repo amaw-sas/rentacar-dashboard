@@ -1,3 +1,4 @@
+import { Toaster } from "@/components/ui/sonner";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/layout/app-sidebar";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -16,6 +17,7 @@ export default function DashboardLayout({
             <SidebarTrigger />
           </header>
           <div className="p-6">{children}</div>
+          <Toaster richColors />
         </main>
       </SidebarProvider>
     </TooltipProvider>

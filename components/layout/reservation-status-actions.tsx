@@ -10,6 +10,7 @@ import {
   type ReservationStatus,
 } from "@/lib/schemas/reservation";
 import { updateReservationStatus } from "@/lib/actions/reservations";
+import { toast } from "sonner";
 
 interface ReservationStatusActionsProps {
   reservationId: string;
@@ -57,7 +58,11 @@ export function ReservationStatusActions({
       const result = await updateReservationStatus(reservationId, newStatus);
       if (result.error) {
         setError(result.error);
+        toast.error("Error al cambiar estado", { description: result.error });
       } else {
+        toast.success("Estado actualizado", {
+          description: `Reserva cambiada a ${STATUS_LABELS[newStatus]}`,
+        });
         router.refresh();
       }
     });

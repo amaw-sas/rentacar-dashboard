@@ -16,6 +16,7 @@ interface EmailLayoutProps {
   franchiseColor: string;
   franchiseWebsite: string;
   franchisePhone: string;
+  franchiseWhatsapp?: string;
   franchiseLogo?: string;
   children: ReactNode;
 }
@@ -25,15 +26,19 @@ export function EmailLayout({
   franchiseColor,
   franchiseWebsite,
   franchisePhone,
+  franchiseWhatsapp,
   franchiseLogo,
   children,
 }: EmailLayoutProps) {
+  const whatsappUrl = franchiseWhatsapp
+    ? `https://wa.me/${franchiseWhatsapp.replace(/[^0-9]/g, "")}`
+    : null;
+
   return (
     <Html lang="es">
       <Head />
       <Body style={body}>
         <Container style={container}>
-          {/* Brand color bar */}
           <Section
             style={{
               height: "6px",
@@ -41,7 +46,6 @@ export function EmailLayout({
             }}
           />
 
-          {/* Header with logo on white background */}
           <Section style={header}>
             {franchiseLogo ? (
               <Img
@@ -51,11 +55,12 @@ export function EmailLayout({
                 style={{ margin: "0 auto", display: "block" }}
               />
             ) : (
-              <Text style={{ ...headerTitle, color: franchiseColor }}>{franchiseName}</Text>
+              <Text style={{ ...headerTitle, color: franchiseColor }}>
+                {franchiseName}
+              </Text>
             )}
           </Section>
 
-          {/* Accent line below header */}
           <Section
             style={{
               height: "1px",
@@ -63,10 +68,8 @@ export function EmailLayout({
             }}
           />
 
-          {/* Content */}
           <Section style={content}>{children}</Section>
 
-          {/* Footer */}
           <Section style={footerSection}>
             <Hr style={divider} />
 
@@ -75,29 +78,48 @@ export function EmailLayout({
                 src={franchiseLogo}
                 alt={franchiseName}
                 height="28"
-                style={{ margin: "0 auto 16px", display: "block", opacity: 0.7 }}
+                style={{
+                  margin: "0 auto 16px",
+                  display: "block",
+                  opacity: 0.7,
+                }}
               />
             )}
 
             <Text style={footerBrand}>
               <Link
                 href={franchiseWebsite}
-                style={{ color: franchiseColor, textDecoration: "none", fontWeight: 600 }}
+                style={{
+                  color: franchiseColor,
+                  textDecoration: "none",
+                  fontWeight: 600,
+                }}
               >
                 {franchiseWebsite.replace(/^https?:\/\//, "")}
               </Link>
             </Text>
 
-            {franchisePhone && (
-              <Text style={footerText}>
-                <Link href={`tel:${franchisePhone}`} style={{ color: "#71717a", textDecoration: "none" }}>
-                  {franchisePhone}
-                </Link>
+            {(franchisePhone || whatsappUrl) && (
+              <Text style={footerContact}>
+                {franchisePhone && (
+                  <Link href={`tel:${franchisePhone}`} style={footerLink}>
+                    {"\u260E\uFE0F"} {franchisePhone}
+                  </Link>
+                )}
+                {franchisePhone && whatsappUrl && (
+                  <span style={{ margin: "0 8px", color: "#d4d4d8" }}>|</span>
+                )}
+                {whatsappUrl && (
+                  <Link href={whatsappUrl} style={footerLink}>
+                    {"\uD83D\uDCF2"} WhatsApp
+                  </Link>
+                )}
               </Text>
             )}
 
             <Text style={footerCopy}>
-              &copy; {new Date().getFullYear()} {franchiseName}. Todos los derechos reservados.
+              &copy; {new Date().getFullYear()} {franchiseName}. Todos los
+              derechos reservados.
             </Text>
           </Section>
         </Container>
@@ -129,7 +151,6 @@ const header = {
 };
 
 const headerTitle = {
-  color: "#ffffff",
   fontSize: "22px",
   fontWeight: "700" as const,
   margin: "0",
@@ -151,15 +172,19 @@ const divider = {
 
 const footerBrand = {
   fontSize: "13px",
+  margin: "0 0 8px",
+  textAlign: "center" as const,
+};
+
+const footerContact = {
+  fontSize: "13px",
   margin: "0 0 4px",
   textAlign: "center" as const,
 };
 
-const footerText = {
-  color: "#71717a",
-  fontSize: "12px",
-  margin: "0 0 4px",
-  textAlign: "center" as const,
+const footerLink = {
+  color: "#52525b",
+  textDecoration: "none" as const,
 };
 
 const footerCopy = {

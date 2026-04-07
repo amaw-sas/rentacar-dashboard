@@ -48,6 +48,7 @@ interface FranchiseBranding {
   franchiseColor: string;
   franchiseWebsite: string;
   franchisePhone: string;
+  franchiseWhatsapp?: string;
   franchiseLogo?: string;
 }
 
@@ -80,7 +81,7 @@ async function getFranchiseBranding(
   const supabase = await createClient();
   const { data: franchise } = await supabase
     .from("franchises")
-    .select("display_name, phone, logo_url, website")
+    .select("display_name, phone, whatsapp, logo_url, website")
     .eq("code", franchiseCode)
     .single();
 
@@ -94,6 +95,7 @@ async function getFranchiseBranding(
     franchiseColor: branding.color,
     franchiseWebsite: franchise?.website ?? branding.website,
     franchisePhone: franchise?.phone ?? "",
+    franchiseWhatsapp: franchise?.whatsapp || undefined,
     franchiseLogo: franchise?.logo_url || undefined,
   };
 }

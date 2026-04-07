@@ -33,8 +33,16 @@ export function EmailLayout({
       <Head />
       <Body style={body}>
         <Container style={container}>
-          {/* Header with logo or brand name */}
-          <Section style={{ ...header, backgroundColor: franchiseColor }}>
+          {/* Brand color bar */}
+          <Section
+            style={{
+              height: "6px",
+              backgroundColor: franchiseColor,
+            }}
+          />
+
+          {/* Header with logo on white background */}
+          <Section style={header}>
             {franchiseLogo ? (
               <Img
                 src={franchiseLogo}
@@ -43,16 +51,15 @@ export function EmailLayout({
                 style={{ margin: "0 auto", display: "block" }}
               />
             ) : (
-              <Text style={headerTitle}>{franchiseName}</Text>
+              <Text style={{ ...headerTitle, color: franchiseColor }}>{franchiseName}</Text>
             )}
           </Section>
 
           {/* Accent line below header */}
           <Section
             style={{
-              height: "4px",
-              backgroundColor: franchiseColor,
-              opacity: 0.3,
+              height: "1px",
+              backgroundColor: "#e4e4e7",
             }}
           />
 

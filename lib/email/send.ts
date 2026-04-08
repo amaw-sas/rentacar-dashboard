@@ -1,5 +1,6 @@
 import { createTransporter } from "./client";
 import { createClient } from "@/lib/supabase/server";
+import { logNotification } from "@/lib/actions/notification-logs";
 
 interface SendEmailOptions {
   franchise: string;
@@ -7,6 +8,8 @@ interface SendEmailOptions {
   subject: string;
   html: string;
   bcc?: string;
+  reservationId?: string;
+  notificationType?: string;
 }
 
 const MAX_RETRIES = 3;
@@ -17,7 +20,7 @@ async function sleep(ms: number) {
 }
 
 export async function sendEmail(options: SendEmailOptions): Promise<void> {
-  const { franchise, to, subject, html, bcc } = options;
+  const { franchise, to, subject, html, bcc, reservationId, notificationType } = options;
 
   const supabase = await createClient();
   const { data: franchiseData, error: franchiseError } = await supabase
@@ -50,6 +53,19 @@ export async function sendEmail(options: SendEmailOptions): Promise<void> {
       console.log(
         `[email] Sent "${subject}" to ${to} (franchise: ${franchise}, messageId: ${info.messageId})`
       );
+
+      if (reservationId && notificationType) {
+        logNotification({
+          reservation_id: reservationId,
+          channel: "email",
+          notification_type: notificationType,
+          recipient: to,
+          subject,
+          html_content: html,
+          status: "sent",
+        }).catch((err) => console.error("[notification-log] Log failed:", err));
+      }
+
       return;
     } catch (error) {
       const isRateLimit =
@@ -69,6 +85,19 @@ export async function sendEmail(options: SendEmailOptions): Promise<void> {
         `[email] Failed to send "${subject}" to ${to} (franchise: ${franchise}, attempt ${attempt}):`,
         error
       );
+
+      if (reservationId && notificationType) {
+        logNotification({
+          reservation_id: reservationId,
+          channel: "email",
+          notification_type: notificationType,
+          recipient: to,
+          subject,
+          status: "failed",
+          error_message: error instanceof Error ? error.message : "Unknown error",
+        }).catch((err) => console.error("[notification-log] Log failed:", err));
+      }
+
       throw error;
     }
   }

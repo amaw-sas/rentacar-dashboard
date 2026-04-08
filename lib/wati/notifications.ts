@@ -3,6 +3,14 @@ import { addContact, sendTemplateMessage } from "./client";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
 import type { ReservationStatus } from "@/lib/schemas/reservation";
+import { logNotification } from "@/lib/actions/notification-logs";
+
+const WATI_TYPE_MAP: Partial<Record<ReservationStatus, string>> = {
+  reservado: "whatsapp_reservado",
+  pendiente: "whatsapp_pendiente",
+  sin_disponibilidad: "whatsapp_sin_disponibilidad",
+  mensualidad: "whatsapp_mensualidad",
+};
 
 const STATUS_TEMPLATES: Partial<
   Record<ReservationStatus, string>
@@ -128,7 +136,30 @@ export async function sendStatusWhatsApp(
     }
 
     console.log(`[wati] Status ${status} WhatsApp sent to ${phone} for reservation ${reservationId}`);
+
+    const watiType = WATI_TYPE_MAP[status];
+    if (watiType) {
+      logNotification({
+        reservation_id: reservationId,
+        channel: "whatsapp",
+        notification_type: watiType,
+        recipient: phone,
+        status: "sent",
+      }).catch((err) => console.error("[notification-log] Log failed:", err));
+    }
   } catch (error) {
     console.error(`[wati] Failed to send status WhatsApp for ${reservationId}:`, error);
+
+    const watiType = WATI_TYPE_MAP[status];
+    if (watiType) {
+      logNotification({
+        reservation_id: reservationId,
+        channel: "whatsapp",
+        notification_type: watiType,
+        recipient: "unknown",
+        status: "failed",
+        error_message: error instanceof Error ? error.message : "Unknown error",
+      }).catch((err) => console.error("[notification-log] Log failed:", err));
+    }
   }
 }

@@ -170,6 +170,8 @@ export async function sendReservationNotifications(
         to: customerEmail,
         subject: "Reserva Aprobada",
         html,
+        reservationId,
+        notificationType: "reservado_cliente",
       });
     }
 
@@ -194,6 +196,8 @@ export async function sendReservationNotifications(
         to: customerEmail,
         subject: "Reserva Pendiente",
         html: clientHtml,
+        reservationId,
+        notificationType: "pendiente_cliente",
       });
 
       if (localizaEmail) {
@@ -224,6 +228,8 @@ export async function sendReservationNotifications(
           subject: "Notificación de reserva en espera",
           html: localizaHtml,
           bcc: localizaBcc,
+          reservationId,
+          notificationType: "pendiente_localiza",
         });
       }
     }
@@ -245,6 +251,8 @@ export async function sendReservationNotifications(
         to: customerEmail,
         subject: "Reserva Sin Disponibilidad",
         html,
+        reservationId,
+        notificationType: "sin_disponibilidad_cliente",
       });
     }
 
@@ -276,6 +284,8 @@ export async function sendReservationNotifications(
         subject: "Notificación de reserva con seguro total",
         html,
         bcc: localizaBcc,
+        reservationId,
+        notificationType: "seguro_total_localiza",
       });
     }
 
@@ -308,6 +318,8 @@ export async function sendReservationNotifications(
         subject: "Notificación de reserva con servicios adicionales",
         html,
         bcc: localizaBcc,
+        reservationId,
+        notificationType: "extras_localiza",
       });
     }
   } catch (error) {
@@ -359,6 +371,8 @@ export async function sendReservationRequestEmail(
       to: customer.email,
       subject: "Solicitud de reserva en proceso",
       html,
+      reservationId,
+      notificationType: "solicitud_reserva",
     });
   } catch (error) {
     console.error(

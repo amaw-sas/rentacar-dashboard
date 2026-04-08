@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getReservation } from "@/lib/queries/reservations";
+import { getNotificationLogs } from "@/lib/queries/notification-logs";
+import { NotificationLogTimeline } from "@/components/layout/notification-log-timeline";
 import { BOOKING_TYPE_LABELS, type ReservationStatus } from "@/lib/schemas/reservation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -37,6 +39,8 @@ export default async function ReservationDetailPage({
   } catch {
     notFound();
   }
+
+  const notificationLogs = await getNotificationLogs(id);
 
   const customerName = reservation.customers
     ? `${reservation.customers.first_name} ${reservation.customers.last_name}`
@@ -194,6 +198,9 @@ export default async function ReservationDetailPage({
           <Field label="Enviada por" value={reservation.notification_sent_by ?? "—"} />
         </CardContent>
       </Card>
+
+      {/* Notification History */}
+      <NotificationLogTimeline logs={notificationLogs} />
     </div>
   );
 }

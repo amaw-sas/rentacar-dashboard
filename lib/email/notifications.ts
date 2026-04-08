@@ -114,7 +114,7 @@ function formatHour(hourStr: string): string {
   return h12 + ":" + m + " " + ampm;
 }
 
-const delay = () => new Promise((resolve) => setTimeout(resolve, 3000));
+const delay = () => new Promise((resolve) => setTimeout(resolve, 5000));
 
 export async function sendReservationNotifications(
   reservationId: string,
@@ -196,8 +196,6 @@ export async function sendReservationNotifications(
         html: clientHtml,
       });
 
-      await delay();
-
       if (localizaEmail) {
         const localizaHtml = await renderEmail(
           PendingLocalizaEmail({
@@ -219,6 +217,7 @@ export async function sendReservationNotifications(
           })
         );
 
+        await delay();
         await sendEmail({
           franchise: franchiseCode,
           to: localizaEmail,
@@ -251,7 +250,6 @@ export async function sendReservationNotifications(
 
     // Total insurance notification to Localiza (independent of status)
     if (reservation.total_insurance > 0 && localizaEmail) {
-      await delay();
       const html = await renderEmail(
         TotalInsuranceLocalizaEmail({
           ...branding,
@@ -271,6 +269,7 @@ export async function sendReservationNotifications(
         })
       );
 
+      await delay();
       await sendEmail({
         franchise: franchiseCode,
         to: localizaEmail,
@@ -283,7 +282,6 @@ export async function sendReservationNotifications(
     // Extras notification to Localiza (extra_driver, baby_seat, wash — without total insurance)
     const hasExtras = reservation.extra_driver || reservation.baby_seat || reservation.wash;
     if (hasExtras && reservation.total_insurance <= 0 && localizaEmail) {
-      await delay();
       const html = await renderEmail(
         ExtrasLocalizaEmail({
           ...branding,
@@ -303,6 +301,7 @@ export async function sendReservationNotifications(
         })
       );
 
+      await delay();
       await sendEmail({
         franchise: franchiseCode,
         to: localizaEmail,

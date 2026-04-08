@@ -186,19 +186,6 @@ export default async function ReservationDetailPage({
         </Card>
       )}
 
-      {/* Notification */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Notificación</CardTitle>
-        </CardHeader>
-        <CardContent className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
-          <BoolField label="Requerida" value={reservation.notification_required} />
-          <BoolField label="Enviada" value={reservation.notification_sent} />
-          <Field label="Enviada el" value={reservation.notification_sent_at ? new Date(reservation.notification_sent_at).toLocaleString("es-CO") : "—"} />
-          <Field label="Enviada por" value={reservation.notification_sent_by ?? "—"} />
-        </CardContent>
-      </Card>
-
       {/* Notification History */}
       <NotificationLogTimeline logs={notificationLogs} />
     </div>

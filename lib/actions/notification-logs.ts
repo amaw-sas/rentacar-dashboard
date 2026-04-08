@@ -37,11 +37,7 @@ export async function resendNotification(
       return { error: "Notificación no encontrada" };
     }
 
-    if (log.channel !== "email" || !log.html_content) {
-      return { error: "Solo se pueden reenviar notificaciones de email" };
-    }
-
-    // Get franchise from reservation
+    // Get reservation data for resend
     const { data: reservation } = await supabase
       .from("reservations")
       .select("franchise")
@@ -52,17 +48,38 @@ export async function resendNotification(
       return { error: "No se pudo determinar la franquicia" };
     }
 
-    const { sendEmail } = await import("@/lib/email/send");
-    await sendEmail({
-      franchise: reservation.franchise,
-      to: log.recipient,
-      subject: log.subject ?? "Notificación",
-      html: log.html_content,
-      reservationId: log.reservation_id,
-      notificationType: log.notification_type + "_reenvio",
-    });
+    if (log.channel === "email" && log.html_content) {
+      const { sendEmail } = await import("@/lib/email/send");
+      await sendEmail({
+        franchise: reservation.franchise,
+        to: log.recipient,
+        subject: log.subject ?? "Notificación",
+        html: log.html_content,
+        reservationId: log.reservation_id,
+        notificationType: log.notification_type + "_reenvio",
+      });
+      return {};
+    }
 
-    return {};
+    if (log.channel === "whatsapp") {
+      // Extract original status from notification_type (whatsapp_reservado → reservado)
+      const statusMap: Record<string, string> = {
+        whatsapp_reservado: "reservado",
+        whatsapp_pendiente: "pendiente",
+        whatsapp_sin_disponibilidad: "sin_disponibilidad",
+        whatsapp_mensualidad: "mensualidad",
+      };
+      const status = statusMap[log.notification_type];
+      if (!status) {
+        return { error: "Tipo de notificación WhatsApp no reconocido" };
+      }
+
+      const { sendStatusWhatsApp } = await import("@/lib/wati/notifications");
+      await sendStatusWhatsApp(log.reservation_id, status as import("@/lib/schemas/reservation").ReservationStatus);
+      return {};
+    }
+
+    return { error: "No se puede reenviar esta notificación" };
   } catch (err) {
     return { error: err instanceof Error ? err.message : "Error al reenviar" };
   }

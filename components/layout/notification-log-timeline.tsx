@@ -112,27 +112,26 @@ export function NotificationLogTimeline({ logs }: NotificationLogTimelineProps) 
                     </Badge>
 
                     {log.channel === "email" && log.html_content && (
-                      <>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() =>
-                            openPreview(log.html_content!, log.subject ?? "Email")
-                          }
-                        >
-                          Ver
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleResend(log.id)}
-                          disabled={resendingId === log.id}
-                        >
-                          <RotateCw className={`h-3 w-3 mr-1 ${resendingId === log.id ? "animate-spin" : ""}`} />
-                          {resendingId === log.id ? "..." : "Reenviar"}
-                        </Button>
-                      </>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          openPreview(log.html_content!, log.subject ?? "Email")
+                        }
+                      >
+                        Ver
+                      </Button>
                     )}
+
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleResend(log.id)}
+                      disabled={resendingId === log.id}
+                    >
+                      <RotateCw className={`h-3 w-3 mr-1 ${resendingId === log.id ? "animate-spin" : ""}`} />
+                      {resendingId === log.id ? "..." : "Reenviar"}
+                    </Button>
                   </div>
 
                   <span className="text-xs text-muted-foreground shrink-0 mt-0.5">

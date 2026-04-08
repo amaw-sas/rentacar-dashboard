@@ -1,11 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { Mail, MessageSquare } from "lucide-react";
+import { Mail, MessageSquare, RotateCw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { NotificationPreviewDialog } from "./notification-preview-dialog";
+import { resendNotification } from "@/lib/actions/notification-logs";
+import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
 import { es } from "date-fns/locale";
 
@@ -43,11 +45,23 @@ export function NotificationLogTimeline({ logs }: NotificationLogTimelineProps) 
   const [previewHtml, setPreviewHtml] = useState("");
   const [previewSubject, setPreviewSubject] = useState("");
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [resendingId, setResendingId] = useState<string | null>(null);
 
   function openPreview(html: string, subject: string) {
     setPreviewHtml(html);
     setPreviewSubject(subject);
     setPreviewOpen(true);
+  }
+
+  async function handleResend(logId: string) {
+    setResendingId(logId);
+    const result = await resendNotification(logId);
+    setResendingId(null);
+    if (result.error) {
+      toast.error("Error al reenviar", { description: result.error });
+    } else {
+      toast.success("Notificación reenviada");
+    }
   }
 
   return (
@@ -98,15 +112,26 @@ export function NotificationLogTimeline({ logs }: NotificationLogTimelineProps) 
                     </Badge>
 
                     {log.channel === "email" && log.html_content && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() =>
-                          openPreview(log.html_content!, log.subject ?? "Email")
-                        }
-                      >
-                        Ver
-                      </Button>
+                      <>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() =>
+                            openPreview(log.html_content!, log.subject ?? "Email")
+                          }
+                        >
+                          Ver
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleResend(log.id)}
+                          disabled={resendingId === log.id}
+                        >
+                          <RotateCw className={`h-3 w-3 mr-1 ${resendingId === log.id ? "animate-spin" : ""}`} />
+                          {resendingId === log.id ? "..." : "Reenviar"}
+                        </Button>
+                      </>
                     )}
                   </div>
 

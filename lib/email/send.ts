@@ -9,6 +9,13 @@ interface SendEmailOptions {
   bcc?: string;
 }
 
+const MAX_RETRIES = 3;
+const RETRY_DELAY_MS = 8000;
+
+async function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export async function sendEmail(options: SendEmailOptions): Promise<void> {
   const { franchise, to, subject, html, bcc } = options;
 
@@ -37,16 +44,32 @@ export async function sendEmail(options: SendEmailOptions): Promise<void> {
     ...(bcc && { bcc }),
   };
 
-  try {
-    const info = await transporter.sendMail(mailOptions);
-    console.log(
-      `[email] Sent "${subject}" to ${to} (franchise: ${franchise}, messageId: ${info.messageId})`
-    );
-  } catch (error) {
-    console.error(
-      `[email] Failed to send "${subject}" to ${to} (franchise: ${franchise}):`,
-      error
-    );
-    throw error;
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const info = await transporter.sendMail(mailOptions);
+      console.log(
+        `[email] Sent "${subject}" to ${to} (franchise: ${franchise}, messageId: ${info.messageId})`
+      );
+      return;
+    } catch (error) {
+      const isRateLimit =
+        error instanceof Error &&
+        (error.message.includes("Too many emails") ||
+          error.message.includes("550"));
+
+      if (isRateLimit && attempt < MAX_RETRIES) {
+        console.log(
+          `[email] Rate limited, retrying "${subject}" in ${RETRY_DELAY_MS / 1000}s (attempt ${attempt}/${MAX_RETRIES})`
+        );
+        await sleep(RETRY_DELAY_MS);
+        continue;
+      }
+
+      console.error(
+        `[email] Failed to send "${subject}" to ${to} (franchise: ${franchise}, attempt ${attempt}):`,
+        error
+      );
+      throw error;
+    }
   }
 }

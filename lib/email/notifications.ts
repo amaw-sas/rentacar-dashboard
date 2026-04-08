@@ -114,7 +114,7 @@ function formatHour(hourStr: string): string {
   return h12 + ":" + m + " " + ampm;
 }
 
-const delay = () => new Promise((resolve) => setTimeout(resolve, 5000));
+const delay = () => new Promise((resolve) => setTimeout(resolve, parseInt(process.env.EMAIL_DELAY_MS || "5000")));
 
 export async function sendReservationNotifications(
   reservationId: string,

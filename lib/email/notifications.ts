@@ -7,6 +7,7 @@ import { FailedClientEmail } from "./templates/failed-client";
 import { ReservationRequestEmail } from "./templates/reservation-request";
 import { PendingLocalizaEmail } from "./templates/pending-localiza";
 import { TotalInsuranceLocalizaEmail } from "./templates/total-insurance-localiza";
+import { ExtrasLocalizaEmail } from "./templates/extras-localiza";
 import type { ReservationStatus } from "@/lib/schemas/reservation";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
@@ -274,6 +275,38 @@ export async function sendReservationNotifications(
         franchise: franchiseCode,
         to: localizaEmail,
         subject: "Notificación de reserva con seguro total",
+        html,
+        bcc: localizaBcc,
+      });
+    }
+
+    // Extras notification to Localiza (extra_driver, baby_seat, wash — without total insurance)
+    const hasExtras = reservation.extra_driver || reservation.baby_seat || reservation.wash;
+    if (hasExtras && reservation.total_insurance <= 0 && localizaEmail) {
+      await delay(2000);
+      const html = await renderEmail(
+        ExtrasLocalizaEmail({
+          ...branding,
+          customerName,
+          categoryName,
+          pickupLocation,
+          pickupDate: formatDate(reservation.pickup_date),
+          pickupHour: formatHour(reservation.pickup_hour),
+          returnLocation,
+          returnDate: formatDate(reservation.return_date),
+          returnHour: formatHour(reservation.return_hour),
+          selectedDays: reservation.selected_days,
+          reserveCode: reservation.reservation_code,
+          extraDriver: reservation.extra_driver,
+          babySeat: reservation.baby_seat,
+          wash: reservation.wash,
+        })
+      );
+
+      await sendEmail({
+        franchise: franchiseCode,
+        to: localizaEmail,
+        subject: "Notificación de reserva con servicios adicionales",
         html,
         bcc: localizaBcc,
       });

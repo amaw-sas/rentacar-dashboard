@@ -8,6 +8,7 @@ import { ReservationRequestEmail } from "./templates/reservation-request";
 import { PendingLocalizaEmail } from "./templates/pending-localiza";
 import { TotalInsuranceLocalizaEmail } from "./templates/total-insurance-localiza";
 import { ExtrasLocalizaEmail } from "./templates/extras-localiza";
+import { MonthlyLocalizaEmail } from "./templates/monthly-localiza";
 import type { ReservationStatus } from "@/lib/schemas/reservation";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
@@ -320,6 +321,40 @@ export async function sendReservationNotifications(
         bcc: localizaBcc,
         reservationId,
         notificationType: "extras_localiza",
+      });
+    }
+
+    // Monthly reservation notification to Localiza
+    if (status === "mensualidad" && localizaEmail) {
+      await delay();
+      const html = await renderEmail(
+        MonthlyLocalizaEmail({
+          ...branding,
+          customerName,
+          categoryName,
+          pickupLocation,
+          pickupDate: formatDate(reservation.pickup_date),
+          pickupHour: formatHour(reservation.pickup_hour),
+          returnLocation,
+          returnDate: formatDate(reservation.return_date),
+          returnHour: formatHour(reservation.return_hour),
+          selectedDays: reservation.selected_days,
+          monthlyMileage: reservation.monthly_mileage,
+          extraDriver: reservation.extra_driver,
+          babySeat: reservation.baby_seat,
+          wash: reservation.wash,
+          totalInsurance: reservation.total_insurance,
+        })
+      );
+
+      await sendEmail({
+        franchise: franchiseCode,
+        to: localizaEmail,
+        subject: "Notificación de reserva mensual",
+        html,
+        bcc: localizaBcc,
+        reservationId,
+        notificationType: "mensualidad_localiza",
       });
     }
   } catch (error) {

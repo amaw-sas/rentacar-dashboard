@@ -23,6 +23,8 @@ const TYPE_LABELS: Record<string, string> = {
   whatsapp_pendiente: "WhatsApp reserva pendiente",
   whatsapp_sin_disponibilidad: "WhatsApp sin disponibilidad",
   whatsapp_mensualidad: "WhatsApp mensualidad",
+  mensualidad_localiza: "Reserva mensual (Localiza)",
+  mensualidad_localiza_reenvio: "Reserva mensual (Localiza) - reenvío",
 };
 
 interface NotificationLog {

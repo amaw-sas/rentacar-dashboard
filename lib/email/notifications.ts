@@ -114,7 +114,7 @@ function formatHour(hourStr: string): string {
   return h12 + ":" + m + " " + ampm;
 }
 
-const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const delay = () => new Promise((resolve) => setTimeout(resolve, 3000));
 
 export async function sendReservationNotifications(
   reservationId: string,
@@ -196,7 +196,7 @@ export async function sendReservationNotifications(
         html: clientHtml,
       });
 
-      await delay(2000);
+      await delay();
 
       if (localizaEmail) {
         const localizaHtml = await renderEmail(
@@ -251,7 +251,7 @@ export async function sendReservationNotifications(
 
     // Total insurance notification to Localiza (independent of status)
     if (reservation.total_insurance > 0 && localizaEmail) {
-      await delay(2000);
+      await delay();
       const html = await renderEmail(
         TotalInsuranceLocalizaEmail({
           ...branding,
@@ -283,7 +283,7 @@ export async function sendReservationNotifications(
     // Extras notification to Localiza (extra_driver, baby_seat, wash — without total insurance)
     const hasExtras = reservation.extra_driver || reservation.baby_seat || reservation.wash;
     if (hasExtras && reservation.total_insurance <= 0 && localizaEmail) {
-      await delay(2000);
+      await delay();
       const html = await renderEmail(
         ExtrasLocalizaEmail({
           ...branding,

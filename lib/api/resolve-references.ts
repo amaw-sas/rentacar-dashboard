@@ -1,4 +1,4 @@
-import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 interface CustomerInput {
   first_name: string;
@@ -16,7 +16,7 @@ interface CustomerInput {
 export async function resolveLocationByCode(
   code: string
 ): Promise<{ id: string; rental_company_id: string } | null> {
-  const supabase = await createClient();
+  const supabase = createAdminClient();
   const { data, error } = await supabase
     .from("locations")
     .select("id, rental_company_id")
@@ -37,7 +37,7 @@ export async function resolveLocationByCode(
 export async function findOrCreateCustomer(
   input: CustomerInput
 ): Promise<string> {
-  const supabase = await createClient();
+  const supabase = createAdminClient();
 
   // Try finding by identification_number first
   const { data: byId } = await supabase
@@ -88,7 +88,7 @@ export async function findOrCreateCustomer(
 export async function resolveReferral(
   code: string
 ): Promise<string | null> {
-  const supabase = await createClient();
+  const supabase = createAdminClient();
   const { data } = await supabase
     .from("referrals")
     .select("id")

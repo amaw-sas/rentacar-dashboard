@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import {
   resolveLocationByCode,
   findOrCreateCustomer,
@@ -239,7 +239,7 @@ export async function POST(request: Request) {
     const notificationRequired = hasTotalInsurance || hasExtras || isMonthly;
 
     // 8. Save reservation to DB
-    const supabase = await createClient();
+    const supabase = createAdminClient();
 
     const { data: inserted, error: insertError } = await supabase
       .from("reservations")

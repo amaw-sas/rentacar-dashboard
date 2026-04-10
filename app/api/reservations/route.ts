@@ -5,7 +5,7 @@ import {
   findOrCreateCustomer,
   resolveReferral,
 } from "@/lib/api/resolve-references";
-import { sendReservationNotifications, sendReservationRequestEmail } from "@/lib/email/notifications";
+import { sendReservationNotifications } from "@/lib/email/notifications";
 import { sendStatusWhatsApp } from "@/lib/wati/notifications";
 import { syncReservationToGhl } from "@/lib/ghl/sync";
 import type { ReservationStatus } from "@/lib/schemas/reservation";
@@ -308,11 +308,6 @@ export async function POST(request: Request) {
 
     after(async () => {
       console.log(`[reservation] Dispatching notifications for ${reservationId}`);
-      try {
-        await sendReservationRequestEmail(reservationId, body.franchise);
-      } catch (err) {
-        console.error("[reservation] Request email failed:", err);
-      }
       try {
         await sendReservationNotifications(reservationId, status, body.franchise);
       } catch (err) {

@@ -1,4 +1,4 @@
-import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { sendEmail } from "./send";
 import { renderEmail } from "./render";
 import { ReservedClientEmail } from "./templates/reserved-client";
@@ -55,7 +55,7 @@ interface FranchiseBranding {
 }
 
 async function fetchReservationContext(reservationId: string) {
-  const supabase = await createClient();
+  const supabase = createAdminClient();
 
   const { data: reservation, error } = await supabase
     .from("reservations")
@@ -80,7 +80,7 @@ async function fetchReservationContext(reservationId: string) {
 async function getFranchiseBranding(
   franchiseCode: string
 ): Promise<FranchiseBranding> {
-  const supabase = await createClient();
+  const supabase = createAdminClient();
   const { data: franchise } = await supabase
     .from("franchises")
     .select("display_name, phone, whatsapp, logo_url, website")

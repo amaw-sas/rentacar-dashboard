@@ -1,12 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { sendEmail } from "@/lib/email/send";
 import { renderEmail } from "@/lib/email/render";
 import { sendReservationNotifications } from "@/lib/email/notifications";
 
 process.env.EMAIL_DELAY_MS = "0";
-vi.mock("@/lib/supabase/server", () => ({
-  createClient: vi.fn(),
+vi.mock("@/lib/supabase/admin", () => ({
+  createAdminClient: vi.fn(),
 }));
 
 vi.mock("@/lib/email/send", () => ({
@@ -47,7 +47,7 @@ const mockReservation = {
 };
 
 function setupMock(reservation = mockReservation) {
-  vi.mocked(createClient).mockResolvedValue({
+  vi.mocked(createAdminClient).mockReturnValue({
     from: vi.fn().mockReturnValue({
       select: vi.fn().mockReturnValue({
         eq: vi.fn().mockReturnValue({
@@ -55,7 +55,7 @@ function setupMock(reservation = mockReservation) {
         }),
       }),
     }),
-  } as unknown as Awaited<ReturnType<typeof createClient>>);
+  } as unknown as ReturnType<typeof createAdminClient>);
 }
 
 describe("sendReservationNotifications", () => {

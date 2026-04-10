@@ -1,4 +1,4 @@
-import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { getGhlConfig } from "./config";
 import { upsertContact, createOpportunity, updateOpportunity } from "./client";
 import {
@@ -10,7 +10,7 @@ export async function syncReservationToGhl(
   reservationId: string
 ): Promise<void> {
   try {
-    const supabase = await createClient();
+    const supabase = createAdminClient();
 
     const { data: reservation, error } = await supabase
       .from("reservations")

@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { addContact, sendTemplateMessage } from "@/lib/wati/client";
 import { sendStatusWhatsApp } from "@/lib/wati/notifications";
 
-vi.mock("@/lib/supabase/server", () => ({
-  createClient: vi.fn(),
+vi.mock("@/lib/supabase/admin", () => ({
+  createAdminClient: vi.fn(),
 }));
 
 vi.mock("@/lib/wati/client", () => ({
@@ -34,7 +34,7 @@ const mockReservation = {
 };
 
 function setupMock(reservation = mockReservation) {
-  vi.mocked(createClient).mockResolvedValue({
+  vi.mocked(createAdminClient).mockReturnValue({
     from: vi.fn().mockReturnValue({
       select: vi.fn().mockReturnValue({
         eq: vi.fn().mockReturnValue({
@@ -42,7 +42,7 @@ function setupMock(reservation = mockReservation) {
         }),
       }),
     }),
-  } as unknown as Awaited<ReturnType<typeof createClient>>);
+  } as unknown as ReturnType<typeof createAdminClient>);
 }
 
 describe("sendStatusWhatsApp", () => {

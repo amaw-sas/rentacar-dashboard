@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("@/lib/supabase/server", () => ({
-  createClient: vi.fn(),
+vi.mock("@/lib/supabase/admin", () => ({
+  createAdminClient: vi.fn(),
 }));
 
 vi.mock("@/lib/ghl/client", () => ({
@@ -59,8 +59,8 @@ describe("syncReservationToGhl", () => {
     const { getGhlConfig } = await import("@/lib/ghl/config");
     vi.mocked(getGhlConfig).mockReturnValue(null);
 
-    const { createClient } = await import("@/lib/supabase/server");
-    vi.mocked(createClient).mockResolvedValue(createMockSupabase() as unknown as Awaited<ReturnType<typeof createClient>>);
+    const { createAdminClient } = await import("@/lib/supabase/admin");
+    vi.mocked(createAdminClient).mockReturnValue(createMockSupabase() as unknown as ReturnType<typeof createAdminClient>);
 
     const { syncReservationToGhl } = await import("@/lib/ghl/sync");
     const { upsertContact } = await import("@/lib/ghl/client");
@@ -78,8 +78,8 @@ describe("syncReservationToGhl", () => {
       stages: { pendiente: "s1", reservado: "s2", pendiente_modificar: "s3", utilizado: "s4", sin_disponibilidad: "s5", mensualidad: "s6" },
     });
 
-    const { createClient } = await import("@/lib/supabase/server");
-    vi.mocked(createClient).mockResolvedValue(createMockSupabase() as unknown as Awaited<ReturnType<typeof createClient>>);
+    const { createAdminClient } = await import("@/lib/supabase/admin");
+    vi.mocked(createAdminClient).mockReturnValue(createMockSupabase() as unknown as ReturnType<typeof createAdminClient>);
 
     const { syncReservationToGhl } = await import("@/lib/ghl/sync");
     const { upsertContact, createOpportunity } = await import("@/lib/ghl/client");

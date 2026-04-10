@@ -1,5 +1,5 @@
 import { createTransporter } from "./client";
-import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { logNotification } from "@/lib/actions/notification-logs";
 
 interface SendEmailOptions {
@@ -22,7 +22,7 @@ async function sleep(ms: number) {
 export async function sendEmail(options: SendEmailOptions): Promise<void> {
   const { franchise, to, subject, html, bcc, reservationId, notificationType } = options;
 
-  const supabase = await createClient();
+  const supabase = createAdminClient();
   const { data: franchiseData, error: franchiseError } = await supabase
     .from("franchises")
     .select("sender_email, sender_name")

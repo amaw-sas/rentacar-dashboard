@@ -1,4 +1,4 @@
-import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { addContact, sendTemplateMessage } from "./client";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
@@ -50,7 +50,7 @@ export async function sendStatusWhatsApp(
   if (!templateName) return;
 
   try {
-    const supabase = await createClient();
+    const supabase = createAdminClient();
     const { data: reservation, error } = await supabase
       .from("reservations")
       .select(

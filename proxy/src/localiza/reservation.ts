@@ -20,6 +20,75 @@ interface ReservationRequest {
   customerDocumentType?: string;
 }
 
+function attr(obj: unknown, field: string): string {
+  if (!obj || typeof obj !== "object") return "";
+  return (((obj as Record<string, unknown>)["$"] as Record<string, string>) || {})[field] || "";
+}
+
+function findConfId(node: unknown): string {
+  if (!node || typeof node !== "object") return "";
+  const obj = node as Record<string, unknown>;
+
+  // Check direct ConfID (object or array)
+  if (obj["ConfID"]) {
+    const list = Array.isArray(obj["ConfID"]) ? obj["ConfID"] : [obj["ConfID"]];
+    // Prefer ConfID with Type="14" (reservation code)
+    for (const item of list) {
+      if (attr(item, "Type") === "14") {
+        const id = attr(item, "ID");
+        if (id) return id;
+      }
+    }
+    // Fallback: first with any ID
+    for (const item of list) {
+      const id = attr(item, "ID");
+      if (id) return id;
+    }
+  }
+
+  // Recurse into children
+  for (const key of Object.keys(obj)) {
+    if (key === "$" || key === "_") continue;
+    const child = obj[key];
+    if (typeof child === "object" && child !== null) {
+      const result = findConfId(child);
+      if (result) return result;
+    }
+  }
+
+  return "";
+}
+
+function findReservationStatus(node: unknown): string {
+  if (!node || typeof node !== "object") return "";
+  const obj = node as Record<string, unknown>;
+
+  // Look for ReservationStatus attribute on VehReservation
+  if (obj["VehReservation"]) {
+    const vehRes = obj["VehReservation"];
+    const status = attr(vehRes, "ReservationStatus");
+    if (status) return status;
+    // Recurse into VehReservation
+    return findReservationStatus(vehRes);
+  }
+
+  // Check current node attributes
+  const status = attr(obj, "ReservationStatus");
+  if (status) return status;
+
+  // Recurse
+  for (const key of Object.keys(obj)) {
+    if (key === "$" || key === "_") continue;
+    const child = obj[key];
+    if (typeof child === "object" && child !== null) {
+      const result = findReservationStatus(child);
+      if (result) return result;
+    }
+  }
+
+  return "";
+}
+
 function extractReservation(parsed: Record<string, unknown>) {
   const envelope = parsed["Envelope"] as Record<string, unknown>;
   const body = envelope["Body"] as Record<string, unknown>;
@@ -43,18 +112,16 @@ function extractReservation(parsed: Record<string, unknown>) {
     throw new Error(`Localiza warning: ${message}`);
   }
 
-  const core = rs["VehResRSCore"] as Record<string, unknown>;
-  if (!core) {
-    throw new Error("VehResRSCore not found in response");
+  // ReservationStatus is on VehReservation, not VehResRSCore
+  const reservationStatus = findReservationStatus(rs);
+  // ConfID with Type="14" is the reservation code — search recursively
+  const reserveCode = findConfId(rs);
+
+  if (!reserveCode) {
+    console.warn("[extractReservation] reserveCode not found in:", JSON.stringify(rs).slice(0, 2000));
   }
 
-  const status = ((core["$"] as Record<string, string>) || {})["ReservationStatus"] || "";
-  const reservation = core["VehReservation"] as Record<string, unknown>;
-  const segCore = reservation["VehSegmentCore"] as Record<string, unknown>;
-  const confId = segCore["ConfID"] as Record<string, unknown>;
-  const reserveCode = ((confId["$"] as Record<string, string>) || {})["ID"] || "";
-
-  return { reserveCode, reservationStatus: status };
+  return { reserveCode, reservationStatus };
 }
 
 router.post("/", async (req: Request, res: Response): Promise<void> => {

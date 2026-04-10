@@ -23,8 +23,30 @@ interface ReservationRequest {
 function extractReservation(parsed: Record<string, unknown>) {
   const envelope = parsed["Envelope"] as Record<string, unknown>;
   const body = envelope["Body"] as Record<string, unknown>;
-  const rs = body["OTA_VehResRS"] as Record<string, unknown>;
+  // Localiza wraps response in OTA_VehResResponse
+  const wrapper = (body["OTA_VehResResponse"] || body) as Record<string, unknown>;
+  const rs = (wrapper["OTA_VehResRS"] || body["OTA_VehResRS"]) as Record<string, unknown>;
+
+  // Check for Localiza errors
+  if (rs["Errors"]) {
+    const errors = rs["Errors"] as Record<string, unknown>;
+    const error = errors["Error"] as Record<string, unknown>;
+    const message = error?.["_"] || JSON.stringify(error);
+    throw new Error(`Localiza error: ${message}`);
+  }
+
+  // Check for warnings (business errors)
+  if (rs["Warnings"]) {
+    const warnings = rs["Warnings"] as Record<string, unknown>;
+    const warning = warnings["Warning"] as Record<string, unknown>;
+    const message = warning?.["_"] || JSON.stringify(warning);
+    throw new Error(`Localiza warning: ${message}`);
+  }
+
   const core = rs["VehResRSCore"] as Record<string, unknown>;
+  if (!core) {
+    throw new Error("VehResRSCore not found in response");
+  }
 
   const status = ((core["$"] as Record<string, string>) || {})["ReservationStatus"] || "";
   const reservation = core["VehReservation"] as Record<string, unknown>;

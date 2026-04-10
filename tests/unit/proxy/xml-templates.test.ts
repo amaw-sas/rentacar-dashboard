@@ -41,12 +41,14 @@ describe("buildVehResXML", () => {
     });
     expect(xml).toContain("OTA_VehResRQ");
     expect(xml).toContain('EchoToken="test-token-123"');
-    expect(xml).toContain("<Surname>Juan Perez</Surname>");
-    expect(xml).toContain("<Email>juan@example.com</Email>");
+    expect(xml).toContain("Juan Perez</ns:Surname>");
+    expect(xml).toContain("juan@example.com</ns:Email>");
     expect(xml).toContain('PhoneNumber="3001234567"');
-    expect(xml).toContain('DocID="1234567890"');
+    expect(xml).toContain('CountryCode="57"');
     expect(xml).toContain('ID="ref-abc-123"');
     expect(xml).toContain('RateQualifier="STANDARD"');
     expect(xml).toContain('Code="C"');
+    expect(xml).toContain('PaymentType="2"');
+    expect(xml).toContain('Type="41"');
   });
 });

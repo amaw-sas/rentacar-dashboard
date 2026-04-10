@@ -208,8 +208,19 @@ export async function POST(request: Request) {
       if (!proxyResponse.ok) {
         const errorBody = await proxyResponse.text();
         console.error(`[reservation] Proxy error ${proxyResponse.status}:`, errorBody);
+        let proxyError: string = errorBody;
+        try {
+          const parsed = JSON.parse(errorBody);
+          proxyError = parsed.error ?? errorBody;
+        } catch {
+          // keep errorBody as-is
+        }
         return NextResponse.json(
-          { error: "Error al crear la reserva en Localiza" },
+          {
+            error: "Error al crear la reserva en Localiza",
+            details: proxyError,
+            proxyStatus: proxyResponse.status,
+          },
           { status: 502 }
         );
       }

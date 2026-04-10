@@ -84,48 +84,42 @@ export function buildVehRetResXML(token: string, reservationCode: string): strin
 }
 
 export function buildVehResXML(params: ReservationParams): string {
-  return `<?xml version="1.0" encoding="utf-8"?>
-<soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-  xmlns:xsd="http://www.w3.org/2001/XMLSchema"
-  xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
-  <soap:Body>
-    <OTA_VehResRQ xmlns="http://www.opentravel.org/OTA/2003/05"
-      EchoToken="${params.token}">
-      <POS>
-        <Source>
-          <RequestorID Type="5" ID="${params.requestorId}" />
-        </Source>
-      </POS>
-      <VehResRQCore>
-        <Customer>
-          <Primary>
-            <PersonName>
-              <Surname>${params.customerName}</Surname>
-            </PersonName>
-            <Email>${params.customerEmail}</Email>
-            <Telephone PhoneUseType="5" PhoneTechType="5"
-              CountryAccessCode="${params.customerPhoneCountryCode}"
-              PhoneNumber="${params.customerPhone}" />
-            <Document DocumentType="${params.customerDocumentType}"
-              DocID="${params.customerDocument}" />
-          </Primary>
-        </Customer>
-        <UniqueID Type="41" ID="${params.referenceToken}" />
-        <VehRentalCore>
-          <PickUpLocation LocationCode="${params.pickupLocation}" />
-          <ReturnLocation LocationCode="${params.returnLocation}" />
-          <PickUpDateTime>${params.pickupDateTime}</PickUpDateTime>
-          <ReturnDateTime>${params.returnDateTime}</ReturnDateTime>
-        </VehRentalCore>
-        <RateQualifier RateQualifier="${params.rateQualifier}" />
-        <VehPref Code="${params.categoryCode}" />
-        <VehResRQInfo>
-          <RentalPaymentPref>
-            <PaymentType>3</PaymentType>
-          </RentalPaymentPref>
-        </VehResRQInfo>
-      </VehResRQCore>
-    </OTA_VehResRQ>
-  </soap:Body>
-</soap:Envelope>`;
+  // XML structure matches Localiza legacy Laravel integration exactly
+  return `<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:tem="http://tempuri.org/" xmlns:ns="http://www.opentravel.org/OTA/2003/05">
+  <soapenv:Body>
+    <tem:OTA_VehRes xmlns="http://tempuri.org/">
+      <tem:OTA_VehResRQ xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" EchoToken="${params.token}" Target="Test" PrimaryLangID="por">
+        <tem:POS>
+          <tem:Source ISOCountry="CO">
+            <ns:RequestorID xmlns="http://www.opentravel.org/OTA/2003/05" ID="${params.requestorId}" Type="5"/>
+          </tem:Source>
+        </tem:POS>
+        <tem:VehResRQCore xmlns="http://tempuri.org/">
+          <ns:VehRentalCore xmlns="http://www.opentravel.org/OTA/2003/05" ReturnDateTime="${params.returnDateTime}" PickUpDateTime="${params.pickupDateTime}">
+            <ns:PickUpLocation LocationCode="${params.pickupLocation}" CodeContext="internal code"/>
+            <ns:ReturnLocation LocationCode="${params.returnLocation}" CodeContext="internal code"/>
+          </ns:VehRentalCore>
+          <ns:Customer>
+            <ns:Primary>
+              <ns:PersonName>
+                <ns:Surname>${params.customerName}</ns:Surname>
+              </ns:PersonName>
+              <ns:Email>${params.customerEmail}</ns:Email>
+              <ns:CitizenCountryName Code="CO"/>
+              <ns:Telephone CountryCode="${params.customerPhoneCountryCode}" PhoneNumber="${params.customerPhone}"/>
+            </ns:Primary>
+          </ns:Customer>
+          <ns:VehPref CodeContext="internal code" Code="${params.categoryCode}"/>
+          <ns:RateQualifier RateQualifier="${params.rateQualifier}"/>
+        </tem:VehResRQCore>
+        <tem:VehResRQInfo>
+          <ns:RentalPaymentPref PaymentType="2">
+            <ns:Voucher ValueType="2"/>
+          </ns:RentalPaymentPref>
+          <ns:Reference Type="41" ID="${params.referenceToken}"/>
+        </tem:VehResRQInfo>
+      </tem:OTA_VehResRQ>
+    </tem:OTA_VehRes>
+  </soapenv:Body>
+</soapenv:Envelope>`;
 }

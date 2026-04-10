@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextResponse, after } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
   resolveLocationByCode,
@@ -303,24 +303,33 @@ export async function POST(request: Request) {
       );
     }
 
-    // 9. Dispatch notifications (non-blocking)
+    // 9. Dispatch notifications after response is sent (non-blocking but guaranteed to run)
     const reservationId = inserted.id;
 
-    sendReservationRequestEmail(reservationId, body.franchise).catch((err) =>
-      console.error("[reservation] Request email failed:", err)
-    );
-
-    sendReservationNotifications(reservationId, status, body.franchise).catch((err) =>
-      console.error("[reservation] Status notifications failed:", err)
-    );
-
-    sendStatusWhatsApp(reservationId, status).catch((err) =>
-      console.error("[reservation] WhatsApp notification failed:", err)
-    );
-
-    syncReservationToGhl(reservationId).catch((err) =>
-      console.error("[reservation] GHL sync failed:", err)
-    );
+    after(async () => {
+      console.log(`[reservation] Dispatching notifications for ${reservationId}`);
+      try {
+        await sendReservationRequestEmail(reservationId, body.franchise);
+      } catch (err) {
+        console.error("[reservation] Request email failed:", err);
+      }
+      try {
+        await sendReservationNotifications(reservationId, status, body.franchise);
+      } catch (err) {
+        console.error("[reservation] Status notifications failed:", err);
+      }
+      try {
+        await sendStatusWhatsApp(reservationId, status);
+      } catch (err) {
+        console.error("[reservation] WhatsApp notification failed:", err);
+      }
+      try {
+        await syncReservationToGhl(reservationId);
+      } catch (err) {
+        console.error("[reservation] GHL sync failed:", err);
+      }
+      console.log(`[reservation] Notifications dispatch completed for ${reservationId}`);
+    });
 
     // 10. Return response
     return NextResponse.json({

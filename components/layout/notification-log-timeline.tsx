@@ -25,6 +25,8 @@ const TYPE_LABELS: Record<string, string> = {
   whatsapp_mensualidad: "WhatsApp mensualidad",
   mensualidad_localiza: "Reserva mensual (Localiza)",
   mensualidad_localiza_reenvio: "Reserva mensual (Localiza) - reenvío",
+  mensualidad_cliente: "Reserva mensual (cliente)",
+  mensualidad_cliente_reenvio: "Reserva mensual (cliente) - reenvío",
 };
 
 interface NotificationLog {

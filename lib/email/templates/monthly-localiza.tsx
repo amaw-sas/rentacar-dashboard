@@ -1,4 +1,4 @@
-import { Section, Text, Heading } from "@react-email/components";
+import { Section, Text } from "@react-email/components";
 import { EmailLayout } from "./components/email-layout";
 
 interface MonthlyLocalizaEmailProps {
@@ -25,10 +25,10 @@ interface MonthlyLocalizaEmailProps {
 }
 
 export function MonthlyLocalizaEmail(props: MonthlyLocalizaEmailProps) {
-  const extras = [];
+  const extras: string[] = [];
   if (props.totalInsurance > 0) extras.push("Seguro total");
   if (props.extraDriver) extras.push("Conductor adicional");
-  if (props.babySeat) extras.push("Silla de beb\u00e9");
+  if (props.babySeat) extras.push("Silla de bebé");
   if (props.wash) extras.push("Servicio de lavado");
 
   const mileageLabels: Record<string, string> = {
@@ -46,7 +46,7 @@ export function MonthlyLocalizaEmail(props: MonthlyLocalizaEmailProps) {
       franchiseWhatsapp={props.franchiseWhatsapp}
       franchiseLogo={props.franchiseLogo}
     >
-      <Text style={greeting}>Cordial saludo, Se\u00f1ores Localiza</Text>
+      <Text style={greeting}>Cordial saludo, Señores Localiza</Text>
 
       <Text style={body}>
         Les informamos de una nueva solicitud de <strong>reserva mensual</strong>:
@@ -57,20 +57,21 @@ export function MonthlyLocalizaEmail(props: MonthlyLocalizaEmailProps) {
           <strong>Cliente:</strong> {props.customerName}
         </Text>
         <Text style={detailText}>
-          <strong>Categor\u00eda:</strong> {props.categoryName}
+          <strong>Categoría:</strong> {props.categoryName}
         </Text>
         <Text style={detailText}>
-          <strong>Recogida:</strong> {props.pickupLocation} \u2014 {props.pickupDate} {props.pickupHour}
+          <strong>Recogida:</strong> {props.pickupLocation} — {props.pickupDate} {props.pickupHour}
         </Text>
         <Text style={detailText}>
-          <strong>Devoluci\u00f3n:</strong> {props.returnLocation} \u2014 {props.returnDate} {props.returnHour}
+          <strong>Devolución:</strong> {props.returnLocation} — {props.returnDate} {props.returnHour}
         </Text>
         <Text style={detailText}>
-          <strong>D\u00edas:</strong> {props.selectedDays}
+          <strong>Días:</strong> {props.selectedDays}
         </Text>
         {props.monthlyMileage && (
           <Text style={detailText}>
-            <strong>Kilometraje:</strong> {mileageLabels[String(props.monthlyMileage)] || `${props.monthlyMileage} km/mes`}
+            <strong>Kilometraje:</strong>{" "}
+            {mileageLabels[String(props.monthlyMileage)] || `${props.monthlyMileage} km/mes`}
           </Text>
         )}
       </Section>
@@ -80,15 +81,13 @@ export function MonthlyLocalizaEmail(props: MonthlyLocalizaEmailProps) {
           <Text style={extrasTitle}>Servicios adicionales solicitados:</Text>
           {extras.map((extra, i) => (
             <Text key={i} style={extraItem}>
-              \u2022 {extra}
+              • {extra}
             </Text>
           ))}
         </Section>
       )}
 
-      <Text style={closing}>
-        Agradecemos su atenci\u00f3n y pronta respuesta.
-      </Text>
+      <Text style={closing}>Agradecemos su atención y pronta respuesta.</Text>
     </EmailLayout>
   );
 }

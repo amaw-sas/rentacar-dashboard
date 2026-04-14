@@ -45,7 +45,7 @@ function extractAvailability(parsed: Record<string, unknown>): Record<string, un
       allAvails.push(...(availItems as Record<string, unknown>[]));
     }
 
-    let avails: unknown[] = allAvails;
+    const avails: unknown[] = allAvails;
 
     const attr = (obj: unknown, field: string): string => {
       if (!obj || typeof obj !== "object") return "";

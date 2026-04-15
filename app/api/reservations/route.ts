@@ -5,6 +5,7 @@ import {
   findOrCreateCustomer,
   resolveReferral,
 } from "@/lib/api/resolve-references";
+import { normalizeIdentificationType } from "@/lib/api/normalize-identification-type";
 import { sendReservationNotifications } from "@/lib/email/notifications";
 import { sendStatusWhatsApp } from "@/lib/wati/notifications";
 import { syncReservationToGhl } from "@/lib/ghl/sync";
@@ -136,7 +137,7 @@ export async function POST(request: Request) {
     const customerId = await findOrCreateCustomer({
       first_name,
       last_name,
-      identification_type: body.identification_type,
+      identification_type: normalizeIdentificationType(body.identification_type),
       identification_number: body.identification,
       phone: body.phone,
       email: body.email,

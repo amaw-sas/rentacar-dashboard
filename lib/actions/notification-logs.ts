@@ -1,6 +1,7 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 interface NotificationLogData {
   reservation_id: string;
@@ -15,8 +16,11 @@ interface NotificationLogData {
 
 export async function logNotification(data: NotificationLogData): Promise<void> {
   try {
-    const supabase = await createClient();
-    await supabase.from("notification_logs").insert(data);
+    const supabase = createAdminClient();
+    const { error } = await supabase.from("notification_logs").insert(data);
+    if (error) {
+      console.error("[notification-log] insert error:", error);
+    }
   } catch (error) {
     console.error("[notification-log] Failed to log:", error);
   }

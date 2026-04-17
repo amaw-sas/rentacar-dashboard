@@ -29,6 +29,18 @@ export async function getReservations() {
   return data;
 }
 
+export async function getCustomerReservations(customerId: string) {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("reservations")
+    .select(RESERVATION_SELECT)
+    .eq("customer_id", customerId)
+    .order("created_at", { ascending: false });
+
+  if (error) throw error;
+  return data ?? [];
+}
+
 export async function getReservation(id: string) {
   const supabase = await createClient();
   const { data, error } = await supabase

@@ -1,9 +1,14 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getCustomer } from "@/lib/queries/customers";
+import { getCustomerReservations } from "@/lib/queries/reservations";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import {
+  ReservationHistory,
+  type HistoryRow,
+} from "./reservation-history";
 
 const identificationTypeLabels: Record<string, string> = {
   CC: "Cédula de Ciudadanía",
@@ -26,6 +31,19 @@ export default async function CustomerDetailPage({
   } catch {
     notFound();
   }
+
+  const reservations = await getCustomerReservations(id).catch(() => []);
+  const historyRows: HistoryRow[] = reservations.map((r) => ({
+    id: r.id,
+    created_at: r.created_at,
+    reservation_code: r.reservation_code,
+    status: r.status,
+    franchise: r.franchise,
+    pickup_date: r.pickup_date,
+    pickup_hour: r.pickup_hour,
+    total_price: r.total_price,
+    tax_fee: r.tax_fee,
+  }));
 
   return (
     <div className="space-y-6">
@@ -81,14 +99,7 @@ export default async function CustomerDetailPage({
         </CardContent>
       </Card>
 
-      {/* Placeholder for future reservation history */}
-      <Card>
-        <CardContent>
-          <p className="text-sm text-muted-foreground">
-            El historial de reservas se mostrará aquí.
-          </p>
-        </CardContent>
-      </Card>
+      <ReservationHistory rows={historyRows} />
     </div>
   );
 }

@@ -55,8 +55,8 @@ export async function sendStatusWhatsApp(
       .from("reservations")
       .select(
         `*, customers(first_name, last_name, phone),
-        pickup_location:locations!pickup_location_id(name, address),
-        return_location:locations!return_location_id(name, address),
+        pickup_location:locations!pickup_location_id(name, pickup_address, return_address, pickup_map, return_map),
+        return_location:locations!return_location_id(name, pickup_address, return_address, pickup_map, return_map),
         franchises:franchise`
       )
       .eq("id", reservationId)
@@ -76,8 +76,21 @@ export async function sendStatusWhatsApp(
     if (!phone) return;
 
     const fullname = `${customer.first_name} ${customer.last_name}`;
-    const pickupLoc = reservation.pickup_location as { name: string; address: string } | null;
-    const returnLoc = reservation.return_location as { name: string; address: string } | null;
+    type LocationRow = {
+      name: string;
+      pickup_address: string;
+      return_address: string | null;
+      pickup_map: string;
+      return_map: string | null;
+    };
+    const pickupLoc = reservation.pickup_location as LocationRow | null;
+    const returnLoc = reservation.return_location as LocationRow | null;
+
+    const pickupAddress = pickupLoc?.pickup_address ?? "";
+    const pickupMap = pickupLoc?.pickup_map ?? "";
+    // For the return side, prefer the return_* fields; fallback to pickup_* (same physical spot).
+    const returnAddress = returnLoc?.return_address ?? returnLoc?.pickup_address ?? "";
+    const returnMap = returnLoc?.return_map ?? returnLoc?.pickup_map ?? "";
 
     // Fetch franchise data
     const { data: franchise } = await supabase
@@ -104,13 +117,13 @@ export async function sendStatusWhatsApp(
         { name: "pickup_date", value: formatDate(reservation.pickup_date) },
         { name: "pickup_hour", value: formatHour(reservation.pickup_hour) },
         { name: "pickup_location", value: pickupLoc?.name ?? "" },
-        { name: "pickup_location_address", value: pickupLoc?.address ?? "" },
-        { name: "pickup_location_map", value: "" },
+        { name: "pickup_location_address", value: pickupAddress },
+        { name: "pickup_location_map", value: pickupMap },
         { name: "return_date", value: formatDate(reservation.return_date) },
         { name: "return_hour", value: formatHour(reservation.return_hour) },
         { name: "return_location", value: returnLoc?.name ?? "" },
-        { name: "return_location_address", value: returnLoc?.address ?? "" },
-        { name: "return_location_map", value: "" },
+        { name: "return_location_address", value: returnAddress },
+        { name: "return_location_map", value: returnMap },
         { name: "franchise_name", value: franchiseName },
       ];
     } else if (status === "pendiente" || status === "mensualidad") {

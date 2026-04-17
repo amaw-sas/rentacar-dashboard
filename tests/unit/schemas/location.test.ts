@@ -7,7 +7,8 @@ describe("locationSchema", () => {
     code: "AABOT",
     name: "Bogotá Aeropuerto",
     city: "Bogotá",
-    address: "Aeropuerto El Dorado",
+    pickup_address: "Aeropuerto El Dorado, Piso 1 Puerta 7",
+    pickup_map: "https://maps.app.goo.gl/abc",
     schedule: { mon: "08:00-18:00" },
     slug: "bogota-aeropuerto",
     status: "active" as const,
@@ -15,6 +16,15 @@ describe("locationSchema", () => {
 
   it("accepts valid location data", () => {
     const result = locationSchema.safeParse(valid);
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts optional return_address and return_map", () => {
+    const result = locationSchema.safeParse({
+      ...valid,
+      return_address: "Av Otro Lugar",
+      return_map: "https://maps.app.goo.gl/xyz",
+    });
     expect(result.success).toBe(true);
   });
 
@@ -33,17 +43,24 @@ describe("locationSchema", () => {
     expect(result.success).toBe(false);
   });
 
-  it("defaults optional fields", () => {
-    const minimal = {
-      rental_company_id: "550e8400-e29b-41d4-a716-446655440000",
-      code: "AABOT",
-      name: "Bogotá",
-    };
-    const result = locationSchema.safeParse(minimal);
+  it("requires non-empty pickup_address", () => {
+    const result = locationSchema.safeParse({ ...valid, pickup_address: "" });
+    expect(result.success).toBe(false);
+  });
+
+  it("requires non-empty pickup_map", () => {
+    const result = locationSchema.safeParse({ ...valid, pickup_map: "" });
+    expect(result.success).toBe(false);
+  });
+
+  it("defaults return fields to null", () => {
+    const result = locationSchema.safeParse(valid);
     expect(result.success).toBe(true);
     if (result.success) {
+      expect(result.data.return_address).toBeNull();
+      expect(result.data.return_map).toBeNull();
       expect(result.data.status).toBe("active");
-      expect(result.data.city).toBe("");
+      expect(result.data.city).toBe("Bogotá");
     }
   });
 });

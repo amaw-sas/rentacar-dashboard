@@ -48,7 +48,10 @@ export function LocationForm({ defaultValues, id, rentalCompanies, cities }: Loc
       code: "",
       name: "",
       city: "",
-      address: "",
+      pickup_address: "",
+      pickup_map: "",
+      return_address: null,
+      return_map: null,
       city_id: null,
       slug: "",
       status: "active",
@@ -154,8 +157,39 @@ export function LocationForm({ defaultValues, id, rentalCompanies, cities }: Loc
           )}
 
           <div className="space-y-2 sm:col-span-2">
-            <Label htmlFor="address">Dirección</Label>
-            <Input id="address" {...register("address")} />
+            <Label htmlFor="pickup_address">Dirección de recogida</Label>
+            <Input id="pickup_address" {...register("pickup_address")} />
+            {errors.pickup_address && (
+              <p className="text-sm text-destructive">{errors.pickup_address.message}</p>
+            )}
+          </div>
+
+          <div className="space-y-2 sm:col-span-2">
+            <Label htmlFor="pickup_map">Mapa de recogida (URL)</Label>
+            <Input id="pickup_map" {...register("pickup_map")} />
+            {errors.pickup_map && (
+              <p className="text-sm text-destructive">{errors.pickup_map.message}</p>
+            )}
+          </div>
+
+          <div className="space-y-2 sm:col-span-2">
+            <Label htmlFor="return_address">Dirección de devolución (opcional)</Label>
+            <Input
+              id="return_address"
+              {...register("return_address", {
+                setValueAs: (value) => (value === "" ? null : value),
+              })}
+            />
+          </div>
+
+          <div className="space-y-2 sm:col-span-2">
+            <Label htmlFor="return_map">Mapa de devolución (URL, opcional)</Label>
+            <Input
+              id="return_map"
+              {...register("return_map", {
+                setValueAs: (value) => (value === "" ? null : value),
+              })}
+            />
           </div>
 
           <div className="space-y-2">

@@ -148,7 +148,7 @@ export async function sendPickupReminders(type: string) {
             pickupDate: formatPickupDate(reservation.pickup_date),
             pickupHour: formatPickupHour(reservation.pickup_hour),
             pickupLocation: location.name,
-            pickupAddress: location.address ?? undefined,
+            pickupAddress: location.pickup_address,
           })
         );
 

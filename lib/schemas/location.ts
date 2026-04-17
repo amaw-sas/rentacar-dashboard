@@ -5,7 +5,10 @@ export const locationSchema = z.object({
   code: z.string().min(1, "Código es requerido"),
   name: z.string().min(1, "Nombre es requerido"),
   city: z.string().default(""),
-  address: z.string().default(""),
+  pickup_address: z.string().min(1, "Dirección de recogida es requerida"),
+  pickup_map: z.string().min(1, "URL de mapa de recogida es requerida"),
+  return_address: z.string().nullable().default(null),
+  return_map: z.string().nullable().default(null),
   schedule: z.record(z.string(), z.string()).default({}),
   city_id: z.preprocess(
     (val) => (val === "" || val === undefined ? null : val),

@@ -1,11 +1,20 @@
 import Link from "next/link";
 import { getReservations } from "@/lib/queries/reservations";
-import { DataTable } from "@/components/data-table/data-table";
+import { getReferrals } from "@/lib/queries/referrals";
 import { Button } from "@/components/ui/button";
-import { columns } from "./columns";
+import { ReservationsTable } from "./reservations-table";
+import type { ReservationRow } from "./columns";
 
 export default async function ReservationsPage() {
-  const reservations = await getReservations();
+  const [reservations, referrals] = await Promise.all([
+    getReservations(),
+    getReferrals(),
+  ]);
+
+  const referralOptions = (referrals ?? []).map((r) => ({
+    id: r.id as string,
+    name: r.name as string,
+  }));
 
   return (
     <div className="space-y-6">
@@ -16,11 +25,9 @@ export default async function ReservationsPage() {
         </Button>
       </div>
 
-      <DataTable
-        columns={columns}
-        data={reservations}
-        searchPlaceholder="Buscar por cliente..."
-        searchColumn="customer"
+      <ReservationsTable
+        data={reservations as unknown as ReservationRow[]}
+        referrals={referralOptions}
       />
     </div>
   );

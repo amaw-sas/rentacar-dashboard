@@ -13,15 +13,7 @@ import { MonthlyClientEmail } from "./templates/monthly-client";
 import type { ReservationStatus } from "@/lib/schemas/reservation";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
-
-const FRANCHISE_BRANDING: Record<
-  string,
-  { color: string; website: string }
-> = {
-  alquilatucarro: { color: "#030678", website: "https://alquilatucarro.com" },
-  alquilame: { color: "#cc022b", website: "https://alquilame.com" },
-  alquicarros: { color: "#ef9600", website: "https://alquicarros.com" },
-};
+import { FRANCHISE_BRANDING } from "@/lib/constants/franchises";
 
 interface ReservationData {
   id: string;

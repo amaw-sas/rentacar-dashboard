@@ -14,7 +14,7 @@ function cleanPhone(phone: string): string {
 
 export async function addContact(phone: string, name: string): Promise<void> {
   const cleanedPhone = cleanPhone(phone);
-  const url = `${WATI_API_URL}/addContact/${cleanedPhone}`;
+  const url = `${WATI_API_URL}/api/v1/addContact/${cleanedPhone}`;
 
   try {
     const res = await fetch(url, {
@@ -46,7 +46,7 @@ export async function sendTemplateMessage(
   params: TemplateParam[]
 ): Promise<void> {
   const cleanedPhone = cleanPhone(phone);
-  const url = `${WATI_API_URL}/sendTemplateMessage/${cleanedPhone}`;
+  const url = `${WATI_API_URL}/api/v1/sendTemplateMessage?whatsappNumber=${cleanedPhone}`;
 
   const res = await fetch(url, {
     method: "POST",

@@ -117,6 +117,8 @@ export const reservationSchema = z.object({
   notification_required: z.boolean().default(false),
   // Status
   status: z.enum(RESERVATION_STATUSES).default("nueva"),
+  // Operational note
+  nota: z.string().nullable().default(null),
 });
 
 export type ReservationFormData = z.infer<typeof reservationSchema>;

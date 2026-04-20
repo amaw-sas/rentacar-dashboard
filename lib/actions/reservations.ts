@@ -38,6 +38,7 @@ function buildReservationData(formData: FormData) {
   if (raw.aeroline === "") raw.aeroline = null as unknown as string;
   if (raw.flight_number === "") raw.flight_number = null as unknown as string;
   if (raw.monthly_mileage === "") raw.monthly_mileage = null as unknown as string;
+  if (raw.nota === "") raw.nota = null as unknown as string;
 
   return raw;
 }

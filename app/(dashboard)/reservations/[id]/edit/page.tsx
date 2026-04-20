@@ -69,6 +69,7 @@ export default async function EditReservationPage({
           monthly_mileage: reservation.monthly_mileage,
           notification_required: reservation.notification_required,
           status: reservation.status,
+          nota: reservation.nota,
         }}
         customers={customers}
         rentalCompanies={rentalCompanies}

@@ -186,6 +186,20 @@ export default async function ReservationDetailPage({
         </Card>
       )}
 
+      {/* Nota */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Nota</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {reservation.nota ? (
+            <p className="whitespace-pre-wrap text-sm">{reservation.nota}</p>
+          ) : (
+            <p className="text-sm text-muted-foreground">—</p>
+          )}
+        </CardContent>
+      </Card>
+
       {/* Notification History */}
       <NotificationLogTimeline logs={notificationLogs} />
     </div>

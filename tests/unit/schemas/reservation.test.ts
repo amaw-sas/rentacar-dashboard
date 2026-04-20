@@ -111,6 +111,27 @@ describe("reservationSchema", () => {
   it("has 13 reservation statuses", () => {
     expect(RESERVATION_STATUSES).toHaveLength(13);
   });
+
+  it("defaults nota to null when omitted", () => {
+    const result = reservationSchema.safeParse(valid);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.nota).toBeNull();
+    }
+  });
+
+  it("accepts nota as a string", () => {
+    const result = reservationSchema.safeParse({ ...valid, nota: "cliente llega tarde" });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.nota).toBe("cliente llega tarde");
+    }
+  });
+
+  it("accepts nota as null", () => {
+    const result = reservationSchema.safeParse({ ...valid, nota: null });
+    expect(result.success).toBe(true);
+  });
 });
 
 describe("VALID_TRANSITIONS", () => {

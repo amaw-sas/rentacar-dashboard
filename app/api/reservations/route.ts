@@ -9,6 +9,7 @@ import { normalizeIdentificationType } from "@/lib/api/normalize-identification-
 import { sendReservationNotifications } from "@/lib/email/notifications";
 import { sendStatusWhatsApp } from "@/lib/wati/notifications";
 import { syncReservationToGhl } from "@/lib/ghl/sync";
+import { parseMonthlyMileage } from "@/lib/reservation/mileage-parser";
 import type { ReservationStatus } from "@/lib/schemas/reservation";
 
 interface ReservationRequestBody {
@@ -289,7 +290,7 @@ export async function POST(request: Request) {
         wash: toBoolean(body.wash),
         aeroline: body.aeroline ?? null,
         flight_number: body.flight_number ?? null,
-        monthly_mileage: body.monthly_mileage ? parseInt(body.monthly_mileage) : null,
+        monthly_mileage: parseMonthlyMileage(body.monthly_mileage),
         notification_required: notificationRequired,
         status,
       })

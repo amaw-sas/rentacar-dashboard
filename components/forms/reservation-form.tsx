@@ -2,13 +2,14 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo } from "react";
-import { useForm, type Resolver } from "react-hook-form";
+import { Controller, useForm, type Resolver } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
   reservationSchema,
   FRANCHISES,
   BOOKING_TYPES,
   BOOKING_TYPE_LABELS,
+  MONTHLY_MILEAGE_OPTIONS,
   type ReservationFormData,
   type ReservationStatus,
 } from "@/lib/schemas/reservation";
@@ -19,6 +20,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { MoneyInput } from "@/components/ui/money-input";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
@@ -47,6 +49,14 @@ interface CustomerOption {
   email?: string | null;
 }
 
+interface VehicleCategoryOption {
+  id: string;
+  code: string;
+  name: string;
+  rental_company_id: string;
+  status: string;
+}
+
 interface ReservationFormProps {
   defaultValues?: Partial<ReservationFormData>;
   id?: string;
@@ -54,6 +64,7 @@ interface ReservationFormProps {
   rentalCompanies: SelectOption[];
   locations: SelectOption[];
   referrals: SelectOption[];
+  vehicleCategories: VehicleCategoryOption[];
 }
 
 const ID_TYPE_LABELS: Record<string, string> = {
@@ -71,6 +82,7 @@ export function ReservationForm({
   rentalCompanies,
   locations,
   referrals,
+  vehicleCategories,
 }: ReservationFormProps) {
   const router = useRouter();
   const isEditing = !!id;
@@ -81,6 +93,7 @@ export function ReservationForm({
     setValue,
     watch,
     setError,
+    control,
     formState: { errors, isSubmitting },
   } = useForm<ReservationFormData>({
     resolver: zodResolver(reservationSchema) as Resolver<ReservationFormData>,
@@ -130,6 +143,7 @@ export function ReservationForm({
   const bookingType = watch("booking_type");
   const customerId = watch("customer_id");
   const rentalCompanyId = watch("rental_company_id");
+  const categoryCode = watch("category_code");
   const pickupLocationId = watch("pickup_location_id");
   const returnLocationId = watch("return_location_id");
   const referralId = watch("referral_id");
@@ -142,6 +156,17 @@ export function ReservationForm({
     () => customers.find((c) => c.id === customerId),
     [customers, customerId],
   );
+
+  const availableCategories = useMemo(() => {
+    if (!rentalCompanyId) return [];
+    return vehicleCategories.filter(
+      (c) => c.rental_company_id === rentalCompanyId,
+    );
+  }, [vehicleCategories, rentalCompanyId]);
+
+  const categoryValueMissing =
+    !!categoryCode &&
+    !availableCategories.some((c) => c.code === categoryCode);
 
   useEffect(() => {
     const hasInsurance = bookingType === "standard_with_insurance";
@@ -294,7 +319,33 @@ export function ReservationForm({
         <CardContent className="grid gap-6 sm:grid-cols-3">
           <div className="space-y-2">
             <Label htmlFor="category_code">Categoría</Label>
-            <Input id="category_code" {...register("category_code")} />
+            <Select
+              value={categoryCode ?? ""}
+              onValueChange={(value) => setValue("category_code", value)}
+              disabled={!rentalCompanyId}
+            >
+              <SelectTrigger id="category_code" className="w-full min-w-0">
+                <SelectValue
+                  placeholder={
+                    rentalCompanyId
+                      ? "Seleccionar categoría"
+                      : "Selecciona una rentadora primero"
+                  }
+                />
+              </SelectTrigger>
+              <SelectContent>
+                {availableCategories.map((c) => (
+                  <SelectItem key={c.id} value={c.code}>
+                    {c.code} — {c.name}
+                  </SelectItem>
+                ))}
+                {categoryValueMissing && (
+                  <SelectItem value={categoryCode} disabled>
+                    {categoryCode} (inactiva)
+                  </SelectItem>
+                )}
+              </SelectContent>
+            </Select>
             {errors.category_code && (
               <p className="text-sm text-destructive">
                 {errors.category_code.message}
@@ -357,34 +408,49 @@ export function ReservationForm({
         <CardContent className="grid gap-6 sm:grid-cols-3">
           <div className="space-y-2">
             <Label htmlFor="total_price">Precio sin IVA con tasa</Label>
-            <Input
-              id="total_price"
-              type="number"
-              step="0.01"
-              min={0}
-              {...register("total_price")}
+            <Controller
+              name="total_price"
+              control={control}
+              render={({ field }) => (
+                <MoneyInput
+                  id="total_price"
+                  value={field.value}
+                  onChange={field.onChange}
+                  onBlur={field.onBlur}
+                />
+              )}
             />
           </div>
 
           <div className="space-y-2">
             <Label htmlFor="total_price_to_pay">Precio total a pagar</Label>
-            <Input
-              id="total_price_to_pay"
-              type="number"
-              step="0.01"
-              min={0}
-              {...register("total_price_to_pay")}
+            <Controller
+              name="total_price_to_pay"
+              control={control}
+              render={({ field }) => (
+                <MoneyInput
+                  id="total_price_to_pay"
+                  value={field.value}
+                  onChange={field.onChange}
+                  onBlur={field.onBlur}
+                />
+              )}
             />
           </div>
 
           <div className="space-y-2">
             <Label htmlFor="total_price_localiza">Valor OC</Label>
-            <Input
-              id="total_price_localiza"
-              type="number"
-              step="0.01"
-              min={0}
-              {...register("total_price_localiza")}
+            <Controller
+              name="total_price_localiza"
+              control={control}
+              render={({ field }) => (
+                <MoneyInput
+                  id="total_price_localiza"
+                  value={field.value}
+                  onChange={field.onChange}
+                  onBlur={field.onBlur}
+                />
+              )}
             />
           </div>
         </CardContent>
@@ -573,23 +639,56 @@ export function ReservationForm({
         <CardContent className="grid gap-6 sm:grid-cols-2">
           <div className="space-y-2">
             <Label htmlFor="monthly_mileage">Kilometraje</Label>
-            <Input
-              id="monthly_mileage"
-              type="number"
-              min={0}
-              placeholder="Opcional"
-              {...register("monthly_mileage")}
+            <Controller
+              name="monthly_mileage"
+              control={control}
+              render={({ field }) => {
+                const current = field.value;
+                const isLegacy =
+                  current != null &&
+                  !MONTHLY_MILEAGE_OPTIONS.some((o) => o.value === current);
+                return (
+                  <Select
+                    value={current == null ? "none" : String(current)}
+                    onValueChange={(value) =>
+                      field.onChange(value === "none" ? null : Number(value))
+                    }
+                  >
+                    <SelectTrigger id="monthly_mileage" className="w-full min-w-0">
+                      <SelectValue placeholder="Sin especificar" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">Sin especificar</SelectItem>
+                      {MONTHLY_MILEAGE_OPTIONS.map((o) => (
+                        <SelectItem key={o.value} value={String(o.value)}>
+                          {o.label}
+                        </SelectItem>
+                      ))}
+                      {isLegacy && (
+                        <SelectItem value={String(current)} disabled>
+                          {current} km (legacy)
+                        </SelectItem>
+                      )}
+                    </SelectContent>
+                  </Select>
+                );
+              }}
             />
           </div>
 
           <div className="space-y-2">
             <Label htmlFor="total_insurance">Seguro Total</Label>
-            <Input
-              id="total_insurance"
-              type="number"
-              step="0.01"
-              min={0}
-              {...register("total_insurance")}
+            <Controller
+              name="total_insurance"
+              control={control}
+              render={({ field }) => (
+                <MoneyInput
+                  id="total_insurance"
+                  value={field.value}
+                  onChange={field.onChange}
+                  onBlur={field.onBlur}
+                />
+              )}
             />
           </div>
         </CardContent>
@@ -681,23 +780,33 @@ export function ReservationForm({
 
           <div className="space-y-2">
             <Label htmlFor="tax_fee">Impuestos</Label>
-            <Input
-              id="tax_fee"
-              type="number"
-              step="0.01"
-              min={0}
-              {...register("tax_fee")}
+            <Controller
+              name="tax_fee"
+              control={control}
+              render={({ field }) => (
+                <MoneyInput
+                  id="tax_fee"
+                  value={field.value}
+                  onChange={field.onChange}
+                  onBlur={field.onBlur}
+                />
+              )}
             />
           </div>
 
           <div className="space-y-2">
             <Label htmlFor="iva_fee">IVA</Label>
-            <Input
-              id="iva_fee"
-              type="number"
-              step="0.01"
-              min={0}
-              {...register("iva_fee")}
+            <Controller
+              name="iva_fee"
+              control={control}
+              render={({ field }) => (
+                <MoneyInput
+                  id="iva_fee"
+                  value={field.value}
+                  onChange={field.onChange}
+                  onBlur={field.onBlur}
+                />
+              )}
             />
           </div>
 
@@ -713,23 +822,33 @@ export function ReservationForm({
 
           <div className="space-y-2">
             <Label htmlFor="coverage_price">Precio cobertura</Label>
-            <Input
-              id="coverage_price"
-              type="number"
-              step="0.01"
-              min={0}
-              {...register("coverage_price")}
+            <Controller
+              name="coverage_price"
+              control={control}
+              render={({ field }) => (
+                <MoneyInput
+                  id="coverage_price"
+                  value={field.value}
+                  onChange={field.onChange}
+                  onBlur={field.onBlur}
+                />
+              )}
             />
           </div>
 
           <div className="space-y-2">
             <Label htmlFor="return_fee">Cargo devolución</Label>
-            <Input
-              id="return_fee"
-              type="number"
-              step="0.01"
-              min={0}
-              {...register("return_fee")}
+            <Controller
+              name="return_fee"
+              control={control}
+              render={({ field }) => (
+                <MoneyInput
+                  id="return_fee"
+                  value={field.value}
+                  onChange={field.onChange}
+                  onBlur={field.onBlur}
+                />
+              )}
             />
           </div>
 
@@ -745,12 +864,17 @@ export function ReservationForm({
 
           <div className="space-y-2">
             <Label htmlFor="extra_hours_price">Precio horas extra</Label>
-            <Input
-              id="extra_hours_price"
-              type="number"
-              step="0.01"
-              min={0}
-              {...register("extra_hours_price")}
+            <Controller
+              name="extra_hours_price"
+              control={control}
+              render={({ field }) => (
+                <MoneyInput
+                  id="extra_hours_price"
+                  value={field.value}
+                  onChange={field.onChange}
+                  onBlur={field.onBlur}
+                />
+              )}
             />
           </div>
         </CardContent>

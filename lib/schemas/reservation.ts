@@ -61,6 +61,12 @@ export const VALID_TRANSITIONS: Record<ReservationStatus, ReservationStatus[]> =
   mensualidad: ["reservado", "sin_disponibilidad", "cancelado", "utilizado"],
 };
 
+export const MONTHLY_MILEAGE_OPTIONS = [
+  { value: 1000, label: "1.000 km" },
+  { value: 2000, label: "2.000 km" },
+  { value: 3000, label: "3.000 km" },
+] as const;
+
 export const FRANCHISES = ["alquilatucarro", "alquilame", "alquicarros"] as const;
 export const BOOKING_TYPES = ["standard", "standard_with_insurance", "monthly"] as const;
 
@@ -92,19 +98,19 @@ export const reservationSchema = z.object({
   return_hour: z.string().min(1, "Hora de devolución es requerida"),
   selected_days: z.coerce.number().int().min(1),
   // Pricing
-  total_price: z.coerce.number().min(0).default(0),
-  total_price_to_pay: z.coerce.number().min(0).default(0),
-  total_price_localiza: z.coerce.number().min(0).default(0),
-  tax_fee: z.coerce.number().min(0).default(0),
-  iva_fee: z.coerce.number().min(0).default(0),
+  total_price: z.coerce.number().int().min(0).default(0),
+  total_price_to_pay: z.coerce.number().int().min(0).default(0),
+  total_price_localiza: z.coerce.number().int().min(0).default(0),
+  tax_fee: z.coerce.number().int().min(0).default(0),
+  iva_fee: z.coerce.number().int().min(0).default(0),
   // Coverage
   coverage_days: z.coerce.number().int().min(0).default(0),
-  coverage_price: z.coerce.number().min(0).default(0),
+  coverage_price: z.coerce.number().int().min(0).default(0),
   // Extras
-  return_fee: z.coerce.number().min(0).default(0),
+  return_fee: z.coerce.number().int().min(0).default(0),
   extra_hours: z.coerce.number().int().min(0).default(0),
-  extra_hours_price: z.coerce.number().min(0).default(0),
-  total_insurance: z.coerce.number().min(0).default(0),
+  extra_hours_price: z.coerce.number().int().min(0).default(0),
+  total_insurance: z.coerce.number().int().min(0).default(0),
   extra_driver: z.boolean().default(false),
   baby_seat: z.boolean().default(false),
   wash: z.boolean().default(false),

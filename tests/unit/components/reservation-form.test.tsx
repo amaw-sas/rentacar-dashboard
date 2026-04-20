@@ -56,19 +56,42 @@ const referrals = [
   { id: "44444444-4444-4444-4444-444444444444", name: "Daniela", code: "REF1" },
 ];
 
-function renderForm(extra?: { id?: string; defaultStatus?: string }) {
+const vehicleCategories = [
+  {
+    id: "55555555-5555-5555-5555-555555555555",
+    code: "ECON",
+    name: "Económico",
+    rental_company_id: "22222222-2222-2222-2222-222222222222",
+    status: "active",
+  },
+  {
+    id: "66666666-6666-6666-6666-666666666666",
+    code: "SUV",
+    name: "SUV Mediana",
+    rental_company_id: "22222222-2222-2222-2222-222222222222",
+    status: "active",
+  },
+];
+
+function renderForm(extra?: {
+  id?: string;
+  defaultStatus?: string;
+  defaultValues?: Parameters<typeof ReservationForm>[0]["defaultValues"];
+}) {
+  const merged =
+    extra?.defaultValues ??
+    (extra?.defaultStatus
+      ? ({ status: extra.defaultStatus } as Parameters<typeof ReservationForm>[0]["defaultValues"])
+      : undefined);
   return render(
     <ReservationForm
       id={extra?.id}
-      defaultValues={
-        extra?.defaultStatus
-          ? ({ status: extra.defaultStatus } as Parameters<typeof ReservationForm>[0]["defaultValues"])
-          : undefined
-      }
+      defaultValues={merged}
       customers={customers}
       rentalCompanies={rentalCompanies}
       locations={locations}
       referrals={referrals}
+      vehicleCategories={vehicleCategories}
     />,
   );
 }
@@ -160,6 +183,73 @@ describe("ReservationForm layout", () => {
     for (const input of [nombre, tipoId, identificacion, telefono, email]) {
       expect(input).toHaveAttribute("readOnly");
     }
+  });
+
+  it("renders Categoría as a Select (not a free-text input)", () => {
+    renderForm();
+    const trigger = screen.getByLabelText("Categoría");
+    expect(trigger.getAttribute("data-slot")).toBe("select-trigger");
+  });
+
+  it("preselects Kilometraje for the canonical enum values (1000/2000/3000)", () => {
+    renderForm({
+      id: "55555555-5555-5555-5555-555555555555",
+      defaultValues: {
+        monthly_mileage: 2000,
+        status: "reservado",
+      } as Parameters<typeof ReservationForm>[0]["defaultValues"],
+    });
+    const trigger = screen.getByLabelText("Kilometraje");
+    expect(trigger.textContent).toContain("2.000 km");
+  });
+
+  it("preserves a legacy Kilometraje value as a disabled option", () => {
+    renderForm({
+      id: "55555555-5555-5555-5555-555555555555",
+      defaultValues: {
+        monthly_mileage: 2,
+        status: "reservado",
+      } as Parameters<typeof ReservationForm>[0]["defaultValues"],
+    });
+    const trigger = screen.getByLabelText("Kilometraje");
+    expect(trigger.textContent).toContain("2 km (legacy)");
+  });
+
+  it("shows Sin especificar when monthly_mileage is null", () => {
+    renderForm();
+    const trigger = screen.getByLabelText("Kilometraje");
+    expect(trigger.textContent).toContain("Sin especificar");
+  });
+
+  it("filters category options by the selected rental company and keeps a legacy value", () => {
+    const mixed = [
+      ...vehicleCategories,
+      {
+        id: "77777777-7777-7777-7777-777777777777",
+        code: "HERTZ-ONLY",
+        name: "Other Co Category",
+        rental_company_id: "99999999-9999-9999-9999-999999999999",
+        status: "active",
+      },
+    ];
+    render(
+      <ReservationForm
+        id="88888888-8888-8888-8888-888888888888"
+        defaultValues={{
+          rental_company_id: "22222222-2222-2222-2222-222222222222",
+          category_code: "LEGACY-INACTIVE",
+          status: "reservado",
+        } as Parameters<typeof ReservationForm>[0]["defaultValues"]}
+        customers={customers}
+        rentalCompanies={rentalCompanies}
+        locations={locations}
+        referrals={referrals}
+        vehicleCategories={mixed}
+      />,
+    );
+    const trigger = screen.getByLabelText("Categoría");
+    expect(trigger).toBeInTheDocument();
+    expect(trigger.textContent).toContain("LEGACY-INACTIVE");
   });
 
   it("pairs small cards in a 2-column grid on large viewports", () => {

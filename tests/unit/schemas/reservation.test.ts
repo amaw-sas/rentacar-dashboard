@@ -5,6 +5,7 @@ import {
   VALID_TRANSITIONS,
   PRIORITY_STATUSES,
   isPriorityStatus,
+  MONTHLY_MILEAGE_OPTIONS,
 } from "@/lib/schemas/reservation";
 
 describe("reservationSchema", () => {
@@ -131,6 +132,37 @@ describe("reservationSchema", () => {
   it("accepts nota as null", () => {
     const result = reservationSchema.safeParse({ ...valid, nota: null });
     expect(result.success).toBe(true);
+  });
+
+  const MONEY_FIELDS = [
+    "total_price",
+    "total_price_to_pay",
+    "total_price_localiza",
+    "tax_fee",
+    "iva_fee",
+    "coverage_price",
+    "return_fee",
+    "extra_hours_price",
+    "total_insurance",
+  ] as const;
+
+  it.each(MONEY_FIELDS)("rejects decimal %s — must be a positive integer", (field) => {
+    const result = reservationSchema.safeParse({ ...valid, [field]: 150.5 });
+    expect(result.success).toBe(false);
+  });
+
+  it.each(MONEY_FIELDS)("accepts integer %s", (field) => {
+    const result = reservationSchema.safeParse({ ...valid, [field]: 150000 });
+    expect(result.success).toBe(true);
+  });
+
+  it("exposes monthly mileage options mirroring the legacy 1k/2k/3k enum", () => {
+    expect(MONTHLY_MILEAGE_OPTIONS.map((o) => o.value)).toEqual([1000, 2000, 3000]);
+    expect(MONTHLY_MILEAGE_OPTIONS.map((o) => o.label)).toEqual([
+      "1.000 km",
+      "2.000 km",
+      "3.000 km",
+    ]);
   });
 });
 

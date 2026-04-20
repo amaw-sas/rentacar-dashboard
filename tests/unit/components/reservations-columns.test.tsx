@@ -42,9 +42,9 @@ function headerOf(id: string) {
 
 describe("reservations columns (legacy parity)", () => {
   it("exposes columns in legacy order", () => {
-    const order = columns.map(
-      (c) => c.id ?? (c as { accessorKey?: string }).accessorKey,
-    );
+    const order = columns
+      .map((c) => c.id ?? (c as { accessorKey?: string }).accessorKey)
+      .filter((id) => id !== "priority");
     expect(order).toEqual([
       "created_at",
       "customer",

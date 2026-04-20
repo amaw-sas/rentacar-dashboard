@@ -18,6 +18,17 @@ export const RESERVATION_STATUSES = [
 
 export type ReservationStatus = (typeof RESERVATION_STATUSES)[number];
 
+export const PRIORITY_STATUSES: readonly ReservationStatus[] = [
+  "pendiente",
+  "pendiente_modificar",
+  "mensualidad",
+  "pendiente_pago",
+] as const;
+
+export function isPriorityStatus(status: string): boolean {
+  return (PRIORITY_STATUSES as readonly string[]).includes(status);
+}
+
 export const STATUS_LABELS: Record<ReservationStatus, string> = {
   nueva: "Nueva",
   pendiente: "Pendiente",

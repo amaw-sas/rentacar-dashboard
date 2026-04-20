@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { reservationSchema, RESERVATION_STATUSES, VALID_TRANSITIONS } from "@/lib/schemas/reservation";
+import {
+  reservationSchema,
+  RESERVATION_STATUSES,
+  VALID_TRANSITIONS,
+  PRIORITY_STATUSES,
+  isPriorityStatus,
+} from "@/lib/schemas/reservation";
 
 describe("reservationSchema", () => {
   const uuid = "550e8400-e29b-41d4-a716-446655440000";
@@ -133,5 +139,32 @@ describe("VALID_TRANSITIONS", () => {
 
   it("cancelado has no outgoing transitions", () => {
     expect(VALID_TRANSITIONS.cancelado).toHaveLength(0);
+  });
+});
+
+describe("PRIORITY_STATUSES", () => {
+  it("contains exactly pendiente, pendiente_modificar, mensualidad, pendiente_pago", () => {
+    expect([...PRIORITY_STATUSES]).toEqual([
+      "pendiente",
+      "pendiente_modificar",
+      "mensualidad",
+      "pendiente_pago",
+    ]);
+  });
+
+  it("isPriorityStatus returns true for priority statuses", () => {
+    expect(isPriorityStatus("pendiente")).toBe(true);
+    expect(isPriorityStatus("pendiente_modificar")).toBe(true);
+    expect(isPriorityStatus("mensualidad")).toBe(true);
+    expect(isPriorityStatus("pendiente_pago")).toBe(true);
+  });
+
+  it("isPriorityStatus returns false for non-priority statuses", () => {
+    expect(isPriorityStatus("nueva")).toBe(false);
+    expect(isPriorityStatus("reservado")).toBe(false);
+    expect(isPriorityStatus("utilizado")).toBe(false);
+    expect(isPriorityStatus("cancelado")).toBe(false);
+    expect(isPriorityStatus("indeterminado")).toBe(false);
+    expect(isPriorityStatus("")).toBe(false);
   });
 });

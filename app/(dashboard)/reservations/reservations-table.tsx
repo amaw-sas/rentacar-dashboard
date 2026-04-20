@@ -1,8 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   type ColumnFiltersState,
+  type OnChangeFn,
   type SortingState,
   flexRender,
   getCoreRowModel,
@@ -27,6 +28,7 @@ import {
   FRANCHISES,
   RESERVATION_STATUSES,
   STATUS_LABELS,
+  isPriorityStatus,
   type ReservationStatus,
 } from "@/lib/schemas/reservation";
 import { columns, type ReservationRow } from "./columns";
@@ -39,6 +41,7 @@ interface ReservationsTableProps {
 }
 
 const ALL = "__all__";
+const PRIORITY_SORT = { id: "priority", desc: false } as const;
 
 const initialFilters = {
   franchise: ALL,
@@ -82,10 +85,19 @@ export function ReservationsTable({
   referrals,
 }: ReservationsTableProps) {
   const [filters, setFilters] = useState<FilterState>(initialFilters);
-  const [sorting, setSorting] = useState<SortingState>([
+  const [sorting, setSortingRaw] = useState<SortingState>([
+    PRIORITY_SORT,
     { id: "created_at", desc: true },
   ]);
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
+
+  const setSorting = useCallback<OnChangeFn<SortingState>>((updater) => {
+    setSortingRaw((prev) => {
+      const next = typeof updater === "function" ? updater(prev) : updater;
+      const withoutPriority = next.filter((s) => s.id !== "priority");
+      return [PRIORITY_SORT, ...withoutPriority];
+    });
+  }, []);
 
   const filtered = useMemo(() => {
     return data.filter((row) => {
@@ -119,7 +131,10 @@ export function ReservationsTable({
     getPaginationRowModel: getPaginationRowModel(),
     onSortingChange: setSorting,
     onColumnFiltersChange: setColumnFilters,
-    initialState: { pagination: { pageSize: 20 } },
+    initialState: {
+      pagination: { pageSize: 20 },
+      columnVisibility: { priority: false },
+    },
     state: { sorting, columnFilters },
   });
 
@@ -287,24 +302,32 @@ export function ReservationsTable({
 
           <tbody className="[&_tr:last-child]:border-0">
             {table.getRowModel().rows.length ? (
-              table.getRowModel().rows.map((row) => (
-                <tr
-                  key={row.id}
-                  className="border-b border-border transition-colors hover:bg-muted/50"
-                >
-                  {row.getVisibleCells().map((cell) => (
-                    <td
-                      key={cell.id}
-                      className="px-3 py-2 align-middle whitespace-nowrap"
-                    >
-                      {flexRender(
-                        cell.column.columnDef.cell,
-                        cell.getContext(),
-                      )}
-                    </td>
-                  ))}
-                </tr>
-              ))
+              table.getRowModel().rows.map((row) => {
+                const priority = isPriorityStatus(row.original.status);
+                return (
+                  <tr
+                    key={row.id}
+                    data-priority={priority ? "true" : undefined}
+                    className={cn(
+                      "border-b border-border transition-colors hover:bg-muted/50",
+                      priority &&
+                        "bg-amber-50/70 hover:bg-amber-100/60 dark:bg-amber-950/25 dark:hover:bg-amber-900/35",
+                    )}
+                  >
+                    {row.getVisibleCells().map((cell) => (
+                      <td
+                        key={cell.id}
+                        className="px-3 py-2 align-middle whitespace-nowrap"
+                      >
+                        {flexRender(
+                          cell.column.columnDef.cell,
+                          cell.getContext(),
+                        )}
+                      </td>
+                    ))}
+                  </tr>
+                );
+              })
             ) : (
               <tr>
                 <td

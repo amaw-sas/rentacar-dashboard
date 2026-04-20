@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { CopyableText } from "@/components/ui/copyable-text";
 import {
   STATUS_LABELS,
+  isPriorityStatus,
   type ReservationStatus,
 } from "@/lib/schemas/reservation";
 
@@ -112,6 +113,12 @@ function renderPickup(date: string, hour: string) {
 }
 
 export const columns: ColumnDef<ReservationRow, unknown>[] = [
+  {
+    id: "priority",
+    accessorFn: (row) => (isPriorityStatus(row.status) ? 0 : 1),
+    enableHiding: true,
+    enableColumnFilter: false,
+  },
   {
     accessorKey: "created_at",
     header: "Creado",

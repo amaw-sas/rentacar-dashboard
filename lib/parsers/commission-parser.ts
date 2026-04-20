@@ -56,9 +56,9 @@ export async function parseCommissionExcel(
   mainSheet.eachRow((row, rowNumber) => {
     if (rowNumber < DATA_START_ROW) return;
 
-    // Check for TOTAL row — stop parsing
-    const colB = String(row.getCell(2).value ?? "");
-    if (colB.includes("TOTAL FACTURADO") || colB.includes("TOTAL COMISION")) {
+    // Skip aggregate rows (TOTAL FACTURADO, TOTAL COMISION, TOTAL FACTURA CON IVA, etc.)
+    const colB = String(row.getCell(2).value ?? "").trim();
+    if (colB.toUpperCase().startsWith("TOTAL")) {
       return;
     }
 

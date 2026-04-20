@@ -38,9 +38,15 @@ async function createTestExcel(): Promise<Buffer> {
   main.getCell("C8").value = "AVA5W9WH6A";
   main.getCell("D8").value = 189926.39;
   main.getCell("E8").value = { formula: "D8*10%", result: 18992.639 };
-  // Row 9: TOTAL row — parser must stop here
+  // Row 9: TOTAL row — parser must skip
   main.getCell("B9").value = "TOTAL FACTURADO";
   main.getCell("C9").value = 539817.45;
+  // Row 10: TOTAL FACTURA CON IVA — parser must also skip
+  main.getCell("B10").value = "TOTAL FACTURA CON IVA";
+  main.getCell("C10").value = 642383.10;
+  // Row 11: TOTAL COMISION — parser must also skip
+  main.getCell("B11").value = "TOTAL COMISION";
+  main.getCell("C11").value = 71476.29;
 
   // Detail sheet: Hoja1 — enrichment data
   const detail = workbook.addWorksheet("Hoja1");
@@ -62,11 +68,14 @@ async function createTestExcel(): Promise<Buffer> {
 }
 
 describe("parseCommissionExcel", () => {
-  it("parses exactly 3 data rows, stopping before TOTAL FACTURADO", async () => {
+  it("parses exactly 3 data rows, skipping all TOTAL aggregate rows", async () => {
     const buffer = await createTestExcel();
     const rows = await parseCommissionExcel(buffer);
     expect(rows).toHaveLength(3);
-    expect(rows.map((r) => r.customer_name)).not.toContain("TOTAL FACTURADO");
+    const names = rows.map((r) => r.customer_name);
+    expect(names).not.toContain("TOTAL FACTURADO");
+    expect(names).not.toContain("TOTAL FACTURA CON IVA");
+    expect(names).not.toContain("TOTAL COMISION");
   });
 
   it("extracts customer_name from column B", async () => {

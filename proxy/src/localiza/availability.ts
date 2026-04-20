@@ -11,7 +11,7 @@ interface AvailabilityRequest {
   returnDateTime: string;
 }
 
-function extractAvailability(parsed: Record<string, unknown>): Record<string, unknown>[] {
+export function extractAvailability(parsed: Record<string, unknown>): Record<string, unknown>[] {
   try {
     const envelope = parsed["Envelope"] as Record<string, unknown>;
     const body = envelope["Body"] as Record<string, unknown>;
@@ -85,7 +85,9 @@ function extractAvailability(parsed: Record<string, unknown>): Record<string, un
       }
       const taxFee = feeList.find((f) => attr(f, "Purpose") === "6");
       const ivaFee = feeList.find((f) => attr(f, "Purpose") === "7");
-      const returnFee = feeList.find((f) => attr(f, "Purpose") === "38");
+      const returnFee = feeList.find(
+        (f) => attr(f, "Description") === "Taxa de retorno",
+      );
 
       const availInfo = avail["VehAvailInfo"] as Record<string, unknown> | undefined;
       let coverages: unknown[] = [];

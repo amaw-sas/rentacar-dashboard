@@ -195,6 +195,17 @@ export function ReservationForm({
     router.push("/reservations");
   }
 
+  function onInvalid(
+    fieldErrors: Record<string, { message?: string } | undefined>,
+  ) {
+    const details = Object.entries(fieldErrors)
+      .map(([field, err]) => `${field}: ${err?.message ?? "inválido"}`)
+      .join(" · ");
+    setError("root", {
+      message: `Revisa los campos con error — ${details}`,
+    });
+  }
+
   const customerIdTypeLabel = selectedCustomer?.identification_type
     ? ID_TYPE_LABELS[selectedCustomer.identification_type] ?? selectedCustomer.identification_type
     : "";
@@ -202,7 +213,7 @@ export function ReservationForm({
   const persistedStatus = (defaultValues?.status ?? "nueva") as ReservationStatus;
 
   return (
-    <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
+    <form onSubmit={handleSubmit(onSubmit, onInvalid)} className="space-y-6">
       <div className={isEditing ? "grid gap-6 lg:grid-cols-3" : ""}>
       {/* Cliente */}
       <Card className={isEditing ? "lg:col-span-2" : ""}>

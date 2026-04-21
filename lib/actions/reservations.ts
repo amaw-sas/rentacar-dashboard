@@ -51,7 +51,8 @@ export async function createReservation(
 
   if (!parsed.success) {
     const firstError = parsed.error.issues[0];
-    return { error: firstError.message };
+    const path = firstError.path.join(".") || "campo";
+    return { error: `${path}: ${firstError.message}` };
   }
 
   const supabase = await createClient();

@@ -146,14 +146,19 @@ describe("reservationSchema", () => {
     "total_insurance",
   ] as const;
 
-  it.each(MONEY_FIELDS)("rejects decimal %s — must be a positive integer", (field) => {
+  it.each(MONEY_FIELDS)("accepts decimal %s (DB column is numeric(12,2))", (field) => {
     const result = reservationSchema.safeParse({ ...valid, [field]: 150.5 });
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
   });
 
   it.each(MONEY_FIELDS)("accepts integer %s", (field) => {
     const result = reservationSchema.safeParse({ ...valid, [field]: 150000 });
     expect(result.success).toBe(true);
+  });
+
+  it.each(MONEY_FIELDS)("rejects negative %s", (field) => {
+    const result = reservationSchema.safeParse({ ...valid, [field]: -1 });
+    expect(result.success).toBe(false);
   });
 
   it("exposes monthly mileage options mirroring the legacy 1k/2k/3k enum", () => {

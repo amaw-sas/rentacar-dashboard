@@ -25,6 +25,14 @@ export const columns: ColumnDef<ReferralRow, unknown>[] = [
   {
     accessorKey: "name",
     header: "Nombre",
+    cell: ({ row }) => (
+      <Link
+        href={`/referrals/${row.original.id}`}
+        className="font-medium hover:underline"
+      >
+        {row.original.name}
+      </Link>
+    ),
   },
   {
     accessorKey: "code",

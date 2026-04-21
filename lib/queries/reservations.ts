@@ -41,6 +41,18 @@ export async function getCustomerReservations(customerId: string) {
   return data ?? [];
 }
 
+export async function getReferralReservations(referralId: string) {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("reservations")
+    .select(RESERVATION_SELECT)
+    .eq("referral_id", referralId)
+    .order("created_at", { ascending: false });
+
+  if (error) throw error;
+  return data ?? [];
+}
+
 export async function getReservation(id: string) {
   const supabase = await createClient();
   const { data, error } = await supabase

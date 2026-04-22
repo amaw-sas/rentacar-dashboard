@@ -19,6 +19,27 @@ export function extractAvailability(parsed: Record<string, unknown>): Record<str
     const wrapper = (body["OTA_VehAvailRateResponse"] || body) as Record<string, unknown>;
     const rs = (wrapper["OTA_VehAvailRateRS"] || body["OTA_VehAvailRateRS"]) as Record<string, unknown>;
 
+    if (!rs) {
+      console.warn("Localiza response missing OTA_VehAvailRateRS");
+      return [];
+    }
+
+    // Check for Localiza warnings (e.g. LLNRAG009 out-of-schedule, LLNRRE002 no coverage).
+    // Localiza emits <Warnings><Warning ShortText="CODE"/></Warnings> instead of availability data.
+    if (rs["Warnings"]) {
+      const warnings = rs["Warnings"] as Record<string, unknown>;
+      const warningNode = warnings["Warning"];
+      const firstWarning = Array.isArray(warningNode) ? warningNode[0] : warningNode;
+      const shortText =
+        (firstWarning && typeof firstWarning === "object"
+          ? ((firstWarning as Record<string, unknown>)["$"] as Record<string, string> | undefined)?.[
+              "ShortText"
+            ]
+          : undefined) || "unknown";
+      console.warn("Localiza warning:", shortText);
+      return [];
+    }
+
     // Check for Localiza errors
     if (rs["Errors"]) {
       const errors = rs["Errors"] as Record<string, unknown>;
@@ -29,7 +50,15 @@ export function extractAvailability(parsed: Record<string, unknown>): Record<str
     }
 
     const core = rs["VehAvailRSCore"] as Record<string, unknown>;
+    if (!core) {
+      console.warn("Localiza response missing VehAvailRSCore");
+      return [];
+    }
     const vendorAvails = core["VehVendorAvails"] as Record<string, unknown>;
+    if (!vendorAvails) {
+      console.warn("Localiza response missing VehVendorAvails");
+      return [];
+    }
 
     // VehVendorAvail is an array of vendors, collect all VehAvails from each
     let vendorAvailList = vendorAvails["VehVendorAvail"];

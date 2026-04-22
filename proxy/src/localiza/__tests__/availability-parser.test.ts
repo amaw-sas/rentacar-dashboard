@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { extractAvailability } from "../availability";
 
 type FeeFixture = {
@@ -115,5 +115,89 @@ describe("extractAvailability — taxFeePercentage", () => {
     ]);
     const [first] = extractAvailability(parsed);
     expect(first.taxFeePercentage).toBe(0);
+  });
+});
+
+describe("extractAvailability — defensive parsing", () => {
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+  let errorSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    warnSpy.mockRestore();
+    errorSpy.mockRestore();
+  });
+
+  it("returns [] when response has a Warning instead of availability data (e.g. LLNRAG009)", () => {
+    const parsed = {
+      Envelope: {
+        Body: {
+          OTA_VehAvailRateResponse: {
+            OTA_VehAvailRateRS: {
+              Warnings: {
+                Warning: {
+                  $: {
+                    ShortText: "LLNRAG009",
+                    Type: "11",
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    };
+    expect(() => extractAvailability(parsed)).not.toThrow();
+    expect(extractAvailability(parsed)).toEqual([]);
+    // Expected behavior: warn at warn-level with the ShortText; NOT an error-level log.
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Localiza warning"),
+      "LLNRAG009",
+    );
+    expect(errorSpy).not.toHaveBeenCalled();
+  });
+
+  it("returns [] when OTA_VehAvailRateRS is missing VehAvailRSCore entirely", () => {
+    const parsed = {
+      Envelope: {
+        Body: {
+          OTA_VehAvailRateResponse: {
+            OTA_VehAvailRateRS: {},
+          },
+        },
+      },
+    };
+    expect(() => extractAvailability(parsed)).not.toThrow();
+    expect(extractAvailability(parsed)).toEqual([]);
+    // Expected: warn at warn-level about missing VehAvailRSCore; NOT caught as unexpected error.
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("VehAvailRSCore"),
+    );
+    expect(errorSpy).not.toHaveBeenCalled();
+  });
+
+  it("returns [] when VehAvailRSCore is present but VehVendorAvails is missing", () => {
+    const parsed = {
+      Envelope: {
+        Body: {
+          OTA_VehAvailRateResponse: {
+            OTA_VehAvailRateRS: {
+              VehAvailRSCore: {},
+            },
+          },
+        },
+      },
+    };
+    expect(() => extractAvailability(parsed)).not.toThrow();
+    expect(extractAvailability(parsed)).toEqual([]);
+    // Expected: warn at warn-level about missing VehVendorAvails; NOT caught as unexpected error.
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("VehVendorAvails"),
+    );
+    expect(errorSpy).not.toHaveBeenCalled();
   });
 });

@@ -121,6 +121,7 @@ export function extractAvailability(parsed: Record<string, unknown>): Record<str
         extraHoursUnityAmount: calc(extraHoursCharge, "UnitCharge"),
         extraHoursTotalAmount: calc(extraHoursCharge, "Total"),
         taxFeeAmount: parseFloat(attr(taxFee, "Amount") || "0"),
+        // Percentage lives in the Calculation subnode, not as a Fee attribute.
         taxFeePercentage: calc(taxFee, "Percentage"),
         IVAFeeAmount: parseFloat(attr(ivaFee, "Amount") || "0"),
         returnFeeAmount: parseFloat(attr(returnFee, "Amount") || "0"),

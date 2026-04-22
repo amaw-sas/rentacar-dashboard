@@ -1,7 +1,19 @@
 import { describe, it, expect } from "vitest";
 import { extractAvailability } from "../availability";
 
-function buildResponse(fees: Array<Record<string, string>>) {
+type FeeFixture = {
+  attrs: Record<string, string>;
+  calculation?: Record<string, string>;
+};
+
+function buildResponse(fees: Array<Record<string, string> | FeeFixture>) {
+  const normalizedFees = fees.map((fee) => {
+    const fixture = "attrs" in fee ? fee : { attrs: fee };
+    const node: Record<string, unknown> = { $: fixture.attrs };
+    if (fixture.calculation) node.Calculation = { $: fixture.calculation };
+    return node;
+  });
+
   return {
     Envelope: {
       Body: {
@@ -37,7 +49,7 @@ function buildResponse(fees: Array<Record<string, string>>) {
                             },
                             Reference: { $: { ID: "ref-1" } },
                             Fees: {
-                              Fee: fees.map((attrs) => ({ $: attrs })),
+                              Fee: normalizedFees,
                             },
                           },
                         },
@@ -80,5 +92,28 @@ describe("extractAvailability — returnFeeAmount", () => {
     ]);
     const [first] = extractAvailability(parsed);
     expect(first.returnFeeAmount).toBe(0);
+  });
+});
+
+describe("extractAvailability — taxFeePercentage", () => {
+  it("reads taxFeePercentage from Calculation on the Fee with Purpose='6'", () => {
+    const parsed = buildResponse([
+      {
+        attrs: { Description: "Taxa", Amount: "49060", Purpose: "6" },
+        calculation: { Percentage: "10", Total: "49060" },
+      },
+      { Description: "IVA", Amount: "102536", Purpose: "7" },
+    ]);
+    const [first] = extractAvailability(parsed);
+    expect(first.taxFeePercentage).toBe(10);
+    expect(first.taxFeeAmount).toBe(49060);
+  });
+
+  it("returns 0 when the Taxa Fee has no Calculation subnode", () => {
+    const parsed = buildResponse([
+      { Description: "Taxa", Amount: "49060", Purpose: "6" },
+    ]);
+    const [first] = extractAvailability(parsed);
+    expect(first.taxFeePercentage).toBe(0);
   });
 });

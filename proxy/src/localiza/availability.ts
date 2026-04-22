@@ -121,6 +121,7 @@ export function extractAvailability(parsed: Record<string, unknown>): Record<str
         extraHoursUnityAmount: calc(extraHoursCharge, "UnitCharge"),
         extraHoursTotalAmount: calc(extraHoursCharge, "Total"),
         taxFeeAmount: parseFloat(attr(taxFee, "Amount") || "0"),
+        taxFeePercentage: calc(taxFee, "Percentage"),
         IVAFeeAmount: parseFloat(attr(ivaFee, "Amount") || "0"),
         returnFeeAmount: parseFloat(attr(returnFee, "Amount") || "0"),
         discountAmount: discounts[0] ? parseFloat(attr(discounts[0], "Amount") || "0") : 0,

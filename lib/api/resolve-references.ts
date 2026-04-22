@@ -30,8 +30,9 @@ export async function resolveLocationByCode(
 }
 
 /**
- * Find a customer by identification_number OR email.
- * Creates the customer if not found.
+ * Find a customer by identification_number (canonical key).
+ * If found, refresh contact fields from the reservation input (name, phone, email, identification_type).
+ * If not found, create a new customer.
  * Returns the customer id.
  */
 export async function findOrCreateCustomer(
@@ -39,27 +40,41 @@ export async function findOrCreateCustomer(
 ): Promise<string> {
   const supabase = createAdminClient();
 
-  // Try finding by identification_number first
-  const { data: byId } = await supabase
+  const { data: existing } = await supabase
     .from("customers")
-    .select("id")
+    .select("id, first_name, last_name, identification_type, phone, email")
     .eq("identification_number", input.identification_number)
     .limit(1)
     .single();
 
-  if (byId) return byId.id;
+  if (existing) {
+    const needsUpdate =
+      existing.first_name !== input.first_name ||
+      existing.last_name !== input.last_name ||
+      existing.identification_type !== input.identification_type ||
+      existing.phone !== input.phone ||
+      existing.email !== input.email;
 
-  // Try finding by email
-  const { data: byEmail } = await supabase
-    .from("customers")
-    .select("id")
-    .eq("email", input.email)
-    .limit(1)
-    .single();
+    if (needsUpdate) {
+      const { error: updateError } = await supabase
+        .from("customers")
+        .update({
+          first_name: input.first_name,
+          last_name: input.last_name,
+          identification_type: input.identification_type,
+          phone: input.phone,
+          email: input.email,
+        })
+        .eq("id", existing.id);
 
-  if (byEmail) return byEmail.id;
+      if (updateError) {
+        throw new Error(`Error al actualizar cliente: ${updateError.message}`);
+      }
+    }
 
-  // Create new customer
+    return existing.id;
+  }
+
   const { data: created, error } = await supabase
     .from("customers")
     .insert({

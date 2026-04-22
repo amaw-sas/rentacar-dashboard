@@ -21,14 +21,8 @@ export async function createCustomer(
     .insert(parsed.data);
 
   if (error) {
-    if (error.code === "23505") {
-      if (error.message.includes("identification_number")) {
-        return { error: "Ya existe un cliente con ese número de identificación" };
-      }
-      if (error.message.includes("email")) {
-        return { error: "Ya existe un cliente con ese email" };
-      }
-      return { error: "Ya existe un cliente con esos datos" };
+    if (error.code === "23505" && error.message.includes("identification_number")) {
+      return { error: "Ya existe un cliente con ese número de identificación" };
     }
     return { error: error.message };
   }
@@ -56,14 +50,8 @@ export async function updateCustomer(
     .eq("id", id);
 
   if (error) {
-    if (error.code === "23505") {
-      if (error.message.includes("identification_number")) {
-        return { error: "Ya existe un cliente con ese número de identificación" };
-      }
-      if (error.message.includes("email")) {
-        return { error: "Ya existe un cliente con ese email" };
-      }
-      return { error: "Ya existe un cliente con esos datos" };
+    if (error.code === "23505" && error.message.includes("identification_number")) {
+      return { error: "Ya existe un cliente con ese número de identificación" };
     }
     return { error: error.message };
   }

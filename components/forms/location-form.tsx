@@ -52,7 +52,7 @@ export function LocationForm({ defaultValues, id, rentalCompanies, cities }: Loc
       pickup_map: "",
       return_address: null,
       return_map: null,
-      city_id: null,
+      city_id: "",
       slug: "",
       status: "active",
       ...defaultValues,
@@ -128,33 +128,26 @@ export function LocationForm({ defaultValues, id, rentalCompanies, cities }: Loc
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="city">Ciudad (texto)</Label>
-            <Input id="city" {...register("city")} />
+            <Label htmlFor="city_id">Ciudad</Label>
+            <Select
+              value={cityId || ""}
+              onValueChange={(value) => setValue("city_id", value)}
+            >
+              <SelectTrigger id="city_id">
+                <SelectValue placeholder="Seleccionar ciudad" />
+              </SelectTrigger>
+              <SelectContent>
+                {(cities ?? []).map((c) => (
+                  <SelectItem key={c.id} value={c.id}>
+                    {c.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {errors.city_id && (
+              <p className="text-sm text-destructive">{errors.city_id.message}</p>
+            )}
           </div>
-
-          {cities && cities.length > 0 && (
-            <div className="space-y-2">
-              <Label htmlFor="city_id">Ciudad (referencia)</Label>
-              <Select
-                value={cityId ?? "__none__"}
-                onValueChange={(value) =>
-                  setValue("city_id", value === "__none__" ? null : value)
-                }
-              >
-                <SelectTrigger id="city_id">
-                  <SelectValue placeholder="Seleccionar ciudad (opcional)" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none__">Sin asignar</SelectItem>
-                  {cities.map((c) => (
-                    <SelectItem key={c.id} value={c.id}>
-                      {c.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          )}
 
           <div className="space-y-2 sm:col-span-2">
             <Label htmlFor="pickup_address">Dirección de recogida</Label>

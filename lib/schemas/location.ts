@@ -10,10 +10,7 @@ export const locationSchema = z.object({
   return_address: z.string().nullable().default(null),
   return_map: z.string().nullable().default(null),
   schedule: z.record(z.string(), z.string()).default({}),
-  city_id: z.preprocess(
-    (val) => (val === "" || val === undefined ? null : val),
-    z.string().uuid("ID de ciudad inválido").nullable().default(null)
-  ),
+  city_id: z.string().uuid("Debes seleccionar una ciudad"),
   slug: z.string().default(""),
   status: z.enum(["active", "inactive"]).default("active"),
 });

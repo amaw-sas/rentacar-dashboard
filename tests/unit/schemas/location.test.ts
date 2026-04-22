@@ -6,7 +6,8 @@ describe("locationSchema", () => {
     rental_company_id: "550e8400-e29b-41d4-a716-446655440000",
     code: "AABOT",
     name: "Bogotá Aeropuerto",
-    city: "Bogotá",
+    city: "",
+    city_id: "650e8400-e29b-41d4-a716-446655440111",
     pickup_address: "Aeropuerto El Dorado, Piso 1 Puerta 7",
     pickup_map: "https://maps.app.goo.gl/abc",
     schedule: { mon: "08:00-18:00" },
@@ -60,7 +61,16 @@ describe("locationSchema", () => {
       expect(result.data.return_address).toBeNull();
       expect(result.data.return_map).toBeNull();
       expect(result.data.status).toBe("active");
-      expect(result.data.city).toBe("Bogotá");
     }
+  });
+
+  it("requires city_id as uuid — city is now resolved via the cities catalog", () => {
+    const result = locationSchema.safeParse({ ...valid, city_id: null });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects empty string for city_id", () => {
+    const result = locationSchema.safeParse({ ...valid, city_id: "" });
+    expect(result.success).toBe(false);
   });
 });

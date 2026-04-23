@@ -2,10 +2,6 @@ import { format } from "date-fns";
 import { es } from "date-fns/locale";
 import { parse } from "date-fns";
 import { createClient } from "@/lib/supabase/server";
-import { sendEmail } from "@/lib/email/send";
-import { renderEmail } from "@/lib/email/render";
-import { PickupReminderEmail } from "@/lib/email/templates/pickup-reminder";
-import { PostPickupReminderEmail } from "@/lib/email/templates/post-pickup-reminder";
 import { addContact, sendTemplateMessage } from "@/lib/wati/client";
 import {
   getWeekPickupReservations,
@@ -122,43 +118,10 @@ export async function sendPickupReminders(type: string) {
       const fullName = `${customer.first_name} ${customer.last_name}`;
       const branding = await getFranchiseBranding(reservation.franchise);
 
-      // Send email
+      // Email notifications disabled pending business decision — historically
+      // unclear if customers ever read them; Wati is the confirmed effective
+      // channel. Restore via `git revert` if directiva wants emails back.
       const isPost = isPostReminder(reminderType);
-
-      if (isPost) {
-        const html = await renderEmail(
-          PostPickupReminderEmail({
-            ...branding,
-            customerName: fullName,
-          })
-        );
-
-        await sendEmail({
-          franchise: reservation.franchise,
-          to: customer.email,
-          subject: "¿Cómo va tu experiencia?",
-          html,
-        });
-      } else {
-        const html = await renderEmail(
-          PickupReminderEmail({
-            ...branding,
-            customerName: fullName,
-            reserveCode: reservation.reservation_code,
-            pickupDate: formatPickupDate(reservation.pickup_date),
-            pickupHour: formatPickupHour(reservation.pickup_hour),
-            pickupLocation: location.name,
-            pickupAddress: location.pickup_address,
-          })
-        );
-
-        await sendEmail({
-          franchise: reservation.franchise,
-          to: customer.email,
-          subject: "Recordatorio de tu reserva",
-          html,
-        });
-      }
 
       // Send WhatsApp via Wati
       if (customer.phone) {

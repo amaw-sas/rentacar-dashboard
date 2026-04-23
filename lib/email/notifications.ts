@@ -150,7 +150,7 @@ export async function sendReservationNotifications(
     const localizaBcc = process.env.LOCALIZA_NOTIFICATION_BCC_EMAIL;
 
     if (status === "reservado") {
-      const { html, text } = await renderEmail(
+      const html = await renderEmail(
         ReservedClientEmail({
           ...branding,
           customerName,
@@ -184,14 +184,13 @@ export async function sendReservationNotifications(
         to: customerEmail,
         subject: "Reserva Aprobada",
         html,
-        text,
         reservationId,
         notificationType: "reservado_cliente",
       });
     }
 
     if (status === "pendiente") {
-      const { html: clientHtml, text: clientText } = await renderEmail(
+      const clientHtml = await renderEmail(
         PendingClientEmail({
           ...branding,
           customerName,
@@ -211,13 +210,12 @@ export async function sendReservationNotifications(
         to: customerEmail,
         subject: "Reserva Pendiente",
         html: clientHtml,
-        text: clientText,
         reservationId,
         notificationType: "pendiente_cliente",
       });
 
       if (localizaEmail) {
-        const { html: localizaHtml, text: localizaText } = await renderEmail(
+        const localizaHtml = await renderEmail(
           PendingLocalizaEmail({
             ...branding,
             customerName,
@@ -243,7 +241,6 @@ export async function sendReservationNotifications(
           to: localizaEmail,
           subject: "Notificación de reserva en espera",
           html: localizaHtml,
-          text: localizaText,
           bcc: localizaBcc,
           reservationId,
           notificationType: "pendiente_localiza",
@@ -252,7 +249,7 @@ export async function sendReservationNotifications(
     }
 
     if (status === "sin_disponibilidad") {
-      const { html, text } = await renderEmail(
+      const html = await renderEmail(
         FailedClientEmail({
           ...branding,
           customerName,
@@ -268,7 +265,6 @@ export async function sendReservationNotifications(
         to: customerEmail,
         subject: "Reserva Sin Disponibilidad",
         html,
-        text,
         reservationId,
         notificationType: "sin_disponibilidad_cliente",
       });
@@ -276,7 +272,7 @@ export async function sendReservationNotifications(
 
     // Total insurance notification to Localiza (independent of status)
     if (reservation.total_insurance > 0 && localizaEmail) {
-      const { html, text } = await renderEmail(
+      const html = await renderEmail(
         TotalInsuranceLocalizaEmail({
           ...branding,
           customerName,
@@ -301,7 +297,6 @@ export async function sendReservationNotifications(
         to: localizaEmail,
         subject: "Notificación de reserva con seguro total",
         html,
-        text,
         bcc: localizaBcc,
         reservationId,
         notificationType: "seguro_total_localiza",
@@ -311,7 +306,7 @@ export async function sendReservationNotifications(
     // Extras notification to Localiza (extra_driver, baby_seat, wash — without total insurance)
     const hasExtras = reservation.extra_driver || reservation.baby_seat || reservation.wash;
     if (hasExtras && reservation.total_insurance <= 0 && localizaEmail) {
-      const { html, text } = await renderEmail(
+      const html = await renderEmail(
         ExtrasLocalizaEmail({
           ...branding,
           customerName,
@@ -336,7 +331,6 @@ export async function sendReservationNotifications(
         to: localizaEmail,
         subject: "Notificación de reserva con servicios adicionales",
         html,
-        text,
         bcc: localizaBcc,
         reservationId,
         notificationType: "extras_localiza",
@@ -345,7 +339,7 @@ export async function sendReservationNotifications(
 
     // Monthly reservation notification to client
     if (status === "mensualidad") {
-      const { html: clientHtml, text: clientText } = await renderEmail(
+      const clientHtml = await renderEmail(
         MonthlyClientEmail({
           ...branding,
           customerName,
@@ -366,7 +360,6 @@ export async function sendReservationNotifications(
         to: customerEmail,
         subject: "Solicitud de reserva mensual recibida",
         html: clientHtml,
-        text: clientText,
         reservationId,
         notificationType: "mensualidad_cliente",
       });
@@ -375,7 +368,7 @@ export async function sendReservationNotifications(
     // Monthly reservation notification to Localiza
     if (status === "mensualidad" && localizaEmail) {
       await delay();
-      const { html, text } = await renderEmail(
+      const html = await renderEmail(
         MonthlyLocalizaEmail({
           ...branding,
           customerName,
@@ -400,7 +393,6 @@ export async function sendReservationNotifications(
         to: localizaEmail,
         subject: "Notificación de reserva mensual",
         html,
-        text,
         bcc: localizaBcc,
         reservationId,
         notificationType: "mensualidad_localiza",
@@ -433,7 +425,7 @@ export async function sendReservationRequestEmail(
     const returnLocation = (reservation.return_location as { name: string })?.name ?? "";
     const categoryName = reservation.category_code;
 
-    const { html, text } = await renderEmail(
+    const html = await renderEmail(
       ReservationRequestEmail({
         ...branding,
         customerName,
@@ -455,7 +447,6 @@ export async function sendReservationRequestEmail(
       to: customer.email,
       subject: "Solicitud de reserva en proceso",
       html,
-      text,
       reservationId,
       notificationType: "solicitud_reserva",
     });

@@ -14,6 +14,9 @@ describe("rentalCompanySchema", () => {
     extra_driver_day_price: 12000,
     baby_seat_day_price: 12000,
     wash_price: 20000,
+    wash_onsite_price: 30000,
+    wash_deep_price: 150000,
+    wash_deep_upholstery_price: 225000,
     status: "active" as const,
   };
 
@@ -53,6 +56,37 @@ describe("rentalCompanySchema", () => {
     if (result.success) {
       expect(result.data.status).toBe("active");
       expect(result.data.extra_driver_day_price).toBe(0);
+      expect(result.data.wash_onsite_price).toBe(0);
+      expect(result.data.wash_deep_price).toBe(0);
+      expect(result.data.wash_deep_upholstery_price).toBe(0);
     }
+  });
+
+  it("coerces wash price strings (from FormData) to numbers", () => {
+    const result = rentalCompanySchema.safeParse({
+      ...valid,
+      wash_onsite_price: "30000",
+      wash_deep_price: "150000",
+      wash_deep_upholstery_price: "225000",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.wash_onsite_price).toBe(30000);
+      expect(result.data.wash_deep_price).toBe(150000);
+      expect(result.data.wash_deep_upholstery_price).toBe(225000);
+    }
+  });
+
+  it("rejects negative wash prices", () => {
+    expect(
+      rentalCompanySchema.safeParse({ ...valid, wash_onsite_price: -1 }).success
+    ).toBe(false);
+    expect(
+      rentalCompanySchema.safeParse({ ...valid, wash_deep_price: -1 }).success
+    ).toBe(false);
+    expect(
+      rentalCompanySchema.safeParse({ ...valid, wash_deep_upholstery_price: -1 })
+        .success
+    ).toBe(false);
   });
 });

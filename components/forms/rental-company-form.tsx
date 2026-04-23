@@ -53,6 +53,9 @@ export function RentalCompanyForm({ defaultValues, id }: RentalCompanyFormProps)
       extra_driver_day_price: 0,
       baby_seat_day_price: 0,
       wash_price: 0,
+      wash_onsite_price: 0,
+      wash_deep_price: 0,
+      wash_deep_upholstery_price: 0,
       status: "active",
       ...defaultValues,
     },
@@ -187,7 +190,7 @@ export function RentalCompanyForm({ defaultValues, id }: RentalCompanyFormProps)
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="wash_price">Precio lavado</Label>
+            <Label htmlFor="wash_price">Precio lavado (prepago al recoger)</Label>
             <Input
               id="wash_price"
               type="number"
@@ -197,6 +200,53 @@ export function RentalCompanyForm({ defaultValues, id }: RentalCompanyFormProps)
             {errors.wash_price && (
               <p className="text-sm text-destructive">
                 {errors.wash_price.message}
+              </p>
+            )}
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="wash_onsite_price">Precio lavado (al devolver)</Label>
+            <Input
+              id="wash_onsite_price"
+              type="number"
+              step="0.01"
+              {...register("wash_onsite_price")}
+            />
+            {errors.wash_onsite_price && (
+              <p className="text-sm text-destructive">
+                {errors.wash_onsite_price.message}
+              </p>
+            )}
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="wash_deep_price">Precio lavado profundo (con aspirado)</Label>
+            <Input
+              id="wash_deep_price"
+              type="number"
+              step="0.01"
+              {...register("wash_deep_price")}
+            />
+            {errors.wash_deep_price && (
+              <p className="text-sm text-destructive">
+                {errors.wash_deep_price.message}
+              </p>
+            )}
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="wash_deep_upholstery_price">
+              Precio lavado profundo + tapicería
+            </Label>
+            <Input
+              id="wash_deep_upholstery_price"
+              type="number"
+              step="0.01"
+              {...register("wash_deep_upholstery_price")}
+            />
+            {errors.wash_deep_upholstery_price && (
+              <p className="text-sm text-destructive">
+                {errors.wash_deep_upholstery_price.message}
               </p>
             )}
           </div>

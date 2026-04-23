@@ -33,6 +33,11 @@ interface ReservedClientEmailProps {
   extraDriver: boolean;
   babySeat: boolean;
   wash: boolean;
+  extraDriverDayPrice: number;
+  washPrice: number;
+  washOnsitePrice: number;
+  washDeepPrice: number;
+  washDeepUpholsteryPrice: number;
 }
 
 export function ReservedClientEmail(props: ReservedClientEmailProps) {
@@ -113,10 +118,129 @@ export function ReservedClientEmail(props: ReservedClientEmailProps) {
 
       <Hr style={divider} />
 
-      <Text style={sectionTitle}>Requisitos para la Recogida</Text>
-      <Text style={requirement}>• Tarjeta de crédito a nombre del titular</Text>
-      <Text style={requirement}>• Documento de identidad vigente</Text>
-      <Text style={requirement}>• Licencia de conducción vigente</Text>
+      <Text style={sectionTitle}>Antes de recoger el vehículo</Text>
+      <Text style={paragraph}>
+        Preséntese en el lugar de recogida 30 minutos antes de la hora
+        programada con los siguientes documentos:
+      </Text>
+      <Text style={requirement}>
+        <strong>1. Tarjeta de Crédito.</strong> Sólo se reciben pagos con
+        tarjetas de crédito físicas, NO se aceptan pagos en efectivo ni otros
+        medios de pago.
+      </Text>
+      <Text style={requirement}>
+        <strong>2. Cédula o Pasaporte.</strong>
+      </Text>
+      <Text style={requirement}>
+        <strong>3. Licencia de Conducción.</strong> La licencia determina el
+        documento de identificación a presentar: si tiene una licencia de
+        conducción colombiana debe presentar su cédula colombiana (no se acepta
+        pasaporte). Si tiene una licencia extranjera debe presentar su
+        pasaporte, incluso si es colombiano residente en el exterior.
+      </Text>
+      <Text style={paragraph}>
+        Verifique el cupo y la fecha de vencimiento de su tarjeta de crédito y
+        la fecha de vencimiento de su licencia de conducción.
+      </Text>
+
+      <Hr style={divider} />
+
+      <Text style={sectionTitle}>Conductor adicional</Text>
+      <Text style={paragraph}>
+        Si el vehículo será conducido por otra(s) persona(s) diferente(s) al
+        titular del contrato, se debe cancelar en la agencia un cargo adicional
+        de {formatCOP(props.extraDriverDayPrice)} pesos diarios por su seguro ya
+        que se hace responsable del vehículo. Los conductores adicionales y el
+        titular de la tarjeta de crédito deben estar presentes para la firma de
+        contratos.
+      </Text>
+
+      <Hr style={divider} />
+
+      <Text style={sectionTitle}>Durante la recogida del vehículo</Text>
+      <Text style={requirement}>
+        • Elija el vehículo de su agrado según disponibilidad y gama
+        seleccionada (tenga en cuenta las restricciones de movilidad de las
+        zonas a transitar).
+      </Text>
+      <Text style={requirement}>
+        • Verifique que el vehículo esté limpio y con el tanque lleno.
+      </Text>
+      <Text style={requirement}>
+        • Realice un registro fotográfico del vehículo si lo considera
+        necesario.
+      </Text>
+      <Text style={requirement}>
+        • Puede adquirir o rechazar servicios adicionales según su necesidad
+        como son: seguro total, seguro de conductor adicional, entrega en otras
+        sedes, lavada prepagada, silla de bebé y GPS (los 2 últimos bajo
+        disponibilidad de la agencia).
+      </Text>
+
+      <Hr style={divider} />
+
+      <Text style={sectionTitle}>Durante el periodo de renta</Text>
+      <Text style={requirement}>
+        • En caso de emergencia o asistencia en carretera comuníquese de
+        inmediato con las líneas de atención, las 24 horas del día, los 365 días
+        del año.
+      </Text>
+      <Text style={requirement}>
+        <strong>Línea de atención AUTOSEGURO las 24 horas / 4-4442001
+        Asistencia #570</strong>
+      </Text>
+      <Text style={requirement}>
+        • Evite multas, tenga en cuenta las restricciones de movilidad
+        "pico y placa" de las diferentes ciudades por donde transite.
+      </Text>
+      <Text style={requirement}>
+        • Puede recorrer todo el país. Si adquirió una mensualidad tenga en
+        cuenta los kilómetros contratados para evitar sobrecostos.
+      </Text>
+      <Text style={requirement}>
+        • No puede ser usado para trabajos en aplicaciones de movilidad como
+        Uber, Cabify o similares.
+      </Text>
+      <Text style={requirement}>• El vehículo no puede salir del país.</Text>
+
+      <Hr style={divider} />
+
+      <Text style={sectionTitle}>Antes de retornar el vehículo</Text>
+      <Text style={requirement}>
+        • Verifique que el tanque esté lleno y el vehículo limpio para evitar
+        costos adicionales.
+      </Text>
+      <Text style={requirement}>
+        • Verifique el interior del vehículo y no olvide sus artículos
+        personales.
+      </Text>
+
+      <Hr style={divider} />
+
+      <Text style={sectionTitle}>Lavado de vehículo</Text>
+      <Text style={paragraph}>
+        El vehículo debe entregarse en las mismas condiciones de limpieza en
+        que lo recibió. Contamos con el servicio de lavado al momento de hacer
+        su reserva, el costo será de {formatCOP(props.washPrice)} IVA incluido.
+        Si, por el contrario, solicita el servicio al momento de devolver el
+        vehículo en la agencia, el valor a pagar será de{" "}
+        {formatCOP(props.washOnsitePrice)} IVA incluido.
+      </Text>
+      <Text style={paragraph}>
+        Se aplicarán cobros adicionales en los siguientes casos: si transportó
+        mascotas en el vehículo, si el vehículo regresa con olor fuerte a
+        cigarrillo o alcohol, o si condujo en condiciones adversas y se
+        evidencia exceso de barro. En estos casos, el servicio de lavado tendrá
+        un costo de:
+      </Text>
+      <Text style={requirement}>
+        • Lavado completo con aspirado: {formatCOP(props.washDeepPrice)} IVA
+        incluido.
+      </Text>
+      <Text style={requirement}>
+        • Lavado completo con aspirado y tapicería:{" "}
+        {formatCOP(props.washDeepUpholsteryPrice)} IVA incluido.
+      </Text>
 
       <Hr style={divider} />
 
@@ -221,9 +345,17 @@ const extraItem = {
   paddingLeft: "8px",
 };
 
+const paragraph = {
+  fontSize: "13px",
+  color: "#3f3f46",
+  lineHeight: "1.6",
+  margin: "0 0 12px",
+};
+
 const requirement = {
   fontSize: "13px",
   color: "#3f3f46",
+  lineHeight: "1.6",
   margin: "4px 0",
   paddingLeft: "8px",
 };

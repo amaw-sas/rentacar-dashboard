@@ -12,6 +12,9 @@ export const rentalCompanySchema = z.object({
   extra_driver_day_price: z.coerce.number().min(0).default(0),
   baby_seat_day_price: z.coerce.number().min(0).default(0),
   wash_price: z.coerce.number().min(0).default(0),
+  wash_onsite_price: z.coerce.number().min(0).default(0),
+  wash_deep_price: z.coerce.number().min(0).default(0),
+  wash_deep_upholstery_price: z.coerce.number().min(0).default(0),
   status: z.enum(["active", "inactive"]).default("active"),
 });
 

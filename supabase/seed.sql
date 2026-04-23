@@ -58,12 +58,16 @@ BEGIN
   INSERT INTO public.rental_companies (
     name, code, commission_rate_min, commission_rate_max,
     contact_name, contact_email, contact_phone,
-    api_base_url, extra_driver_day_price, baby_seat_day_price, wash_price, status
+    api_base_url, extra_driver_day_price, baby_seat_day_price,
+    wash_price, wash_onsite_price, wash_deep_price, wash_deep_upholstery_price,
+    status
   ) VALUES (
     'Localiza', 'localiza', 10, 15,
     '', '', '',
     'https://nr.localiza.com/localiza/nucleoreserva/reserva/OTA2013A.svc',
-    12000, 12000, 20000, 'active'
+    12000, 12000,
+    20000, 30000, 150000, 225000,
+    'active'
   )
   ON CONFLICT (code) DO NOTHING
   RETURNING id INTO localiza_id;

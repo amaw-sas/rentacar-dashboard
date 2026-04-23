@@ -26,7 +26,7 @@
     },
     {
       "path": "/api/cron/check-pending",
-      "schedule": "0 15 * * *"
+      "schedule": "*/30 * * * *"
     }
   ]
 }

@@ -7,6 +7,7 @@ interface SendEmailOptions {
   to: string;
   subject: string;
   html: string;
+  text?: string;
   bcc?: string;
   reservationId?: string;
   notificationType?: string;
@@ -15,12 +16,37 @@ interface SendEmailOptions {
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 8000;
 
+const FRANCHISE_ENV_PREFIX: Record<string, string> = {
+  alquilatucarro: "ALQUILATUCARRO",
+  alquilame: "ALQUILAME",
+  alquicarros: "ALQUICARROS",
+};
+
+const mismatchWarned = new Set<string>();
+
+function warnIfFromMismatch(franchise: string, senderEmail: string) {
+  if (mismatchWarned.has(franchise)) return;
+  const prefix = FRANCHISE_ENV_PREFIX[franchise];
+  if (!prefix) return;
+  const smtpUser = process.env[`${prefix}_MAIL_USER`];
+  if (!smtpUser) return;
+  if (smtpUser.toLowerCase() !== senderEmail.toLowerCase()) {
+    mismatchWarned.add(franchise);
+    console.warn(
+      `[email] DMARC alignment risk for "${franchise}": From=<${senderEmail}> ` +
+        `does not match SMTP auth user=<${smtpUser}>. Gmail/Outlook may mark as spam. ` +
+        `Align franchises.sender_email with ${prefix}_MAIL_USER or migrate to a provider ` +
+        `with DKIM for the From domain.`
+    );
+  }
+}
+
 async function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export async function sendEmail(options: SendEmailOptions): Promise<void> {
-  const { franchise, to, subject, html, bcc, reservationId, notificationType } = options;
+  const { franchise, to, subject, html, text, bcc, reservationId, notificationType } = options;
 
   const supabase = createAdminClient();
   const { data: franchiseData, error: franchiseError } = await supabase
@@ -37,14 +63,22 @@ export async function sendEmail(options: SendEmailOptions): Promise<void> {
     throw new Error(`Franchise "${franchise}" not found`);
   }
 
+  warnIfFromMismatch(franchise, franchiseData.sender_email);
+
   const transporter = createTransporter(franchise);
 
   const mailOptions = {
     from: `"${franchiseData.sender_name}" <${franchiseData.sender_email}>`,
+    replyTo: franchiseData.sender_email,
     to,
     subject,
     html,
-    ...(bcc && { bcc }),
+    ...(text ? { text } : {}),
+    ...(bcc ? { bcc } : {}),
+    headers: {
+      "List-Unsubscribe": `<mailto:${franchiseData.sender_email}?subject=Unsubscribe>`,
+      "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+    },
   };
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {

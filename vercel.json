@@ -1,27 +1,27 @@
 {
   "crons": [
     {
-      "path": "/api/cron/pickup-reminders?type=week",
+      "path": "/api/cron/pickup-reminders/week",
       "schedule": "0 15 * * *"
     },
     {
-      "path": "/api/cron/pickup-reminders?type=three-days",
+      "path": "/api/cron/pickup-reminders/three-days",
       "schedule": "0 14 * * *"
     },
     {
-      "path": "/api/cron/pickup-reminders?type=same-day-morning",
+      "path": "/api/cron/pickup-reminders/same-day-morning",
       "schedule": "0 13 * * *"
     },
     {
-      "path": "/api/cron/pickup-reminders?type=same-day-late",
+      "path": "/api/cron/pickup-reminders/same-day-late",
       "schedule": "0 1 * * *"
     },
     {
-      "path": "/api/cron/pickup-reminders?type=post-morning",
+      "path": "/api/cron/pickup-reminders/post-morning",
       "schedule": "0 13 * * *"
     },
     {
-      "path": "/api/cron/pickup-reminders?type=post-late",
+      "path": "/api/cron/pickup-reminders/post-late",
       "schedule": "0 1 * * *"
     },
     {

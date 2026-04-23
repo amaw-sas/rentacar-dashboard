@@ -10,7 +10,10 @@ const VALID_TYPES = [
   "post-late",
 ];
 
-export async function GET(request: NextRequest) {
+export async function GET(
+  request: NextRequest,
+  { params }: { params: Promise<{ type: string }> }
+) {
   const authHeader = request.headers.get("authorization");
   const cronSecret = process.env.CRON_SECRET;
 
@@ -18,9 +21,9 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const type = request.nextUrl.searchParams.get("type");
+  const { type } = await params;
 
-  if (!type || !VALID_TYPES.includes(type)) {
+  if (!VALID_TYPES.includes(type)) {
     return NextResponse.json(
       { error: `Invalid type. Must be one of: ${VALID_TYPES.join(", ")}` },
       { status: 400 }

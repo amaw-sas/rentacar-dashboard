@@ -191,7 +191,7 @@ export function ReservedClientEmail(props: ReservedClientEmailProps) {
       </Text>
       <Text style={requirement}>
         • Evite multas, tenga en cuenta las restricciones de movilidad
-        "pico y placa" de las diferentes ciudades por donde transite.
+        &ldquo;pico y placa&rdquo; de las diferentes ciudades por donde transite.
       </Text>
       <Text style={requirement}>
         • Puede recorrer todo el país. Si adquirió una mensualidad tenga en

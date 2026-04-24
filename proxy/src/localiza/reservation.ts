@@ -1,6 +1,12 @@
 import { Router, Request, Response } from "express";
 import { callLocalizaAPI, getConfig } from "./client";
 import { buildVehResXML } from "./xml-templates";
+import {
+  LocalizaWarningError,
+  buildLocalizaWarning,
+  extractErrorMessage,
+  extractWarningShortText,
+} from "./warnings";
 
 const router = Router();
 
@@ -96,20 +102,14 @@ function extractReservation(parsed: Record<string, unknown>) {
   const wrapper = (body["OTA_VehResResponse"] || body) as Record<string, unknown>;
   const rs = (wrapper["OTA_VehResRS"] || body["OTA_VehResRS"]) as Record<string, unknown>;
 
-  // Check for Localiza errors
   if (rs["Errors"]) {
-    const errors = rs["Errors"] as Record<string, unknown>;
-    const error = errors["Error"] as Record<string, unknown>;
-    const message = error?.["_"] || JSON.stringify(error);
-    throw new Error(`Localiza error: ${message}`);
+    const upstream = extractErrorMessage(rs["Errors"]);
+    console.error("Localiza reservation API error:", upstream);
+    throw buildLocalizaWarning(null);
   }
 
-  // Check for warnings (business errors)
   if (rs["Warnings"]) {
-    const warnings = rs["Warnings"] as Record<string, unknown>;
-    const warning = warnings["Warning"] as Record<string, unknown>;
-    const message = warning?.["_"] || JSON.stringify(warning);
-    throw new Error(`Localiza warning: ${message}`);
+    throw buildLocalizaWarning(extractWarningShortText(rs["Warnings"]));
   }
 
   // ReservationStatus is on VehReservation, not VehResRSCore
@@ -167,6 +167,10 @@ router.post("/", async (req: Request, res: Response): Promise<void> => {
     const result = extractReservation(parsed);
     res.json(result);
   } catch (error) {
+    if (error instanceof LocalizaWarningError) {
+      res.status(error.httpStatus).json(error.toJSON());
+      return;
+    }
     console.error("Reservation error:", error);
     res.status(502).json({
       error: error instanceof Error ? error.message : "Unknown error",

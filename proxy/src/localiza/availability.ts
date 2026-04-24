@@ -1,6 +1,12 @@
 import { Router, Request, Response } from "express";
 import { callLocalizaAPI, getConfig } from "./client";
 import { buildVehAvailRateXML } from "./xml-templates";
+import {
+  LocalizaWarningError,
+  buildLocalizaWarning,
+  extractErrorMessage,
+  extractWarningShortText,
+} from "./warnings";
 
 const router = Router();
 
@@ -24,29 +30,18 @@ export function extractAvailability(parsed: Record<string, unknown>): Record<str
       return [];
     }
 
-    // Check for Localiza warnings (e.g. LLNRAG009 out-of-schedule, LLNRRE002 no coverage).
-    // Localiza emits <Warnings><Warning ShortText="CODE"/></Warnings> instead of availability data.
+    // Localiza emits <Warnings><Warning ShortText="CODE"/></Warnings> instead
+    // of availability data when it rejects the query for business reasons
+    // (out-of-schedule, holiday, no inventory). Propagate the structured code
+    // so the Nuxt client can render the matching toast via useMessages.
     if (rs["Warnings"]) {
-      const warnings = rs["Warnings"] as Record<string, unknown>;
-      const warningNode = warnings["Warning"];
-      const firstWarning = Array.isArray(warningNode) ? warningNode[0] : warningNode;
-      const shortText =
-        (firstWarning && typeof firstWarning === "object"
-          ? ((firstWarning as Record<string, unknown>)["$"] as Record<string, string> | undefined)?.[
-              "ShortText"
-            ]
-          : undefined) || "unknown";
-      console.warn("Localiza warning:", shortText);
-      return [];
+      throw buildLocalizaWarning(extractWarningShortText(rs["Warnings"]));
     }
 
-    // Check for Localiza errors
     if (rs["Errors"]) {
-      const errors = rs["Errors"] as Record<string, unknown>;
-      const error = errors["Error"] as Record<string, unknown>;
-      const message = error?.["_"] || JSON.stringify(error);
-      console.error("Localiza API error:", message);
-      return [];
+      const upstreamMessage = extractErrorMessage(rs["Errors"]);
+      console.error("Localiza API error:", upstreamMessage);
+      throw buildLocalizaWarning(null);
     }
 
     const core = rs["VehAvailRSCore"] as Record<string, unknown>;
@@ -161,6 +156,7 @@ export function extractAvailability(parsed: Record<string, unknown>): Record<str
       };
     });
   } catch (error) {
+    if (error instanceof LocalizaWarningError) throw error;
     console.error("Error parsing availability response:", error);
     return [];
   }
@@ -194,6 +190,10 @@ router.post("/", async (req: Request, res: Response): Promise<void> => {
     const vehicles = extractAvailability(parsed);
     res.json(vehicles);
   } catch (error) {
+    if (error instanceof LocalizaWarningError) {
+      res.status(error.httpStatus).json(error.toJSON());
+      return;
+    }
     console.error("Availability error:", error);
     res.status(502).json({
       error: error instanceof Error ? error.message : "Unknown error",

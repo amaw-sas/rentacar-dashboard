@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { extractAvailability } from "../availability";
+import { LocalizaWarningError } from "../warnings";
 
 type FeeFixture = {
   attrs: Record<string, string>;
@@ -132,33 +133,64 @@ describe("extractAvailability — defensive parsing", () => {
     errorSpy.mockRestore();
   });
 
-  it("returns [] when response has a Warning instead of availability data (e.g. LLNRAG009)", () => {
-    const parsed = {
+  function buildWarningResponse(shortText: string) {
+    return {
       Envelope: {
         Body: {
           OTA_VehAvailRateResponse: {
             OTA_VehAvailRateRS: {
               Warnings: {
-                Warning: {
-                  $: {
-                    ShortText: "LLNRAG009",
-                    Type: "11",
-                  },
-                },
+                Warning: { $: { ShortText: shortText, Type: "11" } },
               },
             },
           },
         },
       },
     };
-    expect(() => extractAvailability(parsed)).not.toThrow();
-    expect(extractAvailability(parsed)).toEqual([]);
-    // Expected behavior: warn at warn-level with the ShortText; NOT an error-level log.
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining("Localiza warning"),
-      "LLNRAG009",
-    );
-    expect(errorSpy).not.toHaveBeenCalled();
+  }
+
+  it("throws LocalizaWarningError for LLNRAG017 (out-of-schedule return date)", () => {
+    // This is the bug reported in production: Localiza rejects by return-date
+    // schedule, proxy used to silently return [] — client saw "no cars" instead
+    // of the real toast message. Now the warning must propagate with a code.
+    const parsed = buildWarningResponse("LLNRAG017");
+    expect(() => extractAvailability(parsed)).toThrowError(LocalizaWarningError);
+    try {
+      extractAvailability(parsed);
+    } catch (e) {
+      const err = e as LocalizaWarningError;
+      expect(err.code).toBe("out_of_schedule_return_date_error");
+      expect(err.shortText).toBe("LLNRAG017");
+      expect(err.httpStatus).toBe(500);
+    }
+  });
+
+  it("throws LocalizaWarningError for LLNRAG009 (no available categories)", () => {
+    // Preserved for the "directive" UX case — the code still flows to the
+    // client, which differentiates it in useStoreSearchData and shows the
+    // "¡Oops! sin carritos" inline message instead of a toast.
+    const parsed = buildWarningResponse("LLNRAG009");
+    try {
+      extractAvailability(parsed);
+      throw new Error("expected throw");
+    } catch (e) {
+      expect(e).toBeInstanceOf(LocalizaWarningError);
+      expect((e as LocalizaWarningError).code).toBe(
+        "no_available_categories_error",
+      );
+    }
+  });
+
+  it("throws LocalizaWarningError with unknown_error fallback for unmapped ShortText", () => {
+    const parsed = buildWarningResponse("LLNRAG999");
+    try {
+      extractAvailability(parsed);
+      throw new Error("expected throw");
+    } catch (e) {
+      expect(e).toBeInstanceOf(LocalizaWarningError);
+      expect((e as LocalizaWarningError).code).toBe("unknown_error");
+      expect((e as LocalizaWarningError).shortText).toBe("LLNRAG999");
+    }
   });
 
   it("returns [] when OTA_VehAvailRateRS is missing VehAvailRSCore entirely", () => {

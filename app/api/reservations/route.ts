@@ -210,19 +210,20 @@ export async function POST(request: Request) {
       if (!proxyResponse.ok) {
         const errorBody = await proxyResponse.text();
         console.error(`[reservation] Proxy error ${proxyResponse.status}:`, errorBody);
-        let proxyError: string = errorBody;
+        // Pass structured {error, message, shortText} from the proxy through
+        // unchanged so the Nuxt client (useMessages.createErrorMessage) can
+        // render the matching toast. Only wrap into a generic envelope when
+        // the body is not parseable JSON (network/HTML error).
         try {
           const parsed = JSON.parse(errorBody);
-          proxyError = parsed.error ?? errorBody;
+          if (parsed && typeof parsed === "object" && typeof parsed.error === "string") {
+            return NextResponse.json(parsed, { status: proxyResponse.status });
+          }
         } catch {
-          // keep errorBody as-is
+          // fall through to the generic response below
         }
         return NextResponse.json(
-          {
-            error: "Error al crear la reserva en Localiza",
-            details: proxyError,
-            proxyStatus: proxyResponse.status,
-          },
+          { error: "Error al crear la reserva en Localiza" },
           { status: 502 }
         );
       }

@@ -59,6 +59,18 @@ export async function POST(request: Request) {
     if (!proxyResponse.ok) {
       const errorBody = await proxyResponse.text();
       console.error(`[availability] Proxy error ${proxyResponse.status}:`, errorBody);
+      // Localiza business errors are serialized by the proxy as structured
+      // {error, message, shortText} JSON — forward verbatim so the Nuxt client
+      // can render the matching toast. Only fall back to the generic envelope
+      // when the body is not parseable (network/HTML error pages).
+      try {
+        const parsed = JSON.parse(errorBody);
+        if (parsed && typeof parsed === "object" && typeof parsed.error === "string") {
+          return NextResponse.json(parsed, { status: proxyResponse.status });
+        }
+      } catch {
+        // fall through to the generic response below
+      }
       return NextResponse.json(
         { error: "Error al consultar disponibilidad" },
         { status: 502 }

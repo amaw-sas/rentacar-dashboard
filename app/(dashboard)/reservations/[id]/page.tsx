@@ -154,7 +154,7 @@ export default async function ReservationDetailPage({
           <Field label="Cargo Devolución" value={`$${reservation.return_fee}`} />
           <Field label="Horas Extra" value={reservation.extra_hours} />
           <Field label="Precio Horas Extra" value={`$${reservation.extra_hours_price}`} />
-          <Field label="Seguro Total" value={`$${reservation.total_insurance}`} />
+          <Field label="Seguro Total" value={reservation.total_insurance ? "Sí" : "No"} />
           <BoolField label="Conductor Adicional" value={reservation.extra_driver} />
           <BoolField label="Silla de Bebé" value={reservation.baby_seat} />
           <BoolField label="Lavado" value={reservation.wash} />

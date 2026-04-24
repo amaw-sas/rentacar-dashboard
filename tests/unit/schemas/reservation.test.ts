@@ -87,7 +87,6 @@ describe("reservationSchema", () => {
     if (result.success) {
       expect(result.data.return_fee).toBe(0);
       expect(result.data.extra_hours).toBe(0);
-      expect(result.data.total_insurance).toBe(0);
     }
   });
 
@@ -98,7 +97,26 @@ describe("reservationSchema", () => {
       expect(result.data.extra_driver).toBe(false);
       expect(result.data.baby_seat).toBe(false);
       expect(result.data.wash).toBe(false);
+      expect(result.data.total_insurance).toBe(false);
     }
+  });
+
+  it("accepts total_insurance as boolean", () => {
+    const t = reservationSchema.safeParse({ ...valid, total_insurance: true });
+    expect(t.success).toBe(true);
+    if (t.success) expect(t.data.total_insurance).toBe(true);
+
+    const f = reservationSchema.safeParse({ ...valid, total_insurance: false });
+    expect(f.success).toBe(true);
+    if (f.success) expect(f.data.total_insurance).toBe(false);
+  });
+
+  it("rejects total_insurance as number (strict boolean, admin form uses switch)", () => {
+    // Legacy numeric 1/0 coercion happens in the route handler's toBoolean()
+    // helper — upstream of this schema. The schema itself matches the
+    // sibling booleans (extra_driver/baby_seat/wash) which never coerce.
+    const result = reservationSchema.safeParse({ ...valid, total_insurance: 1 });
+    expect(result.success).toBe(false);
   });
 
   it("defaults status to nueva", () => {
@@ -143,7 +161,6 @@ describe("reservationSchema", () => {
     "coverage_price",
     "return_fee",
     "extra_hours_price",
-    "total_insurance",
   ] as const;
 
   it.each(MONEY_FIELDS)("accepts decimal %s (DB column is numeric(12,2))", (field) => {

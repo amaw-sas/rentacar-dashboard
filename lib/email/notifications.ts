@@ -32,7 +32,7 @@ interface ReservationData {
   total_price_to_pay: number;
   tax_fee: number;
   iva_fee: number;
-  total_insurance: number;
+  total_insurance: boolean;
   extra_driver: boolean;
   baby_seat: boolean;
   wash: boolean;
@@ -271,7 +271,7 @@ export async function sendReservationNotifications(
     }
 
     // Total insurance notification to Localiza (independent of status)
-    if (reservation.total_insurance > 0 && localizaEmail) {
+    if (reservation.total_insurance && localizaEmail) {
       const html = await renderEmail(
         TotalInsuranceLocalizaEmail({
           ...branding,
@@ -305,7 +305,7 @@ export async function sendReservationNotifications(
 
     // Extras notification to Localiza (extra_driver, baby_seat, wash — without total insurance)
     const hasExtras = reservation.extra_driver || reservation.baby_seat || reservation.wash;
-    if (hasExtras && reservation.total_insurance <= 0 && localizaEmail) {
+    if (hasExtras && !reservation.total_insurance && localizaEmail) {
       const html = await renderEmail(
         ExtrasLocalizaEmail({
           ...branding,

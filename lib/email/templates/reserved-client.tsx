@@ -29,7 +29,7 @@ interface ReservedClientEmailProps {
   taxFee: number;
   ivaFee: number;
   totalPriceToPay: number;
-  totalInsurance: number;
+  totalInsurance: boolean;
   extraDriver: boolean;
   babySeat: boolean;
   wash: boolean;
@@ -42,7 +42,7 @@ interface ReservedClientEmailProps {
 
 export function ReservedClientEmail(props: ReservedClientEmailProps) {
   const extras: string[] = [];
-  if (props.totalInsurance > 0) extras.push(`Seguro Total: ${formatCOP(props.totalInsurance)}`);
+  if (props.totalInsurance) extras.push("Seguro Total");
   if (props.extraDriver) extras.push("Conductor Adicional");
   if (props.babySeat) extras.push("Silla de Bebé");
   if (props.wash) extras.push("Lavado");

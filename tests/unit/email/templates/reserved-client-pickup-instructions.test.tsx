@@ -21,7 +21,7 @@ const baseProps = {
   taxFee: 100_000,
   ivaFee: 190_000,
   totalPriceToPay: 1_290_000,
-  totalInsurance: 0,
+  totalInsurance: false,
   extraDriver: false,
   babySeat: false,
   wash: false,

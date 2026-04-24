@@ -110,7 +110,7 @@ export const reservationSchema = z.object({
   return_fee: z.coerce.number().min(0).default(0),
   extra_hours: z.coerce.number().int().min(0).default(0),
   extra_hours_price: z.coerce.number().min(0).default(0),
-  total_insurance: z.coerce.number().min(0).default(0),
+  total_insurance: z.boolean().default(false),
   extra_driver: z.boolean().default(false),
   baby_seat: z.boolean().default(false),
   wash: z.boolean().default(false),

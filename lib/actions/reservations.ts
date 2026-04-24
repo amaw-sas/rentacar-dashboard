@@ -25,6 +25,9 @@ function buildReservationData(formData: FormData) {
   raw.extra_driver = parseBooleanField(formData.get("extra_driver")) as unknown as string;
   raw.baby_seat = parseBooleanField(formData.get("baby_seat")) as unknown as string;
   raw.wash = parseBooleanField(formData.get("wash")) as unknown as string;
+  raw.total_insurance = parseBooleanField(
+    formData.get("total_insurance")
+  ) as unknown as string;
   raw.notification_required = parseBooleanField(
     formData.get("notification_required")
   ) as unknown as string;

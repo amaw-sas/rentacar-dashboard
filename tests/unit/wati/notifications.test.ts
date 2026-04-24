@@ -20,7 +20,7 @@ const mockReservation = {
   pickup_hour: "09:00",
   return_date: "2026-04-20",
   return_hour: "09:00",
-  total_insurance: 0,
+  total_insurance: false,
   extra_driver: false,
   baby_seat: false,
   wash: false,

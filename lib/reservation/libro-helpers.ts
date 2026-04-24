@@ -8,13 +8,13 @@ export function splitVehicleName(name: string): [string, string] {
 
 export interface IncludedFeesInput {
   selected_days: number;
-  total_insurance: number | null;
+  total_insurance: boolean | null;
   monthly_mileage: number | null;
 }
 
 export function formatIncludedFees(r: IncludedFeesInput): string {
   const isMonthly = r.selected_days === 30;
-  const hasTotalInsurance = Number(r.total_insurance ?? 0) > 0;
+  const hasTotalInsurance = r.total_insurance === true;
   const insuranceLabel = hasTotalInsurance ? "Seguro total" : "Seguro básico";
   if (isMonthly) {
     return `Kilometraje: ${r.monthly_mileage ?? ""}, ${insuranceLabel}`;

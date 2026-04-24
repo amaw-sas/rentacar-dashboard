@@ -61,12 +61,6 @@ function toBoolean(value: boolean | number | undefined): boolean {
   return false;
 }
 
-function toNumber(value: boolean | number | undefined): number {
-  if (typeof value === "number") return value;
-  if (value === true) return 1;
-  return 0;
-}
-
 function splitFullname(fullname: string): { first_name: string; last_name: string } {
   const parts = fullname.trim().split(/\s+/);
   if (parts.length <= 1) {
@@ -238,7 +232,7 @@ export async function POST(request: Request) {
     }
 
     // 6. Determine booking_type
-    const hasTotalInsurance = toNumber(body.total_insurance) > 0;
+    const hasTotalInsurance = toBoolean(body.total_insurance);
     let bookingType: "standard" | "standard_with_insurance" | "monthly";
     if (isMonthly) {
       bookingType = "monthly";
@@ -285,7 +279,7 @@ export async function POST(request: Request) {
         return_fee: body.return_fee ?? 0,
         extra_hours: body.extra_hours ?? 0,
         extra_hours_price: body.extra_hours_price ?? 0,
-        total_insurance: toNumber(body.total_insurance),
+        total_insurance: toBoolean(body.total_insurance),
         extra_driver: toBoolean(body.extra_driver),
         baby_seat: toBoolean(body.baby_seat),
         wash: toBoolean(body.wash),

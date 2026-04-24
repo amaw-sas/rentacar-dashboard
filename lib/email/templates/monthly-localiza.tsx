@@ -21,12 +21,12 @@ interface MonthlyLocalizaEmailProps {
   extraDriver: boolean;
   babySeat: boolean;
   wash: boolean;
-  totalInsurance: number;
+  totalInsurance: boolean;
 }
 
 export function MonthlyLocalizaEmail(props: MonthlyLocalizaEmailProps) {
   const extras: string[] = [];
-  if (props.totalInsurance > 0) extras.push("Seguro total");
+  if (props.totalInsurance) extras.push("Seguro total");
   if (props.extraDriver) extras.push("Conductor adicional");
   if (props.babySeat) extras.push("Silla de bebé");
   if (props.wash) extras.push("Servicio de lavado");

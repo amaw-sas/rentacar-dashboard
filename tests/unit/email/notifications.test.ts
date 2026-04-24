@@ -31,7 +31,7 @@ const mockReservation = {
   total_price_to_pay: 476000,
   tax_fee: 40000,
   iva_fee: 36000,
-  total_insurance: 0,
+  total_insurance: false,
   extra_driver: false,
   baby_seat: false,
   wash: false,
@@ -101,8 +101,8 @@ describe("sendReservationNotifications", () => {
     );
   });
 
-  it("sends total insurance notification to Localiza when total_insurance > 0", async () => {
-    setupMock({ ...mockReservation, total_insurance: 45000 });
+  it("sends total insurance notification to Localiza when total_insurance is true", async () => {
+    setupMock({ ...mockReservation, total_insurance: true });
 
     await sendReservationNotifications("res-123", "reservado", "alquilatucarro");
 

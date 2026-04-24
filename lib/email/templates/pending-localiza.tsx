@@ -21,12 +21,12 @@ interface PendingLocalizaEmailProps {
   extraDriver: boolean;
   babySeat: boolean;
   wash: boolean;
-  totalInsurance: number;
+  totalInsurance: boolean;
 }
 
 export function PendingLocalizaEmail(props: PendingLocalizaEmailProps) {
   const extras: string[] = [];
-  if (props.totalInsurance > 0) extras.push("Seguro Total");
+  if (props.totalInsurance) extras.push("Seguro Total");
   if (props.extraDriver) extras.push("Conductor Adicional");
   if (props.babySeat) extras.push("Silla de Bebé");
   if (props.wash) extras.push("Lavado");

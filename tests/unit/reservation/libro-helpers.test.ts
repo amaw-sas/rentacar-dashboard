@@ -32,7 +32,7 @@ describe("formatIncludedFees", () => {
     expect(
       formatIncludedFees({
         selected_days: 30,
-        total_insurance: 150000,
+        total_insurance: true,
         monthly_mileage: 2000,
       }),
     ).toBe("Kilometraje: 2000, Seguro total");
@@ -42,7 +42,7 @@ describe("formatIncludedFees", () => {
     expect(
       formatIncludedFees({
         selected_days: 30,
-        total_insurance: 0,
+        total_insurance: false,
         monthly_mileage: 1000,
       }),
     ).toBe("Kilometraje: 1000, Seguro básico");
@@ -52,7 +52,7 @@ describe("formatIncludedFees", () => {
     expect(
       formatIncludedFees({
         selected_days: 3,
-        total_insurance: 80000,
+        total_insurance: true,
         monthly_mileage: null,
       }),
     ).toBe("Kilometraje ilimitado, Seguro total");
@@ -62,7 +62,17 @@ describe("formatIncludedFees", () => {
     expect(
       formatIncludedFees({
         selected_days: 2,
-        total_insurance: 0,
+        total_insurance: false,
+        monthly_mileage: null,
+      }),
+    ).toBe("Kilometraje ilimitado, Seguro básico");
+  });
+
+  it("treats null total_insurance as basic insurance", () => {
+    expect(
+      formatIncludedFees({
+        selected_days: 2,
+        total_insurance: null,
         monthly_mileage: null,
       }),
     ).toBe("Kilometraje ilimitado, Seguro básico");

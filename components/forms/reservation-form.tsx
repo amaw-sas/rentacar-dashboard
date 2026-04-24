@@ -125,7 +125,7 @@ export function ReservationForm({
       return_fee: 0,
       extra_hours: 0,
       extra_hours_price: 0,
-      total_insurance: 0,
+      total_insurance: false,
       extra_driver: false,
       baby_seat: false,
       wash: false,
@@ -687,20 +687,17 @@ export function ReservationForm({
             />
           </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="total_insurance">Seguro Total</Label>
-            <Controller
-              name="total_insurance"
-              control={control}
-              render={({ field }) => (
-                <MoneyInput
-                  id="total_insurance"
-                  value={field.value}
-                  onChange={field.onChange}
-                  onBlur={field.onBlur}
-                />
-              )}
+          <div className="flex items-center gap-2">
+            <Checkbox
+              id="total_insurance"
+              checked={totalInsurance}
+              onCheckedChange={(checked) =>
+                setValue("total_insurance", checked === true)
+              }
             />
+            <Label htmlFor="total_insurance" className="cursor-pointer">
+              Seguro Total
+            </Label>
           </div>
         </CardContent>
       </Card>

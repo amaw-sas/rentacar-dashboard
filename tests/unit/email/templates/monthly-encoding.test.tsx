@@ -20,7 +20,7 @@ const baseProps = {
   extraDriver: false,
   babySeat: false,
   wash: false,
-  totalInsurance: 0,
+  totalInsurance: false,
 };
 
 describe("MonthlyLocalizaEmail encoding", () => {

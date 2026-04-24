@@ -22,7 +22,7 @@ type LibroReservation = {
   return_hour: string;
   selected_days: number;
   total_price_to_pay: number;
-  total_insurance: number | null;
+  total_insurance: boolean | null;
   monthly_mileage: number | null;
   extra_hours_price: number | null;
   return_fee: number | null;

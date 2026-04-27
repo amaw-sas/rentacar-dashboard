@@ -19,7 +19,7 @@ const FRANCHISE_BRANDING: Record<string, { color: string; website: string }> = {
   alquicarros: { color: "#fd7e14", website: "https://alquicarros.com" },
 };
 
-type ReminderType =
+export type ReminderType =
   | "week"
   | "three-days"
   | "same-day-morning"

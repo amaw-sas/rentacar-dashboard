@@ -40,6 +40,8 @@ interface ReservedClientEmailProps {
   washDeepUpholsteryPrice: number;
 }
 
+// build-marker:2026-04-27-conditions — forces turbopack to rebuild this chunk
+// after Vercel cache pinned a pre-a02f8b9 bundle. Safe to remove post-verify.
 export function ReservedClientEmail(props: ReservedClientEmailProps) {
   const extras: string[] = [];
   if (props.totalInsurance) extras.push("Seguro Total");

@@ -1,3 +1,6 @@
+// build-marker:2026-04-27-template-bundle — invalidates the import chain
+// notifications.ts → templates/reserved-client.tsx so the /api/reservations
+// lambda regenerates its bundled copy of the post-a02f8b9 template.
 import { createAdminClient } from "@/lib/supabase/admin";
 import { sendEmail } from "./send";
 import { renderEmail } from "./render";

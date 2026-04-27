@@ -303,16 +303,21 @@ export async function POST(request: Request) {
       );
     }
 
-    // 9. Dispatch notifications after response is sent (non-blocking but guaranteed to run)
+    // 9. Dispatch notifications. Email is sent inline (was inside after() but
+    // the after() callback appears to run in a bundle context that pinned a
+    // pre-a02f8b9 chunk of the reservation template — moving it inline is a
+    // diagnostic step to confirm/refute that hypothesis. WhatsApp + GHL stay
+    // in after() to keep the client-facing response fast.
     const reservationId = inserted.id;
 
+    console.log(`[reservation] Sending email notifications inline for ${reservationId}`);
+    try {
+      await sendReservationNotifications(reservationId, status, body.franchise);
+    } catch (err) {
+      console.error("[reservation] Status notifications failed:", err);
+    }
+
     after(async () => {
-      console.log(`[reservation] Dispatching notifications for ${reservationId}`);
-      try {
-        await sendReservationNotifications(reservationId, status, body.franchise);
-      } catch (err) {
-        console.error("[reservation] Status notifications failed:", err);
-      }
       try {
         await sendStatusWhatsApp(reservationId, status);
       } catch (err) {
@@ -323,7 +328,7 @@ export async function POST(request: Request) {
       } catch (err) {
         console.error("[reservation] GHL sync failed:", err);
       }
-      console.log(`[reservation] Notifications dispatch completed for ${reservationId}`);
+      console.log(`[reservation] Background dispatch completed for ${reservationId}`);
     });
 
     // 10. Return response

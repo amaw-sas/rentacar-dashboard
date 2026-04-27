@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { render } from "@react-email/components";
-import { ReservedClientEmail } from "@/lib/email/templates/reserved-client";
+import { ReservedClientEmail } from "@/lib/email/templates/reserved-confirmation";
 
 const baseProps = {
   franchiseName: "Alquilatucarro",

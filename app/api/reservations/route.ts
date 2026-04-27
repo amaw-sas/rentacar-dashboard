@@ -1,5 +1,5 @@
 // build-marker:2026-04-27-template-bundle — forces lambda regeneration so
-// sendReservationNotifications picks up the post-a02f8b9 reserved-client bundle.
+// sendReservationNotifications picks up the post-a02f8b9 reserved-confirmation bundle.
 // Safe to remove once a fresh "reservado_cliente" notification is verified.
 import { NextResponse, after } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { renderEmail } from "@/lib/email/render";
-import { ReservedClientEmail } from "@/lib/email/templates/reserved-client";
+import { ReservedClientEmail } from "@/lib/email/templates/reserved-confirmation";
 
 // Diagnostic endpoint — confirms which version of ReservedClientEmail the
 // deployed bundle actually executes. Compare `htmlLength` + presence of new

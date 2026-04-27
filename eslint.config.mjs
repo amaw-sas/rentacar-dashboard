@@ -12,6 +12,10 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Proxy is a separate package with its own tooling; its compiled
+    // output ends up here at the repo root and must not be linted.
+    "proxy/dist/**",
+    "proxy/node_modules/**",
   ]),
 ]);
 

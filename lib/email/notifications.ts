@@ -1,9 +1,5 @@
-// build-marker:2026-04-27-template-bundle — invalidates the import chain
-// notifications.ts → templates/reserved-confirmation.tsx so the /api/reservations
-// lambda regenerates its bundled copy of the post-a02f8b9 template.
 import { createAdminClient } from "@/lib/supabase/admin";
 import { sendEmail } from "./send";
-import { logNotification } from "@/lib/actions/notification-logs";
 import { renderEmail } from "./render";
 import { ReservedClientEmail } from "./templates/reserved-confirmation";
 import { PendingClientEmail } from "./templates/pending-client";
@@ -127,19 +123,6 @@ export async function sendReservationNotifications(
   franchiseCode: string
 ): Promise<void> {
   try {
-    // Diagnostic: write the deployed commit SHA so we can confirm which
-    // bundle the lambda is actually running. Remove with the rest of the
-    // template-cache instrumentation once verified.
-    const buildSha = (process.env.VERCEL_GIT_COMMIT_SHA ?? "unknown").slice(0, 9);
-    await logNotification({
-      reservation_id: reservationId,
-      channel: "email",
-      notification_type: "_debug_commit_marker",
-      recipient: "debug@internal",
-      subject: buildSha,
-      status: "sent",
-    }).catch((err) => console.error("[debug-marker] log failed:", err));
-
     const reservation = await fetchReservationContext(reservationId);
     const branding = await getFranchiseBranding(franchiseCode);
 

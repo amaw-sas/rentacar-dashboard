@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { sendEmail } from "@/lib/email/send";
 import { renderEmail } from "@/lib/email/render";
+import { logNotification } from "@/lib/actions/notification-logs";
 import { sendReservationNotifications } from "@/lib/email/notifications";
 
 process.env.EMAIL_DELAY_MS = "0";
@@ -15,6 +16,10 @@ vi.mock("@/lib/email/send", () => ({
 
 vi.mock("@/lib/email/render", () => ({
   renderEmail: vi.fn().mockResolvedValue("<html>test</html>"),
+}));
+
+vi.mock("@/lib/actions/notification-logs", () => ({
+  logNotification: vi.fn().mockResolvedValue(undefined),
 }));
 
 const mockReservation = {
@@ -116,5 +121,14 @@ describe("sendReservationNotifications", () => {
   it("does not send emails for statuses without templates", async () => {
     await sendReservationNotifications("res-123", "utilizado", "alquilatucarro");
     expect(sendEmail).not.toHaveBeenCalled();
+  });
+
+  it("does not write the _debug_commit_marker diagnostic row to notification_logs", async () => {
+    await sendReservationNotifications("res-123", "reservado", "alquilatucarro");
+
+    const markerCall = vi
+      .mocked(logNotification)
+      .mock.calls.find((c) => c[0].notification_type === "_debug_commit_marker");
+    expect(markerCall).toBeUndefined();
   });
 });

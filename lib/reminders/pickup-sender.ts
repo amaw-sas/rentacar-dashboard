@@ -3,6 +3,7 @@ import { es } from "date-fns/locale";
 import { parse } from "date-fns";
 import { createClient } from "@/lib/supabase/server";
 import { addContact, sendTemplateMessage } from "@/lib/wati/client";
+import { logNotification } from "@/lib/actions/notification-logs";
 import {
   getWeekPickupReservations,
   getThreeDaysPickupReservations,
@@ -10,6 +11,7 @@ import {
   getSameDayLateReservations,
   getPostMorningReservations,
   getPostLateReservations,
+  getReservationForReminder,
 } from "./pickup-queries";
 import type { ReservationRecord } from "./pickup-queries";
 
@@ -54,6 +56,15 @@ const BROADCAST_LABEL: Record<ReminderType, string> = {
   "post-late": "Post PM",
 };
 
+const NOTIFICATION_TYPE_MAP: Record<ReminderType, string> = {
+  week: "whatsapp_pre_pickup_week",
+  "three-days": "whatsapp_pre_pickup_3d",
+  "same-day-morning": "whatsapp_pre_pickup_same_day_am",
+  "same-day-late": "whatsapp_pre_pickup_same_day_pm",
+  "post-morning": "whatsapp_post_pickup_am",
+  "post-late": "whatsapp_post_pickup_pm",
+};
+
 function isPostReminder(type: ReminderType): boolean {
   return type === "post-morning" || type === "post-late";
 }
@@ -93,6 +104,56 @@ async function getFranchiseBranding(franchiseCode: string) {
   };
 }
 
+export async function sendPickupReminderForReservation(
+  reservation: ReservationRecord,
+  type: ReminderType,
+): Promise<void> {
+  const customer = reservation.customers;
+  if (!customer.phone) return;
+
+  const fullName = `${customer.first_name} ${customer.last_name}`;
+  const branding = await getFranchiseBranding(reservation.franchise);
+  const todayStr = format(new Date(), "yyyy-MM-dd");
+  const isPost = isPostReminder(type);
+
+  await addContact(customer.phone, fullName);
+
+  const templateName = WHATSAPP_TEMPLATE_MAP[type];
+  const broadcastName = `${BROADCAST_LABEL[type]} ${todayStr}`;
+
+  const params = isPost
+    ? [
+        { name: "fullname", value: fullName },
+        { name: "franchise_name", value: branding.franchiseName },
+      ]
+    : [
+        { name: "fullname", value: fullName },
+        { name: "reservation_code", value: reservation.reservation_code },
+        {
+          name: "pickup_date",
+          value: formatPickupDate(reservation.pickup_date),
+        },
+        {
+          name: "pickup_hour",
+          value: formatPickupHour(reservation.pickup_hour),
+        },
+        { name: "pickup_location", value: reservation.pickup_location.name },
+        { name: "franchise_name", value: branding.franchiseName },
+      ];
+
+  await sendTemplateMessage(customer.phone, templateName, broadcastName, params);
+
+  logNotification({
+    reservation_id: reservation.id,
+    channel: "whatsapp",
+    notification_type: NOTIFICATION_TYPE_MAP[type],
+    recipient: customer.phone,
+    status: "sent",
+  }).catch((err) =>
+    console.error("[reminders] notification log (sent) failed:", err),
+  );
+}
+
 export async function sendPickupReminders(type: string) {
   const reminderType = type as ReminderType;
   const queryFn = QUERY_MAP[reminderType];
@@ -104,73 +165,50 @@ export async function sendPickupReminders(type: string) {
 
   const reservations = await queryFn();
   console.log(
-    `[reminders] ${reminderType}: found ${reservations.length} reservations`
+    `[reminders] ${reminderType}: found ${reservations.length} reservations`,
   );
 
   let sent = 0;
   let errors = 0;
-  const todayStr = format(new Date(), "yyyy-MM-dd");
 
   for (const reservation of reservations) {
     try {
-      const customer = reservation.customers;
-      const location = reservation.pickup_location;
-      const fullName = `${customer.first_name} ${customer.last_name}`;
-      const branding = await getFranchiseBranding(reservation.franchise);
-
-      // Email notifications disabled pending business decision — historically
-      // unclear if customers ever read them; Wati is the confirmed effective
-      // channel. Restore via `git revert` if directiva wants emails back.
-      const isPost = isPostReminder(reminderType);
-
-      // Send WhatsApp via Wati
-      if (customer.phone) {
-        await addContact(customer.phone, fullName);
-
-        const templateName = WHATSAPP_TEMPLATE_MAP[reminderType];
-        const broadcastName = `${BROADCAST_LABEL[reminderType]} ${todayStr}`;
-
-        const params = isPost
-          ? [
-              { name: "fullname", value: fullName },
-              { name: "franchise_name", value: branding.franchiseName },
-            ]
-          : [
-              { name: "fullname", value: fullName },
-              { name: "reservation_code", value: reservation.reservation_code },
-              {
-                name: "pickup_date",
-                value: formatPickupDate(reservation.pickup_date),
-              },
-              {
-                name: "pickup_hour",
-                value: formatPickupHour(reservation.pickup_hour),
-              },
-              { name: "pickup_location", value: location.name },
-              { name: "franchise_name", value: branding.franchiseName },
-            ];
-
-        await sendTemplateMessage(
-          customer.phone,
-          templateName,
-          broadcastName,
-          params
-        );
-      }
-
+      await sendPickupReminderForReservation(reservation, reminderType);
       sent++;
     } catch (error) {
       errors++;
+      const recipient = reservation.customers.phone || "unknown";
+      logNotification({
+        reservation_id: reservation.id,
+        channel: "whatsapp",
+        notification_type: NOTIFICATION_TYPE_MAP[reminderType],
+        recipient,
+        status: "failed",
+        error_message: error instanceof Error ? error.message : "Unknown error",
+      }).catch((err) =>
+        console.error("[reminders] notification log (failed) failed:", err),
+      );
       console.error(
         `[reminders] Failed for reservation ${reservation.id}:`,
-        error
+        error,
       );
     }
   }
 
   console.log(
-    `[reminders] ${reminderType} complete: ${sent} sent, ${errors} errors, ${reservations.length} total`
+    `[reminders] ${reminderType} complete: ${sent} sent, ${errors} errors, ${reservations.length} total`,
   );
 
   return { sent, errors, total: reservations.length };
+}
+
+export async function sendSinglePickupReminder(
+  reservationId: string,
+  type: ReminderType,
+): Promise<void> {
+  const reservation = await getReservationForReminder(reservationId);
+  if (!reservation) {
+    throw new Error("Reserva no encontrada");
+  }
+  await sendPickupReminderForReservation(reservation, type);
 }

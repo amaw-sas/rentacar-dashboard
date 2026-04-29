@@ -66,7 +66,7 @@ export async function resendNotification(
     }
 
     if (log.channel === "whatsapp") {
-      // Extract original status from notification_type (whatsapp_reservado → reservado)
+      // Status WhatsApp (transactional): whatsapp_reservado → status "reservado", etc.
       const statusMap: Record<string, string> = {
         whatsapp_reservado: "reservado",
         whatsapp_pendiente: "pendiente",
@@ -74,13 +74,37 @@ export async function resendNotification(
         whatsapp_mensualidad: "mensualidad",
       };
       const status = statusMap[log.notification_type];
-      if (!status) {
-        return { error: "Tipo de notificación WhatsApp no reconocido" };
+      if (status) {
+        const { sendStatusWhatsApp } = await import("@/lib/wati/notifications");
+        await sendStatusWhatsApp(
+          log.reservation_id,
+          status as import("@/lib/schemas/reservation").ReservationStatus,
+        );
+        return {};
       }
 
-      const { sendStatusWhatsApp } = await import("@/lib/wati/notifications");
-      await sendStatusWhatsApp(log.reservation_id, status as import("@/lib/schemas/reservation").ReservationStatus);
-      return {};
+      // Pickup reminder WhatsApp: whatsapp_pre_pickup_week → ReminderType "week", etc.
+      const reminderMap: Record<
+        string,
+        import("@/lib/reminders/pickup-sender").ReminderType
+      > = {
+        whatsapp_pre_pickup_week: "week",
+        whatsapp_pre_pickup_3d: "three-days",
+        whatsapp_pre_pickup_same_day_am: "same-day-morning",
+        whatsapp_pre_pickup_same_day_pm: "same-day-late",
+        whatsapp_post_pickup_am: "post-morning",
+        whatsapp_post_pickup_pm: "post-late",
+      };
+      const reminderType = reminderMap[log.notification_type];
+      if (reminderType) {
+        const { sendSinglePickupReminder } = await import(
+          "@/lib/reminders/pickup-sender"
+        );
+        await sendSinglePickupReminder(log.reservation_id, reminderType);
+        return {};
+      }
+
+      return { error: "Tipo de notificación WhatsApp no reconocido" };
     }
 
     return { error: "No se puede reenviar esta notificación" };

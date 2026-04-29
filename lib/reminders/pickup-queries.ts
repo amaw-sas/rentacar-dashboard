@@ -30,6 +30,16 @@ interface ReservationRecord {
   };
 }
 
+const RESERVATION_REMINDER_SELECT = `
+      id,
+      franchise,
+      reservation_code,
+      pickup_date,
+      pickup_hour,
+      customers (first_name, last_name, phone, email),
+      pickup_location:locations!pickup_location_id (name, pickup_address)
+    `;
+
 async function queryReservations(
   pickupDate: string,
   hourFrom?: string,
@@ -39,17 +49,7 @@ async function queryReservations(
 
   let query = supabase
     .from("reservations")
-    .select(
-      `
-      id,
-      franchise,
-      reservation_code,
-      pickup_date,
-      pickup_hour,
-      customers (first_name, last_name, phone, email),
-      pickup_location:locations!pickup_location_id (name, pickup_address)
-    `
-    )
+    .select(RESERVATION_REMINDER_SELECT)
     .eq("status", "reservado")
     .not("reservation_code", "is", null)
     .eq("pickup_date", pickupDate);
@@ -171,6 +171,24 @@ export async function getPostLateReservations(): Promise<ReservationRecord[]> {
   // Pickup today 05:01-17:00
   const today = todayCOL();
   return queryReservations(formatDate(today), "05:01", "17:00");
+}
+
+export async function getReservationForReminder(
+  reservationId: string,
+): Promise<ReservationRecord | null> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("reservations")
+    .select(RESERVATION_REMINDER_SELECT)
+    .eq("id", reservationId)
+    .single();
+
+  if (error) {
+    console.error("[reminders] getReservationForReminder error:", error.message);
+    return null;
+  }
+
+  return (data as unknown as ReservationRecord) ?? null;
 }
 
 export type { ReservationRecord };

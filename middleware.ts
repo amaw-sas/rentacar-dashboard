@@ -2,7 +2,7 @@ import { type NextRequest, NextResponse } from "next/server";
 import { updateSession } from "@/lib/supabase/middleware";
 import { createServerClient } from "@supabase/ssr";
 
-const PUBLIC_API_PREFIXES = ["/api/reservations", "/api/cron", "/api/upload", "/api/debug"];
+const PUBLIC_API_PREFIXES = ["/api/reservations", "/api/cron", "/api/upload"];
 
 export async function middleware(request: NextRequest) {
   // Public API routes — authenticated via x-api-key header, not session

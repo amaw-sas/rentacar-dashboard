@@ -19,6 +19,7 @@ const baseRow: ReservationRow = {
   reservation_code: "AV6OXGXGP",
   total_price: 150000,
   tax_fee: 14278,
+  total_price_localiza: 0,
   referral_id: null,
   referral_raw: null,
   customers: {
@@ -260,5 +261,46 @@ describe("reservations columns (legacy parity)", () => {
     expect(
       fn({ ...baseRow, referrals: null, referral_raw: null }),
     ).toBe("");
+  });
+
+  describe("valor_oc column", () => {
+    afterEach(() => {
+      cleanup();
+    });
+
+    const formatter = new Intl.NumberFormat("es-CO", {
+      style: "currency",
+      currency: "COP",
+      maximumFractionDigits: 0,
+    });
+
+    function renderValorOcCell(value: unknown) {
+      const col = columns.find((c) => c.id === "valor_oc");
+      const rendered = flexRender(col!.cell, {
+        getValue: () => value,
+      } as never);
+      return render(<>{rendered}</>);
+    }
+
+    it("renders total_price_localiza formatted as currency for non-zero value", () => {
+      const { container } = renderValorOcCell(152300);
+      expect(container.textContent).toBe(formatter.format(152300));
+    });
+
+    it("renders zero as formatted currency, not as a placeholder dash", () => {
+      const { container } = renderValorOcCell(0);
+      expect(container.textContent).toBe(formatter.format(0));
+      expect(container.textContent).not.toBe("—");
+    });
+
+    it("coerces string-typed value (PostgREST numeric serialization) to number before formatting", () => {
+      const { container } = renderValorOcCell("152300");
+      expect(container.textContent).toBe(formatter.format(152300));
+    });
+
+    it("does not opt out of sorting", () => {
+      const col = columns.find((c) => c.id === "valor_oc");
+      expect(col).not.toHaveProperty("enableSorting", false);
+    });
   });
 });

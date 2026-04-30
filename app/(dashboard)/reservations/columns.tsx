@@ -24,6 +24,7 @@ export type ReservationRow = {
   reservation_code: string | null;
   total_price: number;
   tax_fee: number;
+  total_price_localiza: number;
   referral_id: string | null;
   referral_raw: string | null;
   customers: {
@@ -230,9 +231,9 @@ export const columns: ColumnDef<ReservationRow, unknown>[] = [
   },
   {
     id: "valor_oc",
+    accessorKey: "total_price_localiza",
     header: "Valor OC",
-    enableSorting: false,
-    cell: () => <span className="text-muted-foreground">—</span>,
+    cell: ({ getValue }) => currencyFormatter.format(Number(getValue() ?? 0)),
   },
   {
     id: "actions",

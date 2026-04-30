@@ -8,6 +8,12 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ReservationStatusActions } from "@/components/layout/reservation-status-actions";
 
+const currencyFormatter = new Intl.NumberFormat("es-CO", {
+  style: "currency",
+  currency: "COP",
+  maximumFractionDigits: 0,
+});
+
 function Field({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div>
@@ -135,13 +141,13 @@ export default async function ReservationDetailPage({
           <CardTitle>Precios</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-          <Field label="Precio Total" value={`$${reservation.total_price}`} />
-          <Field label="Total a Pagar" value={`$${reservation.total_price_to_pay}`} />
-          <Field label="Precio Localiza" value={`$${reservation.total_price_localiza}`} />
-          <Field label="Impuestos" value={`$${reservation.tax_fee}`} />
-          <Field label="IVA" value={`$${reservation.iva_fee}`} />
+          <Field label="Precio Total" value={currencyFormatter.format(Number(reservation.total_price ?? 0))} />
+          <Field label="Total a Pagar" value={currencyFormatter.format(Number(reservation.total_price_to_pay ?? 0))} />
+          <Field label="Precio Localiza" value={currencyFormatter.format(Number(reservation.total_price_localiza ?? 0))} />
+          <Field label="Impuestos" value={currencyFormatter.format(Number(reservation.tax_fee ?? 0))} />
+          <Field label="IVA" value={currencyFormatter.format(Number(reservation.iva_fee ?? 0))} />
           <Field label="Días Cobertura" value={reservation.coverage_days} />
-          <Field label="Precio Cobertura" value={`$${reservation.coverage_price}`} />
+          <Field label="Precio Cobertura" value={currencyFormatter.format(Number(reservation.coverage_price ?? 0))} />
         </CardContent>
       </Card>
 
@@ -151,9 +157,9 @@ export default async function ReservationDetailPage({
           <CardTitle>Extras</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-          <Field label="Cargo Devolución" value={`$${reservation.return_fee}`} />
+          <Field label="Cargo Devolución" value={currencyFormatter.format(Number(reservation.return_fee ?? 0))} />
           <Field label="Horas Extra" value={reservation.extra_hours} />
-          <Field label="Precio Horas Extra" value={`$${reservation.extra_hours_price}`} />
+          <Field label="Precio Horas Extra" value={currencyFormatter.format(Number(reservation.extra_hours_price ?? 0))} />
           <Field label="Seguro Total" value={reservation.total_insurance ? "Sí" : "No"} />
           <BoolField label="Conductor Adicional" value={reservation.extra_driver} />
           <BoolField label="Silla de Bebé" value={reservation.baby_seat} />

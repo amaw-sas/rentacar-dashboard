@@ -115,8 +115,6 @@ function formatHour(hourStr: string): string {
   return h12 + ":" + m + " " + ampm;
 }
 
-const delay = () => new Promise((resolve) => setTimeout(resolve, parseInt(process.env.EMAIL_DELAY_MS || "5000")));
-
 export async function sendReservationNotifications(
   reservationId: string,
   status: ReservationStatus,
@@ -235,7 +233,6 @@ export async function sendReservationNotifications(
           })
         );
 
-        await delay();
         await sendEmail({
           franchise: franchiseCode,
           to: localizaEmail,
@@ -291,7 +288,6 @@ export async function sendReservationNotifications(
         })
       );
 
-      await delay();
       await sendEmail({
         franchise: franchiseCode,
         to: localizaEmail,
@@ -325,7 +321,6 @@ export async function sendReservationNotifications(
         })
       );
 
-      await delay();
       await sendEmail({
         franchise: franchiseCode,
         to: localizaEmail,
@@ -367,7 +362,6 @@ export async function sendReservationNotifications(
 
     // Monthly reservation notification to Localiza
     if (status === "mensualidad" && localizaEmail) {
-      await delay();
       const html = await renderEmail(
         MonthlyLocalizaEmail({
           ...branding,

@@ -41,14 +41,15 @@ sendEmail(franchise)                        sendEmail(franchise)
 
 1. `lib/email/client.ts` se reescribe completo: en vez de devolver un `nodemailer.Transporter`, devuelve un `Resend` client lookupeado por `${PREFIX}_RESEND_API_KEY`. Throw con mensaje claro si la env var falta para la franquicia.
 2. `lib/email/send.ts` cambia el body de `sendEmail()`: reemplaza `transporter.sendMail()` por `resend.emails.send()`, adapta el shape del payload y del error handling.
-3. `lib/email/notifications.ts` **no cambia**. La abstracción `sendEmail()` aísla el cambio de transport — toda la orquestación de templates por estado de reserva (460 líneas, alta complejidad) queda intacta.
+3. `lib/email/notifications.ts` cambia **mínimamente**: se eliminan las 4 llamadas a `delay()` (entre emails a Localiza). La abstracción `sendEmail()` queda intacta; toda la orquestación de templates por estado de reserva (460 líneas) sigue igual.
 4. `lib/email/render.ts` no cambia (puro react-email render).
 5. DB: migración SQL actualiza `franchises.sender_email` para alquilatucarro de `info@alquilatucarro.com` → `info@mail.alquilatucarro.com` (porque el dominio verificado en Resend es el subdominio, no el apex).
-6. Vercel env: agregar `ALQUILATUCARRO_RESEND_API_KEY` (ya hecho). Las 4 vars `ALQUILATUCARRO_MAIL_*` se borran en cleanup posterior, no en este PR.
+6. Vercel env: agregar `ALQUILATUCARRO_RESEND_API_KEY` (ya hecho). Las 4 vars `ALQUILATUCARRO_MAIL_*` y `EMAIL_DELAY_MS` se borran en cleanup posterior, no en este PR (el código deja de usar `EMAIL_DELAY_MS` con esta migración).
 7. `package.json`: agregar `resend`. Mantener `nodemailer` por ahora (cleanup separado cuando las 3 franquicias estén migradas).
 
 **Lo que se simplifica**:
-- `warnIfFromMismatch()` (`send.ts:27-42`) y el `mismatchWarned` Set se eliminan. Resend firma con DKIM directamente; el "SMTP_USER vs From mismatch" deja de ser un riesgo.
+- `warnIfFromMismatch()` y el Set `mismatchWarned` (`send.ts:27-42`) se eliminan. Resend firma con DKIM directamente; el "SMTP_USER vs From mismatch" deja de ser un riesgo.
+- `EMAIL_DELAY_MS` y las llamadas `delay()` en `notifications.ts` se eliminan. El delay (5s default) era un workaround de cuando se usaba Mailtrap (que rate-limiteaba a 1 email cada 3-5s). Resend no tiene esa restricción → emails se envían inmediatamente. Esto baja el peor caso de tiempo total inline (4 emails de Localiza × 5s delay + retries) de ~35s a ~8s, eliminando la preocupación de timeout de Vercel function durante el flow inline de reservas (`route.ts:312`).
 
 ---
 
@@ -86,8 +87,13 @@ export function getResendClient(franchise: string): Resend {
 Signature pública de `sendEmail()` no cambia. Cambios internos:
 
 - `createTransporter(franchise)` → `getResendClient(franchise)`
-- `transporter.sendMail(opts)` → `resend.emails.send(opts)`
-- Helper nuevo: `deriveReplyTo(senderEmail)` stripea `mail.` del dominio (`info@mail.alquilatucarro.com` → `info@alquilatucarro.com`).
+- `transporter.sendMail(opts)` → `resend.emails.send(opts)` envuelto en `AbortSignal.timeout(10000)` por intento (Node 20 fetch no tiene timeout default; sin esto, un cuelgue de TLS/red bloquea hasta el timeout de la function).
+- Helper nuevo: `deriveReplyTo(senderEmail)` con algoritmo explícito:
+  - Split en `@`. Si no hay `@`, return input unchanged (defensive).
+  - Sobre el host (después del `@`): regex `^mail\.` case-insensitive (`/^mail\./i`).
+  - Si match: stripear ese prefix exacto. Si no match: return input unchanged.
+  - Null/undefined input: return input unchanged (caller maneja).
+  - Anclaje al inicio del host evita corrupción en dominios como `info@email.com` (no contiene `mail.` como subdominio leading) o multi-TLD `info@mail.example.co.uk` (solo stripea el `mail.` leading, no toca el `.co.uk`).
 - Payload adaptado a Resend SDK:
   ```ts
   await resend.emails.send({
@@ -104,8 +110,24 @@ Signature pública de `sendEmail()` no cambia. Cambios internos:
     },
   });
   ```
-- Error handling adaptado a `{ data, error }` shape del SDK (Resend no throw — devuelve error en el response).
-- Eliminar `warnIfFromMismatch()` y `mismatchWarned`.
+- Error handling adaptado a `{ data, error }` shape del SDK (Resend no throw — devuelve error en el response). Caso `{ data: null, error: null }`: tratar como fallo (defensive — no debería ocurrir, pero blindamos).
+- Eliminar `warnIfFromMismatch()` y `mismatchWarned` (en `send.ts`).
+- **Verificar via Context7 al implementar** (CLAUDE.md mandate, no asumir desde training):
+  - Nombres exactos de `error.name` (`validation_error`, `rate_limit_exceeded`, etc.)
+  - Casing de `replyTo` vs `reply_to` en el SDK
+  - Si `error.statusCode` existe en el shape del error
+  - Si Resend auto-inyecta `List-Unsubscribe` (precedencia de headers custom)
+
+### `lib/email/notifications.ts` (modificación menor)
+
+Eliminar las 4 llamadas a `delay()` (líneas ~238, 294, 328, 370) y la constante:
+
+```ts
+const delay = () => new Promise((resolve) =>
+  setTimeout(resolve, parseInt(process.env.EMAIL_DELAY_MS || "5000")));
+```
+
+Razón: workaround obsoleto de cuando se usaba Mailtrap (rate-limit a 1 email cada 3-5s). Resend no tiene esa restricción.
 
 ### Env vars (Vercel)
 
@@ -114,6 +136,7 @@ Signature pública de `sendEmail()` no cambia. Cambios internos:
 | `ALQUILATUCARRO_RESEND_API_KEY` | Ya configurada | — |
 | `ALQUILATUCARRO_MAIL_HOST/_PORT/_USER/_PASS` | Dejar | Cleanup posterior tras confirmar prod estable |
 | 8 vars SMTP de alquicarros + alquilame | Dejar | Cleanup junto con migración futura de esas franquicias |
+| `EMAIL_DELAY_MS` | Dejar (sin uso) | Cleanup posterior; el código deja de leerla |
 
 ### DB migration
 
@@ -138,7 +161,7 @@ WHERE code = 'alquilatucarro';
 | Archivo | Cambio |
 |---|---|
 | `tests/unit/email/send.test.ts` | Reemplazar mock de nodemailer por mock de Resend SDK |
-| `tests/unit/email/notifications.test.ts` | Sin cambios (mockea `sendEmail`, no la capa de transporte) |
+| `tests/unit/email/notifications.test.ts` | Update — ya no mockea `delay()` ni `EMAIL_DELAY_MS`; verifica que NO hay esperas inyectadas entre emails de Localiza |
 | `tests/unit/email/templates/*.test.tsx` | Sin cambios (puro render) |
 
 ---
@@ -192,16 +215,23 @@ lib/email/send.ts → sendEmail()
 
 ### Window del cutover
 
+**Orden corregido**: código primero, SQL segundo.
+
 ```
-T-0:00  pnpm typecheck && lint && test (local)
-T-0:01  supabase db push  → sender_email = subdomain
+T-0:00  pnpm typecheck && lint && test && build (local)
+T-0:01  Pre-flight: dig MX alquilatucarro.com → confirmar que apex tiene inbox (Reply-To target)
 T-0:02  git push origin main → CI corre
 T-0:05  CI green → Vercel deploy rolling
-T-0:07  Vercel deploy live
-T-0:07  monitor Vercel logs ~10 min
+T-0:07  Vercel deploy live (código nuevo: Resend, lee sender_email viejo del DB)
+T-0:07  supabase db push → sender_email = subdomain
+T-0:08  monitor Vercel logs ~10 min
 ```
 
-**Window de riesgo (~6 min, T-0:01 → T-0:07)**: la DB tiene el subdomain pero el código viejo (nodemailer) sigue corriendo. Si en esos 6 min se dispara un email, nodemailer manda `From: info@mail.alquilatucarro.com` autenticado vía SMTP de Hostinger → SPF de Hostinger no incluye `mail.alquilatucarro.com` → SPF fail → posible spam folder. **Aceptable en alfa**.
+**Window de riesgo (~6 min, T-0:02 → T-0:07)**: el código viejo (nodemailer) sigue corriendo y la DB tiene apex igual que siempre — sin cambios efectivos para el envío durante este window. Cero riesgo de DMARC fail.
+
+**Window de "Resend rechaza apex" (~1 min, T-0:07 → T-0:08)**: el código nuevo está live pero la migración SQL aún no aplicó. Resend recibe `from: info@alquilatucarro.com` (apex no verificado) → devuelve `validation_error` → emails fallan loud (status='failed' en `notification_logs`). Aceptable porque ya estás monitoreando logs activamente en este momento; si un email falla, lo reenviás manualmente post-cutover. **Mejor que la alternativa anterior** (DMARC fail silencioso por SPF mismatch).
+
+**Riesgo aceptado en alfa — cron `/api/cron/check-pending`**: corre cada 30 min según `vercel.json`. Probabilidad ~20% (6/30) de tickear durante el window de cutover. Si tickea durante T-0:07 → T-0:08, fanout de emails para reservas pendientes fallarán loud (`validation_error` por apex no verificado). Quedan registrados en `notification_logs` con `status='failed'`; reenvío manual post-cutover. **Aceptado por el equipo** dado el estado alfa del proyecto.
 
 ---
 
@@ -220,7 +250,9 @@ T-0:07  monitor Vercel logs ~10 min
 
 ### Caller-side (notifications.ts)
 
-**No cambia**: el catch en `notifications.ts:401-406` ya envuelve toda la orquestación. Una falla de Resend nunca bloquea el flujo de reservas — la reserva queda persistida, el email falla silenciosamente desde la perspectiva del API, pero queda en `notification_logs` y Vercel logs.
+**Comportamiento del catch en `notifications.ts:401-406` no cambia**: envuelve toda la orquestación. Una falla de Resend nunca bloquea el flujo de reservas — la reserva queda persistida, el email falla silenciosamente desde la perspectiva del API, pero queda en `notification_logs` y Vercel logs.
+
+**Riesgo conocido aceptado**: fallas que ocurren **antes** de `sendEmail()` (ej. `renderEmail` throw, `fetchReservationContext` fail, `getFranchiseBranding` fail) son cacheadas por este catch a nivel orquestador y **NO** quedan en `notification_logs` (porque la fila se inserta solo desde dentro de `send.ts`). Aparecen únicamente en `console.error` de Vercel logs. **No agregamos logging del orquestador en este PR** — fuera de scope. Si una migración futura requiere audit trail completo, agregar un wrapper de logging al inicio de `sendReservationNotifications` con un row preliminar en `notification_logs`.
 
 ### Logging strategy
 
@@ -255,16 +287,33 @@ vi.mock("resend", () => ({
 }));
 ```
 
-**Casos** (mapean a observable scenarios S1-S7, S9, S10):
-1. `getResendClient`: devuelve cliente con env var; throw "Unknown franchise"; throw "Missing Resend API key".
-2. `deriveReplyTo`: subdomain → apex; apex → apex (idempotente); preserva plus addressing.
-3. `sendEmail` golden path: lee Supabase, llama `resend.emails.send` con payload correcto, inserta `notification_logs` status='sent'.
-4. `sendEmail` error paths:
+**Casos** (mapean a observable scenarios S1-S15):
+1. `getResendClient`:
+   - Devuelve cliente con `${PREFIX}_RESEND_API_KEY` set (S1)
+   - Throw `"Unknown franchise"` para franquicia desconocida (S2)
+   - Throw `"Missing Resend API key for "{franchise}". Required: {PREFIX}_RESEND_API_KEY"` cuando env var no existe (S2.1)
+   - Lazy lookup — no crash en module load (S15)
+2. `deriveReplyTo` (S10, S11):
+   - Subdomain → apex: `info@mail.alquilatucarro.com` → `info@alquilatucarro.com`
+   - Sin prefix: `info@alquilatucarro.com` → `info@alquilatucarro.com` (idempotente)
+   - Plus addressing: `info+marketing@mail.alquilatucarro.com` → `info+marketing@alquilatucarro.com`
+   - Uppercase: `info@MAIL.alquilatucarro.com` → `info@alquilatucarro.com` (case-insensitive)
+   - Sin `mail.` leading pero contiene "mail": `info@email.com` → `info@email.com` (no corruption)
+   - Multi-TLD: `info@mail.example.co.uk` → `info@example.co.uk`
+   - Null/undefined: returns input unchanged
+   - Sin `@`: returns input unchanged (defensive)
+3. `sendEmail` golden path (S1, S3, S9):
+   - Lee Supabase (`sender_email`, `sender_name`)
+   - Llama `resend.emails.send` con payload correcto (`from`, `to: [...]`, `replyTo`, `subject`, `html`, `headers`)
+   - Inserta `notification_logs` con columnas existentes + `status='sent'`
+4. `sendEmail` error paths (S4, S5, S12, S13):
    - `validation_error` → 1 llamada, throw, log failed
    - `rate_limit_exceeded` × 1 → 2 llamadas, success, log sent
    - `rate_limit_exceeded` × 3 → 3 llamadas, throw, log failed
    - 5xx → retry
    - Network throw → retry, eventual throw + log
+   - `{ data: null, error: null }` (defensive) → tratado como fallo, log failed
+   - `AbortSignal.timeout(10000)` dispara → retry, eventual throw + log
 
 ### Tests intencionalmente NO escritos
 
@@ -294,10 +343,15 @@ Falla cualquiera → Vercel deploy bloqueado. Política: correrlos local antes d
 **When** `sendEmail({ franchise: "alquilatucarro", ... })` es invocado.
 **Then** `resend.emails.send` se llama una vez con payload correcto **AND** `nodemailer` no es importado/llamado por el código de envío.
 
-### S2 — Franquicias sin API key fallan loud
-**Given** `ALQUICARROS_RESEND_API_KEY` no está set.
+### S2 — Franquicia desconocida produce error específico
+**Given** se invoca con un código no registrado en `FRANCHISE_ENV_PREFIX` (ej. `"foo"`).
+**When** `getResendClient("foo")` o `sendEmail({ franchise: "foo", ... })` es invocado.
+**Then** se arroja un Error cuyo mensaje contiene literalmente `"Unknown franchise"`.
+
+### S2.1 — Franquicia conocida sin API key falla loud (distinto error)
+**Given** `ALQUICARROS_RESEND_API_KEY` no está set en env (franquicia conocida pero no configurada).
 **When** `sendEmail({ franchise: "alquicarros", ... })` es invocado.
-**Then** se arroja un Error cuyo mensaje contiene literalmente `"ALQUICARROS_RESEND_API_KEY"`.
+**Then** se arroja un Error cuyo mensaje contiene literalmente `"ALQUICARROS_RESEND_API_KEY"` **AND** **NO** contiene `"Unknown franchise"`.
 
 ### S3 — From subdominio, Reply-To apex
 **Given** `franchises.sender_email = "info@mail.alquilatucarro.com"` y `sender_name = "Alquila tu Carro"`.
@@ -343,11 +397,51 @@ Falla cualquiera → Vercel deploy bloqueado. Política: correrlos local antes d
 **When** `deriveReplyTo()` procesa el valor.
 **Then** devuelve `"info+marketing@alquilatucarro.com"`.
 
+### S11 — `deriveReplyTo` cubre boundary cases
+**Given** los siguientes inputs:
+- `null` / `undefined`
+- `"info@alquilatucarro.com"` (sin `mail.`)
+- `"info@MAIL.alquilatucarro.com"` (uppercase)
+- `"info@email.com"` (contiene `"mail"` pero no como subdomain leading)
+- `"info@mail.example.co.uk"` (multi-TLD)
+- `"info"` (sin `@`, defensive)
+
+**When** `deriveReplyTo(input)` es llamado para cada uno.
+**Then**:
+- null/undefined → return input unchanged
+- `"info@alquilatucarro.com"` → `"info@alquilatucarro.com"` (no-op)
+- `"info@MAIL.alquilatucarro.com"` → `"info@alquilatucarro.com"` (case-insensitive)
+- `"info@email.com"` → `"info@email.com"` (no corruption)
+- `"info@mail.example.co.uk"` → `"info@example.co.uk"`
+- `"info"` → `"info"` (no `@`, return unchanged)
+
+### S12 — Resend SDK devuelve null/null se trata como fallo
+**Given** `resend.emails.send` devuelve `{ data: null, error: null }` (caso defensivo, no debería ocurrir pero blindamos).
+**When** `sendEmail()` es invocado.
+**Then** `sendEmail` arroja, `notification_logs` con `status='failed'` y `error_message` indicando "no data, no error from Resend SDK".
+
+### S13 — Network timeout dispara retry
+**Given** `resend.emails.send` cuelga (`AbortSignal.timeout(10000)` dispara).
+**When** `sendEmail()` es invocado.
+**Then** se reintenta hasta `MAX_RETRIES`, eventualmente throw, `notification_logs` con `status='failed'`.
+
+### S14 — Vercel function timeout no se excede en orquestación con retries (NO test, smoke check)
+**Given** una reserva mensual con `total_insurance` + extras (4 emails: cliente + Localiza × 3).
+**When** uno de los emails de Localiza hace 1 retry (8s).
+**Then** el tiempo total inline no excede `~10s` (4 emails × ~200ms + 8s retry = ~9s), holgadamente bajo el timeout de 300s de Vercel function.
+
+*Sin EMAIL_DELAY_MS, este es un smoke check conceptual — no es un test automatizado, pero es el racional que cierra el riesgo C5 del review.*
+
+### S15 — Module load no crashea sin env vars
+**Given** ninguna `*_RESEND_API_KEY` está configurada en el entorno.
+**When** se importa `lib/email/client.ts` (ej. en `pnpm test` con `.env.test` vacío).
+**Then** la importación NO arroja. Solo arroja al invocar `getResendClient(franchise)` (lookup lazy, no eager).
+
 ---
 
 ## 7. Rollback plan + Runbook de deploy
 
-### Runbook de deploy
+### Runbook de deploy (orden CORREGIDO: código primero, SQL después)
 
 ```
 PRE-FLIGHT (local)
@@ -356,54 +450,71 @@ PRE-FLIGHT (local)
 [ ] pnpm install (si cambió package.json)
 [ ] pnpm type-check / lint / test / build → todos pasan
 [ ] Diff review
+[ ] dig MX alquilatucarro.com → confirmar que apex tiene MX (Reply-To target funcional)
+    → debe resolver a un mailserver con inbox real (Hostinger en este caso)
 
 ENV VARS (Vercel) — ya hecho
 [x] ALQUILATUCARRO_RESEND_API_KEY configurada en Production + Preview
 
-DB MIGRATION
-[ ] supabase db push → aplica NNN_alquilatucarro_resend_sender.sql
-[ ] Verify: SELECT sender_email FROM franchises WHERE code = 'alquilatucarro';
-    → debe ser 'info@mail.alquilatucarro.com'
-
-CODE PUSH
+CODE PUSH (PRIMERO)
 [ ] git commit
 [ ] git push origin main
 [ ] Watch CI → typecheck + lint + test + build pass
 [ ] Watch Vercel deploy → Ready
+    → durante este window (~6 min): código viejo + DB vieja (sin riesgo)
+
+DB MIGRATION (SEGUNDO, post-deploy verde)
+[ ] supabase db push → aplica NNN_alquilatucarro_resend_sender.sql
+[ ] Verify: SELECT sender_email FROM franchises WHERE code = 'alquilatucarro';
+    → debe ser 'info@mail.alquilatucarro.com'
 
 POST-DEPLOY (~10 min monitoring)
 [ ] Tail Vercel logs por errores [email]
 [ ] Disparar reserva de prueba (S8 — DKIM/SPF/DMARC)
 [ ] Inspeccionar headers Authentication-Results
-[ ] Query notification_logs últimos 15 min, confirmar no hay status='failed' inesperado
+[ ] Query notification_logs últimos 15 min:
+    SELECT created_at, status, recipient, error_message
+    FROM notification_logs
+    WHERE created_at > NOW() - INTERVAL '15 minutes'
+    ORDER BY created_at DESC;
+    → confirmar no hay status='failed' inesperado
 ```
+
+**Rationale del orden**: si CI falla después del push, el deploy nunca sale → cero impacto en prod. Si pusheamos SQL primero y CI fallara después, prod quedaría con DB nueva + código viejo (nodemailer firmando con SMTP Hostinger pero From subdomain) → SPF fail garantizado y silencioso (DMARC misalignment marca como spam, no como falla loud).
 
 ### Rollback paths
 
 **Triggers**: errores `[email]` en Vercel logs, `notification_logs.status='failed'` para reservas reales, Resend dashboard rejections, reporte directo.
 
-**Path A — Rollback de código solo** (Resend tiene un bug nuestro, DB OK):
-```bash
-git revert <commit-sha> && git push origin main
-# Wait ~5 min (CI + Vercel deploy)
-```
-Side effect: nodemailer vuelve a usar `sender_email` subdomain del DB → SMTP envía con From subdomain pero auth con apex → DMARC fail → posible spam folder. **No bloquea envío, solo deliverability**.
+**Path A — Rollback de código solo: ❌ INVÁLIDO POR SÍ SOLO**.
 
-**Path B — Rollback de DB solo**: NO usar sin code revert primero. Rompe el código nuevo (Resend rechaza apex no verificado).
+Si revertimos solo el código (vuelve nodemailer) y dejamos la DB con `info@mail.alquilatucarro.com`, nodemailer envía via SMTP de Hostinger autenticado como `info@alquilatucarro.com` (apex) pero con `From: info@mail.alquilatucarro.com` (subdomain). Resultado:
+- DKIM no firma para el subdomain (Hostinger firma para apex).
+- SPF de Hostinger no incluye `mail.alquilatucarro.com`.
+- DMARC strict alignment falla en ambas dimensiones.
 
-**Path C — Rollback completo** (estado pre-cutover):
+→ Gmail puede **rechazar outright**, no solo spam-foldear. **Siempre pairear con DB revert (= Path C)**.
+
+**Path B — Rollback de DB solo: ❌ INVÁLIDO**. Rompe el código nuevo (Resend rechaza apex como From porque solo `mail.<domain>` está verificado).
+
+**Path C — Rollback completo (ÚNICO path válido)** (estado pre-cutover):
 ```bash
+# 1. Revert código
 git revert <commit-sha> && git push origin main
-# Wait ~5 min, luego:
-UPDATE franchises SET sender_email = 'info@alquilatucarro.com' WHERE code = 'alquilatucarro';
+# Wait ~5 min para CI + Vercel deploy
+
+# 2. Revert DB inmediatamente después del deploy verde
+UPDATE franchises SET sender_email = 'info@alquilatucarro.com'
+WHERE code = 'alquilatucarro';
 ```
+**Window de fallo loud durante el revert (~5 min)**: el código nuevo (Resend) sigue live mientras CI procesa el revert, devolviendo `validation_error` por el apex no verificado. Aceptable: emails fallan loud (no silencioso), monitor activo, reenvío manual posible.
 
 ### Tabla de decisión rápida
 
 | Síntoma | Path | Recovery |
 |---|---|---|
-| Resend rechaza emails (validation/auth) | A o C | ~5 min |
-| `getResendClient` arroja para alquilatucarro | A (env var problem) | ~5 min |
+| Resend rechaza emails (validation/auth) | C | ~5 min |
+| `getResendClient` arroja para alquilatucarro | C (env var problem) | ~5 min |
 | DB migration falló parcialmente | C | ~5 min |
 | CI falla en push | No rollback (no llegó a deploy) | 0 min |
 | Resend OK pero deliverability mala | Investigar primero, no rollback automático | — |
@@ -421,12 +532,14 @@ UPDATE franchises SET sender_email = 'info@alquilatucarro.com' WHERE code = 'alq
 ### IN
 
 **Código**:
-- `lib/email/client.ts` (rewrite)
-- `lib/email/send.ts` (modify)
+- `lib/email/client.ts` (rewrite — `getResendClient`)
+- `lib/email/send.ts` (modify — Resend SDK call, `deriveReplyTo`, `AbortSignal.timeout`, eliminar `warnIfFromMismatch`)
+- `lib/email/notifications.ts` (modify menor — eliminar 4 calls a `delay()` y la constante)
 - `package.json` + `pnpm-lock.yaml` (add `resend`)
 
 **Tests**:
-- `tests/unit/email/send.test.ts` (rewrite mocks)
+- `tests/unit/email/send.test.ts` (rewrite mocks de nodemailer → Resend, agregar S2/S2.1/S11/S12/S13/S15)
+- `tests/unit/email/notifications.test.ts` (update — remover mocks de `delay()`)
 
 **DB**:
 - `supabase/migrations/NNN_alquilatucarro_resend_sender.sql` (new)
@@ -436,7 +549,7 @@ UPDATE franchises SET sender_email = 'info@alquilatucarro.com' WHERE code = 'alq
 
 **Docs**:
 - `docs/specs/2026-04-29-resend-email-migration-design.md` (este archivo)
-- `CHANGELOG.md` (entrada `### Changed`)
+- `CHANGELOG.md` (entrada `### Changed` y `### Removed`)
 
 ### OUT (deferred)
 
@@ -451,11 +564,13 @@ UPDATE franchises SET sender_email = 'info@alquilatucarro.com' WHERE code = 'alq
 | Webhooks de Resend (bounces/complaints) | No requerido en alfa | Idem |
 | E2E tests del flow de email | Fuera de scope alfa | — |
 
-### Branch strategy
+### Branch strategy (resuelta)
 
-1. Crear branch `feat/resend-alquilatucarro-cutover` desde `main`.
-2. Commit con todos los cambios del scope IN.
-3. Fast-forward merge a `main` localmente.
+El spec doc ya vive como commit `8e4eaa4` en branch `chore/email-cleanup-post-cutover` (mismo branch donde habíamos trabajado el cleanup post-cutover anterior). En vez de cherry-pickear a un branch nuevo:
+
+1. **Reusar `chore/email-cleanup-post-cutover`** para los commits de implementación. El nombre del branch no es preciso (esto es feature, no cleanup), pero como vamos directo a `main` sin PR review, el nombre del feature branch es cosmético.
+2. Commits de implementación encima de `8e4eaa4`.
+3. Fast-forward `main` desde el branch local.
 4. Push `main` directo a GitHub (autorización explícita del usuario, sin PR).
 
 ### Commit message preview
@@ -465,8 +580,13 @@ feat(email): migrate alquilatucarro from SMTP to Resend
 
 - Replace nodemailer transporter with Resend SDK in lib/email/client.ts
 - Update sendEmail() to call resend.emails.send with adapted error
-  handling (rate_limit_exceeded retry, validation_error fail-fast)
-- Add deriveReplyTo() to map subdomain From to apex Reply-To
+  handling (rate_limit_exceeded retry, validation_error fail-fast,
+  AbortSignal.timeout per attempt, defensive null/null branch)
+- Add deriveReplyTo() to map subdomain From to apex Reply-To, with
+  case-insensitive ^mail. anchor and null/multi-TLD safety
+- Remove EMAIL_DELAY_MS workaround (was for Mailtrap rate limit;
+  Resend handles bursts natively); strip 4 delay() calls in
+  notifications.ts
 - DB migration: franchises.sender_email for alquilatucarro is now
   info@mail.alquilatucarro.com (matches verified Resend domain)
 - Remove obsolete warnIfFromMismatch (Resend signs with DKIM)
@@ -484,14 +604,19 @@ have no traffic in alpha. Their migration follows once DNS is fixed.
 - **email**: alquilatucarro now sends via Resend instead of SMTP. From
   changed to `info@mail.alquilatucarro.com` (Reply-To preserves apex).
   Closes the DMARC alignment risk previously flagged in `send.ts`.
+- **email**: notifications between Localiza emails are no longer
+  artificially delayed. The 5s `EMAIL_DELAY_MS` was a workaround for
+  Mailtrap's per-second rate limit and has no equivalent in Resend.
 
 ### Removed
 - **email**: `warnIfFromMismatch` runtime check — obsolete with Resend's
   DKIM signing.
+- **email**: `EMAIL_DELAY_MS` env var and `delay()` calls in
+  `notifications.ts`.
 ```
 
 ---
 
 ## TL;DR
 
-Cambia el provider de envío de correos de SMTP (nodemailer) a Resend para alquilatucarro únicamente. La abstracción `sendEmail()` se preserva — los consumidores (notifications.ts, server actions, crons) no se tocan. La DB se actualiza vía migración para que el `sender_email` apunte al subdominio verificado en Resend. Otras franquicias quedan en "no configurado, throw si se invocan" hasta que se resuelvan sus bloqueos de DNS. Rollback: `git revert` + posible `UPDATE` SQL, ~5-10 min recovery.
+Cambia el provider de envío de correos de SMTP (nodemailer) a Resend para alquilatucarro únicamente. La abstracción `sendEmail()` se preserva. `notifications.ts` cambia mínimamente para borrar el delay obsoleto de Mailtrap. La DB se actualiza vía migración para que `sender_email` apunte al subdominio verificado en Resend. Orden del deploy: **código primero, SQL después** (revierte el orden inicial; ver Sección 3 + 7 para rationale). Otras franquicias quedan en "no configurado, throw si se invocan" hasta que se resuelvan sus bloqueos de DNS. Rollback único válido: Path C (revert código + revert DB), ~5-10 min recovery.

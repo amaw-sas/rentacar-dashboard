@@ -1,4 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { getGhlConfig } from "@/lib/ghl/config";
+import { upsertContact, createOpportunity } from "@/lib/ghl/client";
+import { syncReservationToGhl } from "@/lib/ghl/sync";
 
 vi.mock("@/lib/supabase/admin", () => ({
   createAdminClient: vi.fn(),
@@ -56,33 +60,25 @@ describe("syncReservationToGhl", () => {
   });
 
   it("skips sync if franchise has no GHL config", async () => {
-    const { getGhlConfig } = await import("@/lib/ghl/config");
     vi.mocked(getGhlConfig).mockReturnValue(null);
-
-    const { createAdminClient } = await import("@/lib/supabase/admin");
-    vi.mocked(createAdminClient).mockReturnValue(createMockSupabase() as unknown as ReturnType<typeof createAdminClient>);
-
-    const { syncReservationToGhl } = await import("@/lib/ghl/sync");
-    const { upsertContact } = await import("@/lib/ghl/client");
+    vi.mocked(createAdminClient).mockReturnValue(
+      createMockSupabase() as unknown as ReturnType<typeof createAdminClient>
+    );
 
     await syncReservationToGhl("res-123");
     expect(upsertContact).not.toHaveBeenCalled();
   });
 
   it("upserts contact and creates opportunity when configured", async () => {
-    const { getGhlConfig } = await import("@/lib/ghl/config");
     vi.mocked(getGhlConfig).mockReturnValue({
       api_key: "test-key",
       location_id: "loc-123",
       pipeline_id: "pipe-456",
       stages: { pendiente: "s1", reservado: "s2", pendiente_modificar: "s3", utilizado: "s4", sin_disponibilidad: "s5", mensualidad: "s6" },
     });
-
-    const { createAdminClient } = await import("@/lib/supabase/admin");
-    vi.mocked(createAdminClient).mockReturnValue(createMockSupabase() as unknown as ReturnType<typeof createAdminClient>);
-
-    const { syncReservationToGhl } = await import("@/lib/ghl/sync");
-    const { upsertContact, createOpportunity } = await import("@/lib/ghl/client");
+    vi.mocked(createAdminClient).mockReturnValue(
+      createMockSupabase() as unknown as ReturnType<typeof createAdminClient>
+    );
 
     await syncReservationToGhl("res-123");
     expect(upsertContact).toHaveBeenCalled();

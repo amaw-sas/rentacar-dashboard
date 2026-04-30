@@ -1,33 +1,25 @@
-import nodemailer from "nodemailer";
+import { Resend } from "resend";
 
-const FRANCHISE_ENV_PREFIX: Record<string, string> = {
+const FRANCHISE_ENV_PREFIX = {
   alquilatucarro: "ALQUILATUCARRO",
   alquilame: "ALQUILAME",
   alquicarros: "ALQUICARROS",
-};
+} as const;
 
-export function createTransporter(franchise: string) {
-  const prefix = FRANCHISE_ENV_PREFIX[franchise];
+export function getResendClient(franchise: string): Resend {
+  const prefix =
+    FRANCHISE_ENV_PREFIX[franchise as keyof typeof FRANCHISE_ENV_PREFIX];
 
   if (!prefix) {
     throw new Error(`Unknown franchise: ${franchise}`);
   }
 
-  const host = process.env[`${prefix}_MAIL_HOST`];
-  const port = process.env[`${prefix}_MAIL_PORT`];
-  const user = process.env[`${prefix}_MAIL_USER`];
-  const pass = process.env[`${prefix}_MAIL_PASS`];
-
-  if (!host || !port || !user || !pass) {
+  const apiKey = process.env[`${prefix}_RESEND_API_KEY`];
+  if (!apiKey) {
     throw new Error(
-      `Missing SMTP config for franchise "${franchise}". Required: ${prefix}_MAIL_HOST, ${prefix}_MAIL_PORT, ${prefix}_MAIL_USER, ${prefix}_MAIL_PASS`
+      `Missing Resend API key for franchise "${franchise}". Required: ${prefix}_RESEND_API_KEY`
     );
   }
 
-  return nodemailer.createTransport({
-    host,
-    port: Number(port),
-    secure: Number(port) === 465,
-    auth: { user, pass },
-  });
+  return new Resend(apiKey);
 }

@@ -1,21 +1,29 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { createTransporter } from "@/lib/email/client";
-import { sendEmail } from "@/lib/email/send";
+import { logNotification } from "@/lib/actions/notification-logs";
 
 vi.mock("@/lib/supabase/admin", () => ({
   createAdminClient: vi.fn(),
-}));
-
-vi.mock("@/lib/email/client", () => ({
-  createTransporter: vi.fn(),
 }));
 
 vi.mock("@/lib/actions/notification-logs", () => ({
   logNotification: vi.fn().mockResolvedValue(undefined),
 }));
 
-const sendMailMock = vi.fn();
+const mockSend = vi.fn();
+
+vi.mock("resend", () => {
+  return {
+    Resend: class MockResend {
+      emails = { send: mockSend };
+      constructor(_apiKey: string) {
+        // no-op
+      }
+    },
+  };
+});
+
+import { sendEmail } from "@/lib/email/send";
 
 function setupFranchise(senderEmail: string, senderName = "Test Sender") {
   vi.mocked(createAdminClient).mockReturnValue({
@@ -30,20 +38,26 @@ function setupFranchise(senderEmail: string, senderName = "Test Sender") {
       }),
     }),
   } as unknown as ReturnType<typeof createAdminClient>);
-
-  vi.mocked(createTransporter).mockReturnValue({
-    sendMail: sendMailMock,
-  } as unknown as ReturnType<typeof createTransporter>);
 }
 
-describe("sendEmail deliverability headers", () => {
+describe("sendEmail (Resend) — golden path", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    sendMailMock.mockResolvedValue({ messageId: "<abc@test>" });
+    process.env.ALQUILATUCARRO_RESEND_API_KEY = "re_test_alquilatucarro";
+    process.env.ALQUILAME_RESEND_API_KEY = "re_test_alquilame";
+    process.env.ALQUICARROS_RESEND_API_KEY = "re_test_alquicarros";
   });
 
-  it("sets replyTo equal to the franchise sender_email", async () => {
-    setupFranchise("reservas@alquilatucarro.com");
+  afterEach(() => {
+    delete process.env.ALQUILATUCARRO_RESEND_API_KEY;
+    delete process.env.ALQUILAME_RESEND_API_KEY;
+    delete process.env.ALQUICARROS_RESEND_API_KEY;
+  });
+
+  // SCEN-001: Resend reemplaza completamente a nodemailer
+  it("calls resend.emails.send exactly once on success", async () => {
+    setupFranchise("info@mail.alquilatucarro.com", "Alquila tu Carro");
+    mockSend.mockResolvedValue({ data: { id: "resend-abc-123" }, error: null });
 
     await sendEmail({
       franchise: "alquilatucarro",
@@ -52,46 +66,74 @@ describe("sendEmail deliverability headers", () => {
       html: "<p>hi</p>",
     });
 
-    expect(sendMailMock).toHaveBeenCalledWith(
-      expect.objectContaining({ replyTo: "reservas@alquilatucarro.com" })
-    );
+    expect(mockSend).toHaveBeenCalledTimes(1);
   });
 
-  it("includes List-Unsubscribe mailto header pointing to sender_email", async () => {
-    setupFranchise("reservas@alquilame.com");
+  // SCEN-004: From subdominio, Reply-To apex
+  it("sets From with sender_name and sender_email subdomain, Reply-To apex", async () => {
+    setupFranchise("info@mail.alquilatucarro.com", "Alquila tu Carro");
+    mockSend.mockResolvedValue({ data: { id: "abc" }, error: null });
 
     await sendEmail({
-      franchise: "alquilame",
+      franchise: "alquilatucarro",
       to: "customer@example.com",
       subject: "Test",
       html: "<p>hi</p>",
     });
 
-    const args = sendMailMock.mock.calls[0][0];
+    expect(mockSend).toHaveBeenCalledWith(
+      expect.objectContaining({
+        from: '"Alquila tu Carro" <info@mail.alquilatucarro.com>',
+        to: ["customer@example.com"],
+        replyTo: "info@alquilatucarro.com",
+        subject: "Test",
+        html: "<p>hi</p>",
+      })
+    );
+  });
+
+  it("includes List-Unsubscribe header pointing to the apex address", async () => {
+    setupFranchise("info@mail.alquilatucarro.com");
+    mockSend.mockResolvedValue({ data: { id: "abc" }, error: null });
+
+    await sendEmail({
+      franchise: "alquilatucarro",
+      to: "customer@example.com",
+      subject: "Test",
+      html: "<p>hi</p>",
+    });
+
+    const args = mockSend.mock.calls[0][0];
     expect(args.headers).toMatchObject({
-      "List-Unsubscribe": "<mailto:reservas@alquilame.com?subject=Unsubscribe>",
+      "List-Unsubscribe": "<mailto:info@alquilatucarro.com?subject=Unsubscribe>",
       "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
     });
   });
 
-  it("includes text part when provided", async () => {
-    setupFranchise("reservas@alquicarros.com");
+  it("passes text and bcc when provided (wrapped as arrays where Resend expects)", async () => {
+    setupFranchise("info@mail.alquilatucarro.com");
+    mockSend.mockResolvedValue({ data: { id: "abc" }, error: null });
 
     await sendEmail({
-      franchise: "alquicarros",
+      franchise: "alquilatucarro",
       to: "customer@example.com",
       subject: "Test",
       html: "<p>hi</p>",
       text: "hi",
+      bcc: "internal@alquilatucarro.com",
     });
 
-    expect(sendMailMock).toHaveBeenCalledWith(
-      expect.objectContaining({ text: "hi", html: "<p>hi</p>" })
+    expect(mockSend).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "hi",
+        bcc: ["internal@alquilatucarro.com"],
+      })
     );
   });
 
-  it("omits text property when not provided", async () => {
-    setupFranchise("reservas@alquilatucarro.com");
+  it("omits text and bcc when not provided", async () => {
+    setupFranchise("info@mail.alquilatucarro.com");
+    mockSend.mockResolvedValue({ data: { id: "abc" }, error: null });
 
     await sendEmail({
       franchise: "alquilatucarro",
@@ -100,46 +142,223 @@ describe("sendEmail deliverability headers", () => {
       html: "<p>hi</p>",
     });
 
-    const args = sendMailMock.mock.calls[0][0];
+    const args = mockSend.mock.calls[0][0];
     expect(args).not.toHaveProperty("text");
+    expect(args).not.toHaveProperty("bcc");
   });
 
-  it("warns when sender_email differs from SMTP MAIL_USER", async () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    process.env.ALQUILATUCARRO_MAIL_USER = "smtp-bot@gmail.com";
-
-    setupFranchise("reservas@alquilatucarro.com");
+  it("logs notification with status=sent on success (SCEN-001)", async () => {
+    setupFranchise("info@mail.alquilatucarro.com");
+    mockSend.mockResolvedValue({
+      data: { id: "resend-message-id" },
+      error: null,
+    });
 
     await sendEmail({
       franchise: "alquilatucarro",
       to: "customer@example.com",
       subject: "Test",
       html: "<p>hi</p>",
+      reservationId: "r1",
+      notificationType: "reservado_cliente",
     });
 
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining("DMARC alignment risk")
+    expect(vi.mocked(logNotification)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reservation_id: "r1",
+        channel: "email",
+        notification_type: "reservado_cliente",
+        recipient: "customer@example.com",
+        subject: "Test",
+        status: "sent",
+      })
     );
-    warnSpy.mockRestore();
+  });
+});
+
+describe("sendEmail — error handling", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.env.ALQUILATUCARRO_RESEND_API_KEY = "re_test_key";
   });
 
-  it("does not warn when sender_email matches SMTP MAIL_USER (case-insensitive)", async () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    process.env.ALQUILAME_MAIL_USER = "Reservas@AlQuilame.com";
+  afterEach(() => {
+    delete process.env.ALQUILATUCARRO_RESEND_API_KEY;
+  });
 
-    setupFranchise("reservas@alquilame.com");
+  // SCEN-005: rate_limit retry succeeds
+  it("retries on rate_limit_exceeded and succeeds on second attempt (SCEN-005)", async () => {
+    setupFranchise("info@mail.alquilatucarro.com");
+    mockSend
+      .mockResolvedValueOnce({
+        data: null,
+        error: { name: "rate_limit_exceeded", message: "Too many requests" },
+      })
+      .mockResolvedValueOnce({
+        data: { id: "abc-123" },
+        error: null,
+      });
 
-    await sendEmail({
-      franchise: "alquilame",
+    vi.useFakeTimers();
+    const promise = sendEmail({
+      franchise: "alquilatucarro",
+      to: "customer@example.com",
+      subject: "Test",
+      html: "<p>hi</p>",
+      reservationId: "r1",
+      notificationType: "reservado_cliente",
+    });
+
+    await vi.advanceTimersByTimeAsync(9000);
+    await promise;
+    vi.useRealTimers();
+
+    expect(mockSend).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(logNotification)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "sent",
+      })
+    );
+  });
+
+  // SCEN-006: validation_error → no retry, throw, log failed
+  it("throws and logs failed without retry on validation_error (SCEN-006)", async () => {
+    setupFranchise("info@mail.alquilatucarro.com");
+    mockSend.mockResolvedValue({
+      data: null,
+      error: { name: "validation_error", message: "Invalid `from` field" },
+    });
+
+    await expect(
+      sendEmail({
+        franchise: "alquilatucarro",
+        to: "customer@example.com",
+        subject: "Test",
+        html: "<p>hi</p>",
+        reservationId: "r2",
+        notificationType: "reservado_cliente",
+      })
+    ).rejects.toThrow();
+
+    expect(mockSend).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(logNotification)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "failed",
+        error_message: expect.stringContaining("Invalid `from` field"),
+      })
+    );
+  });
+
+  // SCEN-013: defensive { data: null, error: null }
+  it("treats { data: null, error: null } as failure (SCEN-013)", async () => {
+    setupFranchise("info@mail.alquilatucarro.com");
+    mockSend.mockResolvedValue({ data: null, error: null });
+
+    await expect(
+      sendEmail({
+        franchise: "alquilatucarro",
+        to: "customer@example.com",
+        subject: "Test",
+        html: "<p>hi</p>",
+        reservationId: "r3",
+        notificationType: "reservado_cliente",
+      })
+    ).rejects.toThrow();
+
+    expect(mockSend).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(logNotification)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "failed",
+        error_message: expect.any(String),
+      })
+    );
+  });
+
+  // SCEN-014: timeout/network exception triggers retry
+  it("retries on send exception and fails after MAX_RETRIES (SCEN-014)", async () => {
+    setupFranchise("info@mail.alquilatucarro.com");
+    mockSend.mockImplementation(async () => {
+      throw new Error("network timeout");
+    });
+
+    vi.useFakeTimers();
+    const promise = sendEmail({
+      franchise: "alquilatucarro",
+      to: "customer@example.com",
+      subject: "Test",
+      html: "<p>hi</p>",
+      reservationId: "r4",
+      notificationType: "reservado_cliente",
+    });
+    // Attach a catch handler immediately to prevent unhandled-rejection noise.
+    promise.catch(() => {});
+
+    // Advance through 2 retry delays of 8s each = 16s
+    await vi.advanceTimersByTimeAsync(20000);
+    await expect(promise).rejects.toThrow();
+    vi.useRealTimers();
+
+    expect(mockSend).toHaveBeenCalledTimes(3);
+    expect(vi.mocked(logNotification)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "failed",
+      })
+    );
+  });
+
+  // 5xx → retry
+  it("retries on application_error with 5xx statusCode", async () => {
+    setupFranchise("info@mail.alquilatucarro.com");
+    mockSend
+      .mockResolvedValueOnce({
+        data: null,
+        error: {
+          name: "application_error",
+          message: "Internal server error",
+          statusCode: 503,
+        },
+      })
+      .mockResolvedValueOnce({
+        data: { id: "abc-after-5xx" },
+        error: null,
+      });
+
+    vi.useFakeTimers();
+    const promise = sendEmail({
+      franchise: "alquilatucarro",
       to: "customer@example.com",
       subject: "Test",
       html: "<p>hi</p>",
     });
 
-    const mismatchWarnings = warnSpy.mock.calls.filter((c) =>
-      String(c[0]).includes("DMARC alignment risk")
-    );
-    expect(mismatchWarnings).toHaveLength(0);
-    warnSpy.mockRestore();
+    await vi.advanceTimersByTimeAsync(9000);
+    await promise;
+    vi.useRealTimers();
+
+    expect(mockSend).toHaveBeenCalledTimes(2);
+  });
+
+  // application_error 4xx (e.g., invalid api key) → no retry
+  it("does NOT retry on application_error with non-5xx statusCode (e.g., 401)", async () => {
+    setupFranchise("info@mail.alquilatucarro.com");
+    mockSend.mockResolvedValue({
+      data: null,
+      error: {
+        name: "application_error",
+        message: "Invalid API key",
+        statusCode: 401,
+      },
+    });
+
+    await expect(
+      sendEmail({
+        franchise: "alquilatucarro",
+        to: "customer@example.com",
+        subject: "Test",
+        html: "<p>hi</p>",
+      })
+    ).rejects.toThrow();
+
+    expect(mockSend).toHaveBeenCalledTimes(1);
   });
 });

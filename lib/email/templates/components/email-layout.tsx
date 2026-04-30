@@ -52,7 +52,13 @@ export function EmailLayout({
                 src={franchiseLogo}
                 alt={franchiseName}
                 height="44"
-                style={{ margin: "0 auto", display: "block" }}
+                style={{
+                  margin: "0 auto",
+                  display: "block",
+                  height: "44px",
+                  width: "auto",
+                  maxWidth: "180px",
+                }}
               />
             ) : (
               <Text style={{ ...headerTitle, color: franchiseColor }}>
@@ -81,6 +87,9 @@ export function EmailLayout({
                 style={{
                   margin: "0 auto 16px",
                   display: "block",
+                  height: "28px",
+                  width: "auto",
+                  maxWidth: "120px",
                   opacity: 0.7,
                 }}
               />

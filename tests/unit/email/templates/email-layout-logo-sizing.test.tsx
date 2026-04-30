@@ -68,39 +68,51 @@ function findFooterLogo(html: string, src: string): string {
 }
 
 describe("EmailLayout — franchise logo sizing", () => {
-  it("header logo has explicit inline height in px (not just HTML attribute)", async () => {
+  it("header logo declares width as HTML attribute (legacy clients honor this)", async () => {
     const html = await render(ReservedClientEmail(baseProps));
     const img = findHeaderLogo(html, baseProps.franchiseLogo);
-    expect(img).toMatch(/style="[^"]*height:\s*44px/i);
+    expect(img).toMatch(/\bwidth="180"/);
   });
 
-  it("header logo declares width:auto inline so natural width cannot leak through", async () => {
+  it("header logo style declares height:auto so aspect ratio is preserved", async () => {
     const html = await render(ReservedClientEmail(baseProps));
     const img = findHeaderLogo(html, baseProps.franchiseLogo);
-    expect(img).toMatch(/style="[^"]*width:\s*auto/i);
+    expect(img).toMatch(/style="[^"]*height:\s*auto/i);
   });
 
-  it("header logo declares a max-width safety cap to prevent overflow of the 560px container", async () => {
+  it("header logo style declares max-width:100% as responsive safety cap", async () => {
     const html = await render(ReservedClientEmail(baseProps));
     const img = findHeaderLogo(html, baseProps.franchiseLogo);
-    expect(img).toMatch(/style="[^"]*max-width:\s*\d+px/i);
+    expect(img).toMatch(/style="[^"]*max-width:\s*100%/i);
   });
 
-  it("footer logo has explicit inline height in px", async () => {
+  it("header logo does not pin a fixed pixel height anymore (drove Thunderbird overflow)", async () => {
     const html = await render(ReservedClientEmail(baseProps));
-    const img = findFooterLogo(html, baseProps.franchiseLogo);
-    expect(img).toMatch(/style="[^"]*height:\s*28px/i);
+    const img = findHeaderLogo(html, baseProps.franchiseLogo);
+    expect(img).not.toMatch(/\bheight="\d+"/);
   });
 
-  it("footer logo declares width:auto inline so natural width cannot leak through", async () => {
+  it("footer logo declares width as HTML attribute", async () => {
     const html = await render(ReservedClientEmail(baseProps));
     const img = findFooterLogo(html, baseProps.franchiseLogo);
-    expect(img).toMatch(/style="[^"]*width:\s*auto/i);
+    expect(img).toMatch(/\bwidth="120"/);
   });
 
-  it("footer logo declares a max-width safety cap", async () => {
+  it("footer logo style declares height:auto", async () => {
     const html = await render(ReservedClientEmail(baseProps));
     const img = findFooterLogo(html, baseProps.franchiseLogo);
-    expect(img).toMatch(/style="[^"]*max-width:\s*\d+px/i);
+    expect(img).toMatch(/style="[^"]*height:\s*auto/i);
+  });
+
+  it("footer logo style declares max-width:100%", async () => {
+    const html = await render(ReservedClientEmail(baseProps));
+    const img = findFooterLogo(html, baseProps.franchiseLogo);
+    expect(img).toMatch(/style="[^"]*max-width:\s*100%/i);
+  });
+
+  it("footer logo does not pin a fixed pixel height anymore", async () => {
+    const html = await render(ReservedClientEmail(baseProps));
+    const img = findFooterLogo(html, baseProps.franchiseLogo);
+    expect(img).not.toMatch(/\bheight="\d+"/);
   });
 });

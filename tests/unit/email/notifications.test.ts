@@ -5,7 +5,6 @@ import { renderEmail } from "@/lib/email/render";
 import { logNotification } from "@/lib/actions/notification-logs";
 import { sendReservationNotifications } from "@/lib/email/notifications";
 
-process.env.EMAIL_DELAY_MS = "0";
 vi.mock("@/lib/supabase/admin", () => ({
   createAdminClient: vi.fn(),
 }));
@@ -69,7 +68,6 @@ describe("sendReservationNotifications", () => {
     setupMock();
     process.env.LOCALIZA_NOTIFICATION_EMAIL = "localiza@test.com";
     process.env.LOCALIZA_NOTIFICATION_BCC_EMAIL = "bcc@test.com";
-    process.env.EMAIL_DELAY_MS = "0";
   });
 
   it("sends reserved email to customer on status reservado", async () => {

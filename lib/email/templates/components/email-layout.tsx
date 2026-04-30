@@ -51,13 +51,13 @@ export function EmailLayout({
               <Img
                 src={franchiseLogo}
                 alt={franchiseName}
-                height="44"
+                width="180"
                 style={{
                   margin: "0 auto",
                   display: "block",
-                  height: "44px",
-                  width: "auto",
-                  maxWidth: "180px",
+                  width: "180px",
+                  height: "auto",
+                  maxWidth: "100%",
                 }}
               />
             ) : (
@@ -83,13 +83,13 @@ export function EmailLayout({
               <Img
                 src={franchiseLogo}
                 alt={franchiseName}
-                height="28"
+                width="120"
                 style={{
                   margin: "0 auto 16px",
                   display: "block",
-                  height: "28px",
-                  width: "auto",
-                  maxWidth: "120px",
+                  width: "120px",
+                  height: "auto",
+                  maxWidth: "100%",
                   opacity: 0.7,
                 }}
               />

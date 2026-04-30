@@ -35,7 +35,7 @@ Rejected alternatives:
 
 - The "Valor OC" column displays `total_price_localiza` formatted as Colombian Peso currency, using the existing `currencyFormatter` instance already shared by the "Total + Tax" column.
 - A value of `0` (the database default for un-edited reservations) renders as `$0` — literal to the database, deferred decision per user request. Rationale: until the automated import is live, operators only fill in values they have on hand; visual ambiguity around "$0 vs not yet entered" is acceptable for now.
-- Sorting is enabled on the column. Default order is ascending; users can toggle.
+- Sorting is enabled on the column; first click sorts ascending, second descending (default `@tanstack/react-table` behavior).
 
 ## Scope Boundaries
 
@@ -49,7 +49,7 @@ Rejected alternatives:
 **Out of scope**:
 - DB migration / schema changes / rename
 - Edit form changes (already works)
-- Detail page label rename
+- Detail page label rename or formatter alignment (currently renders raw `$${value}` without thousands separators — list will use `Intl.NumberFormat` after this change, producing a visual inconsistency between list and detail. Acceptable for now; track as a follow-up cleanup.)
 - Empty-state placeholder logic (deferred — to revisit when automated commission import lands)
 - Multi-row totals / aggregations / filters
 
@@ -63,12 +63,12 @@ Rejected alternatives:
 1. **Renders the persisted value as currency**
    - **Given** a reservation row with `total_price_localiza = 152300`
    - **When** the reservations list page renders
-   - **Then** the "Valor OC" cell displays `$ 152.300` (Intl.NumberFormat es-CO, COP)
+   - **Then** the "Valor OC" cell displays the value formatted via the shared `currencyFormatter` (Intl.NumberFormat es-CO, COP) — tests compare with `currencyFormatter.format(152300)` rather than a hard-coded literal to avoid ICU whitespace variance.
 
 2. **Renders zero literally**
    - **Given** a reservation row with `total_price_localiza = 0`
    - **When** the reservations list page renders
-   - **Then** the "Valor OC" cell displays `$ 0` (no placeholder dash)
+   - **Then** the "Valor OC" cell displays the result of `currencyFormatter.format(0)` (not a placeholder dash).
 
 3. **Edit form persists changes that flow to the column**
    - **Given** an existing reservation displayed in the list with `total_price_localiza = 0`

@@ -34,18 +34,22 @@ import {
 import { columns, type ReservationRow } from "./columns";
 
 type ReferralOption = { id: string; name: string };
+type CityOption = { id: string; name: string };
 
 interface ReservationsTableProps {
   data: ReservationRow[];
   referrals: ReferralOption[];
+  cities: CityOption[];
 }
 
 const ALL = "__all__";
+export const ALL_CITIES = ALL;
 const PRIORITY_SORT = { id: "priority", desc: false } as const;
 
 const initialFilters = {
   franchise: ALL,
   status: ALL,
+  city: ALL,
   referral: ALL,
   createdFrom: "",
   createdTo: "",
@@ -80,9 +84,15 @@ function inDateRange(iso: string, from: string, to: string) {
   return true;
 }
 
+export function matchesCity(row: ReservationRow, cityFilter: string) {
+  if (cityFilter === ALL) return true;
+  return row.pickup_location?.city_id === cityFilter;
+}
+
 export function ReservationsTable({
   data,
   referrals,
+  cities,
 }: ReservationsTableProps) {
   const [filters, setFilters] = useState<FilterState>(initialFilters);
   const [sorting, setSortingRaw] = useState<SortingState>([
@@ -104,6 +114,7 @@ export function ReservationsTable({
       if (filters.franchise !== ALL && row.franchise !== filters.franchise)
         return false;
       if (filters.status !== ALL && row.status !== filters.status) return false;
+      if (!matchesCity(row, filters.city)) return false;
       if (
         filters.referral !== ALL &&
         (row.referrals?.id ?? row.referral_id ?? "") !== filters.referral
@@ -180,6 +191,26 @@ export function ReservationsTable({
               {RESERVATION_STATUSES.map((s) => (
                 <SelectItem key={s} value={s}>
                   {STATUS_LABELS[s as ReservationStatus]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="flex flex-col gap-1">
+          <label className="text-xs text-muted-foreground">Ciudad</label>
+          <Select
+            value={filters.city}
+            onValueChange={(v) => update("city", v)}
+          >
+            <SelectTrigger className="w-44">
+              <SelectValue placeholder="Ciudad" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ALL}>Todas</SelectItem>
+              {cities.map((c) => (
+                <SelectItem key={c.id} value={c.id}>
+                  {c.name}
                 </SelectItem>
               ))}
             </SelectContent>

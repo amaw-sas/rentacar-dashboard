@@ -35,7 +35,11 @@ export type ReservationRow = {
     email: string;
   } | null;
   rental_companies: { name: string } | null;
-  pickup_location: { name: string } | null;
+  pickup_location: {
+    name: string;
+    city_id: string | null;
+    cities: { id: string; name: string } | null;
+  } | null;
   return_location: { name: string } | null;
   referrals: { id: string; name: string; code: string } | null;
 };

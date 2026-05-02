@@ -30,7 +30,7 @@ const baseRow: ReservationRow = {
     email: "dc005241@gmail.com",
   },
   rental_companies: { name: "Localiza" },
-  pickup_location: { name: "Aeropuerto" },
+  pickup_location: { name: "Aeropuerto", city_id: null, cities: null },
   return_location: { name: "Aeropuerto" },
   referrals: { id: "ref-1", name: "Daniela", code: "DAN" },
 };

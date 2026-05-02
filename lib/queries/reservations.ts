@@ -4,7 +4,7 @@ const RESERVATION_SELECT = `
   *,
   customers(first_name, last_name, identification_number, phone, email),
   rental_companies(name),
-  pickup_location:locations!pickup_location_id(name),
+  pickup_location:locations!pickup_location_id(name, city_id, cities(id, name)),
   return_location:locations!return_location_id(name),
   referrals(id, name, code)
 `;

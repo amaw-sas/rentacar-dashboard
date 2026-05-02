@@ -30,6 +30,23 @@ describe("vehicleCategorySchema", () => {
     expect(result.success).toBe(false);
   });
 
+  it("accepts non-negative extra_km_charge", () => {
+    const result = vehicleCategorySchema.safeParse({ ...valid, extra_km_charge: 700 });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.extra_km_charge).toBe(700);
+  });
+
+  it("rejects negative extra_km_charge", () => {
+    const result = vehicleCategorySchema.safeParse({ ...valid, extra_km_charge: -1 });
+    expect(result.success).toBe(false);
+  });
+
+  it("coerces extra_km_charge from FormData string", () => {
+    const result = vehicleCategorySchema.safeParse({ ...valid, extra_km_charge: "900" });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.extra_km_charge).toBe(900);
+  });
+
   it("defaults optional fields", () => {
     const minimal = {
       rental_company_id: "550e8400-e29b-41d4-a716-446655440000",
@@ -41,6 +58,7 @@ describe("vehicleCategorySchema", () => {
     if (result.success) {
       expect(result.data.transmission).toBe("manual");
       expect(result.data.has_ac).toBe(true);
+      expect(result.data.extra_km_charge).toBe(0);
     }
   });
 });

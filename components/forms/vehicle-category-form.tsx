@@ -61,6 +61,7 @@ export function VehicleCategoryForm({
       image_url: "",
       passenger_count: 0,
       luggage_count: 0,
+      extra_km_charge: 0,
       has_ac: true,
       transmission: "manual",
       status: "active",
@@ -177,6 +178,22 @@ export function VehicleCategoryForm({
             {errors.luggage_count && (
               <p className="text-sm text-destructive">
                 {errors.luggage_count.message}
+              </p>
+            )}
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="extra_km_charge">Km extra</Label>
+            <Input
+              id="extra_km_charge"
+              type="number"
+              min="0"
+              step="1"
+              {...register("extra_km_charge")}
+            />
+            {errors.extra_km_charge && (
+              <p className="text-sm text-destructive">
+                {errors.extra_km_charge.message}
               </p>
             )}
           </div>

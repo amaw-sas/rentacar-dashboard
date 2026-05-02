@@ -67,6 +67,16 @@ export default async function CategoryDetailPage({
             <p className="font-medium">{category.luggage_count}</p>
           </div>
           <div>
+            <p className="text-sm text-muted-foreground">Km extra</p>
+            <p className="font-medium">
+              {new Intl.NumberFormat("es-CO", {
+                style: "currency",
+                currency: "COP",
+                maximumFractionDigits: 0,
+              }).format(category.extra_km_charge ?? 0)}
+            </p>
+          </div>
+          <div>
             <p className="text-sm text-muted-foreground">Transmisión</p>
             <Badge
               variant={

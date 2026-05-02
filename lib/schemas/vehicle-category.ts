@@ -8,6 +8,7 @@ export const vehicleCategorySchema = z.object({
   image_url: z.string().default(""),
   passenger_count: z.coerce.number().int().min(0).default(0),
   luggage_count: z.coerce.number().int().min(0).default(0),
+  extra_km_charge: z.coerce.number().min(0).default(0),
   has_ac: z.boolean().default(true),
   transmission: z.enum(["automatic", "manual"]).default("manual"),
   status: z.enum(["active", "inactive"]).default("active"),

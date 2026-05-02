@@ -11,11 +11,18 @@ export type VehicleCategoryRow = {
   code: string;
   passenger_count: number;
   luggage_count: number;
+  extra_km_charge: number;
   transmission: string;
   has_ac: boolean;
   status: string;
   rental_companies: { name: string } | null;
 };
+
+const currencyFormatter = new Intl.NumberFormat("es-CO", {
+  style: "currency",
+  currency: "COP",
+  maximumFractionDigits: 0,
+});
 
 export const columns: ColumnDef<VehicleCategoryRow, unknown>[] = [
   {
@@ -41,6 +48,11 @@ export const columns: ColumnDef<VehicleCategoryRow, unknown>[] = [
   {
     accessorKey: "luggage_count",
     header: "Equipaje",
+  },
+  {
+    accessorKey: "extra_km_charge",
+    header: "Km extra",
+    cell: ({ getValue }) => currencyFormatter.format(getValue<number>()),
   },
   {
     accessorKey: "transmission",

@@ -132,6 +132,37 @@ export function extractErrorMessage(errors: unknown): string | null {
   return null;
 }
 
+// Emits a structured Railway log line capturing the raw OTA Warnings/Errors
+// node Localiza returned. Used to discover unmapped ShortText codes — the node
+// holds Type, Code, and the human Description text Localiza populates per
+// error, which is the only reliable source to grow LOCALIZA_WARNING_MAP.
+// Logs only the Errors/Warnings subtree, never the request envelope, so
+// customer PII never enters the log stream.
+export interface LogLocalizaUpstreamArgs {
+  event: "localiza_upstream_warnings" | "localiza_upstream_errors";
+  endpoint: "reservation" | "availability" | "check-status";
+  payload: unknown;
+  shortText?: string | null;
+  // Non-PII search context so a Railway log line is self-contained for
+  // debugging. Caller MUST whitelist fields — never spread req.body.
+  // PII (customerName/Email/Phone/Document) belongs to the booking actor,
+  // not to the search criteria, and must never enter this map.
+  request?: Record<string, unknown>;
+}
+
+export function logLocalizaUpstream(args: LogLocalizaUpstreamArgs): void {
+  const entry: Record<string, unknown> = {
+    level: "WARN",
+    event: args.event,
+    endpoint: args.endpoint,
+    shortText: args.shortText ?? null,
+    payload: args.payload ?? null,
+    timestamp: new Date().toISOString(),
+  };
+  if (args.request !== undefined) entry.request = args.request;
+  console.warn(JSON.stringify(entry));
+}
+
 export function buildLocalizaWarning(
   shortText: string | null,
 ): LocalizaWarningError {

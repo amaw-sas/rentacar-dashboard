@@ -6,6 +6,7 @@ import {
   buildLocalizaWarning,
   extractErrorMessage,
   extractWarningShortText,
+  logLocalizaUpstream,
 } from "./warnings";
 
 const router = Router();
@@ -95,7 +96,10 @@ function findReservationStatus(node: unknown): string {
   return "";
 }
 
-function extractReservation(parsed: Record<string, unknown>) {
+function extractReservation(
+  parsed: Record<string, unknown>,
+  requestContext?: Record<string, unknown>,
+) {
   const envelope = parsed["Envelope"] as Record<string, unknown>;
   const body = envelope["Body"] as Record<string, unknown>;
   // Localiza wraps response in OTA_VehResResponse
@@ -105,11 +109,25 @@ function extractReservation(parsed: Record<string, unknown>) {
   if (rs["Errors"]) {
     const upstream = extractErrorMessage(rs["Errors"]);
     console.error("Localiza reservation API error:", upstream);
+    logLocalizaUpstream({
+      event: "localiza_upstream_errors",
+      endpoint: "reservation",
+      payload: rs["Errors"],
+      request: requestContext,
+    });
     throw buildLocalizaWarning(null);
   }
 
   if (rs["Warnings"]) {
-    throw buildLocalizaWarning(extractWarningShortText(rs["Warnings"]));
+    const shortText = extractWarningShortText(rs["Warnings"]);
+    logLocalizaUpstream({
+      event: "localiza_upstream_warnings",
+      endpoint: "reservation",
+      payload: rs["Warnings"],
+      shortText,
+      request: requestContext,
+    });
+    throw buildLocalizaWarning(shortText);
   }
 
   // ReservationStatus is on VehReservation, not VehResRSCore
@@ -164,7 +182,15 @@ router.post("/", async (req: Request, res: Response): Promise<void> => {
       xml,
     );
 
-    const result = extractReservation(parsed);
+    const result = extractReservation(parsed, {
+      pickupLocation: data.pickupLocation,
+      returnLocation: data.returnLocation,
+      pickupDateTime: data.pickupDateTime,
+      returnDateTime: data.returnDateTime,
+      categoryCode: data.categoryCode,
+      referenceToken: data.referenceToken,
+      rateQualifier: data.rateQualifier,
+    });
     res.json(result);
   } catch (error) {
     if (error instanceof LocalizaWarningError) {

@@ -6,6 +6,7 @@ import {
   buildLocalizaWarning,
   extractErrorMessage,
   extractWarningShortText,
+  logLocalizaUpstream,
 } from "./warnings";
 
 const router = Router();
@@ -17,7 +18,10 @@ interface AvailabilityRequest {
   returnDateTime: string;
 }
 
-export function extractAvailability(parsed: Record<string, unknown>): Record<string, unknown>[] {
+export function extractAvailability(
+  parsed: Record<string, unknown>,
+  requestContext?: Record<string, unknown>,
+): Record<string, unknown>[] {
   try {
     const envelope = parsed["Envelope"] as Record<string, unknown>;
     const body = envelope["Body"] as Record<string, unknown>;
@@ -35,12 +39,26 @@ export function extractAvailability(parsed: Record<string, unknown>): Record<str
     // (out-of-schedule, holiday, no inventory). Propagate the structured code
     // so the Nuxt client can render the matching toast via useMessages.
     if (rs["Warnings"]) {
-      throw buildLocalizaWarning(extractWarningShortText(rs["Warnings"]));
+      const shortText = extractWarningShortText(rs["Warnings"]);
+      logLocalizaUpstream({
+        event: "localiza_upstream_warnings",
+        endpoint: "availability",
+        payload: rs["Warnings"],
+        shortText,
+        request: requestContext,
+      });
+      throw buildLocalizaWarning(shortText);
     }
 
     if (rs["Errors"]) {
       const upstreamMessage = extractErrorMessage(rs["Errors"]);
       console.error("Localiza API error:", upstreamMessage);
+      logLocalizaUpstream({
+        event: "localiza_upstream_errors",
+        endpoint: "availability",
+        payload: rs["Errors"],
+        request: requestContext,
+      });
       throw buildLocalizaWarning(null);
     }
 
@@ -187,7 +205,12 @@ router.post("/", async (req: Request, res: Response): Promise<void> => {
       xml,
     );
 
-    const vehicles = extractAvailability(parsed);
+    const vehicles = extractAvailability(parsed, {
+      pickupLocation,
+      returnLocation,
+      pickupDateTime,
+      returnDateTime,
+    });
     res.json(vehicles);
   } catch (error) {
     if (error instanceof LocalizaWarningError) {

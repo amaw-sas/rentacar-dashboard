@@ -1,10 +1,14 @@
 import { Router, Request, Response } from "express";
 import { callLocalizaAPI, getConfig } from "./client";
 import { buildVehRetResXML } from "./xml-templates";
+import { logLocalizaUpstream } from "./warnings";
 
 const router = Router();
 
-function extractReservationStatus(parsed: Record<string, unknown>): {
+function extractReservationStatus(
+  parsed: Record<string, unknown>,
+  requestContext?: Record<string, unknown>,
+): {
   reservationStatus: string;
   reserveCode: string;
 } {
@@ -17,6 +21,12 @@ function extractReservationStatus(parsed: Record<string, unknown>): {
     const errors = rs["Errors"] as Record<string, unknown>;
     const error = errors["Error"] as Record<string, unknown>;
     const message = error?.["_"] || JSON.stringify(error);
+    logLocalizaUpstream({
+      event: "localiza_upstream_errors",
+      endpoint: "check-status",
+      payload: rs["Errors"],
+      request: requestContext,
+    });
     throw new Error(`Localiza error: ${message}`);
   }
 
@@ -53,7 +63,7 @@ router.post("/", async (req: Request, res: Response): Promise<void> => {
       xml,
     );
 
-    const result = extractReservationStatus(parsed);
+    const result = extractReservationStatus(parsed, { reservationCode });
     res.json(result);
   } catch (error) {
     console.error("Check status error:", error);

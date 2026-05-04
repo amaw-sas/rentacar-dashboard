@@ -25,13 +25,21 @@ vi.mock("resend", () => {
 
 import { sendEmail } from "@/lib/email/send";
 
-function setupFranchise(senderEmail: string, senderName = "Test Sender") {
+function setupFranchise(
+  senderEmail: string,
+  senderName = "Test Sender",
+  replyToEmail: string | null = null
+) {
   vi.mocked(createAdminClient).mockReturnValue({
     from: vi.fn().mockReturnValue({
       select: vi.fn().mockReturnValue({
         eq: vi.fn().mockReturnValue({
           single: vi.fn().mockResolvedValue({
-            data: { sender_email: senderEmail, sender_name: senderName },
+            data: {
+              sender_email: senderEmail,
+              sender_name: senderName,
+              reply_to_email: replyToEmail,
+            },
             error: null,
           }),
         }),
@@ -88,6 +96,71 @@ describe("sendEmail (Resend) — golden path", () => {
         replyTo: "info@alquilatucarro.com",
         subject: "Test",
         html: "<p>hi</p>",
+      })
+    );
+  });
+
+  // SCEN-override: franchises.reply_to_email overrides deriveReplyTo when set
+  it("uses franchises.reply_to_email as Reply-To when set (override path)", async () => {
+    setupFranchise(
+      "info@mail.alquicarros.com",
+      "Alquicarros",
+      "alquicarroscolombia@gmail.com"
+    );
+    mockSend.mockResolvedValue({ data: { id: "abc" }, error: null });
+
+    await sendEmail({
+      franchise: "alquicarros",
+      to: "customer@example.com",
+      subject: "Test",
+      html: "<p>hi</p>",
+    });
+
+    expect(mockSend).toHaveBeenCalledWith(
+      expect.objectContaining({
+        from: '"Alquicarros" <info@mail.alquicarros.com>',
+        replyTo: "alquicarroscolombia@gmail.com",
+      })
+    );
+  });
+
+  // SCEN-override: List-Unsubscribe also points to override address (operational consistency)
+  it("uses reply_to_email override in the List-Unsubscribe header too", async () => {
+    setupFranchise(
+      "info@mail.alquicarros.com",
+      "Alquicarros",
+      "alquicarroscolombia@gmail.com"
+    );
+    mockSend.mockResolvedValue({ data: { id: "abc" }, error: null });
+
+    await sendEmail({
+      franchise: "alquicarros",
+      to: "customer@example.com",
+      subject: "Test",
+      html: "<p>hi</p>",
+    });
+
+    const args = mockSend.mock.calls[0][0];
+    expect(args.headers["List-Unsubscribe"]).toBe(
+      "<mailto:alquicarroscolombia@gmail.com?subject=Unsubscribe>"
+    );
+  });
+
+  // SCEN-fallback: when reply_to_email is null, deriveReplyTo is used (preserves alquilatucarro behavior)
+  it("falls back to deriveReplyTo when reply_to_email is null (fallback path)", async () => {
+    setupFranchise("info@mail.alquilatucarro.com", "Alquila tu Carro", null);
+    mockSend.mockResolvedValue({ data: { id: "abc" }, error: null });
+
+    await sendEmail({
+      franchise: "alquilatucarro",
+      to: "customer@example.com",
+      subject: "Test",
+      html: "<p>hi</p>",
+    });
+
+    expect(mockSend).toHaveBeenCalledWith(
+      expect.objectContaining({
+        replyTo: "info@alquilatucarro.com",
       })
     );
   });

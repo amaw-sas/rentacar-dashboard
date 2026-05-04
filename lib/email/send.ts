@@ -90,7 +90,7 @@ export async function sendEmail(options: SendEmailOptions): Promise<void> {
   const supabase = createAdminClient();
   const { data: franchiseData, error: franchiseError } = await supabase
     .from("franchises")
-    .select("sender_email, sender_name")
+    .select("sender_email, sender_name, reply_to_email")
     .eq("code", franchise)
     .single();
 
@@ -103,7 +103,8 @@ export async function sendEmail(options: SendEmailOptions): Promise<void> {
   }
 
   const client = getResendClient(franchise);
-  const replyToAddress = deriveReplyTo(franchiseData.sender_email);
+  const replyToAddress =
+    franchiseData.reply_to_email ?? deriveReplyTo(franchiseData.sender_email);
 
   const payload = {
     from: `"${franchiseData.sender_name}" <${franchiseData.sender_email}>`,

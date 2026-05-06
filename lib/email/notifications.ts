@@ -77,29 +77,44 @@ async function fetchReservationContext(reservationId: string) {
   return reservation;
 }
 
-async function getFranchiseBranding(
+interface FranchiseContext {
+  branding: FranchiseBranding;
+  localizaBccEmail: string | null;
+}
+
+async function getFranchiseContext(
   franchiseCode: string
-): Promise<FranchiseBranding> {
+): Promise<FranchiseContext> {
   const supabase = createAdminClient();
   const { data: franchise } = await supabase
     .from("franchises")
-    .select("display_name, phone, whatsapp, logo_url, website")
+    .select("display_name, phone, whatsapp, logo_url, website, localiza_bcc_email")
     .eq("code", franchiseCode)
     .single();
 
-  const branding = FRANCHISE_BRANDING[franchiseCode] ?? {
+  const brandingDefaults = FRANCHISE_BRANDING[franchiseCode] ?? {
     color: "#18181b",
     website: "",
   };
 
   return {
-    franchiseName: franchise?.display_name ?? franchiseCode,
-    franchiseColor: branding.color,
-    franchiseWebsite: franchise?.website ?? branding.website,
-    franchisePhone: franchise?.phone ?? "",
-    franchiseWhatsapp: franchise?.whatsapp || undefined,
-    franchiseLogo: franchise?.logo_url || undefined,
+    branding: {
+      franchiseName: franchise?.display_name ?? franchiseCode,
+      franchiseColor: brandingDefaults.color,
+      franchiseWebsite: franchise?.website ?? brandingDefaults.website,
+      franchisePhone: franchise?.phone ?? "",
+      franchiseWhatsapp: franchise?.whatsapp || undefined,
+      franchiseLogo: franchise?.logo_url || undefined,
+    },
+    localizaBccEmail: franchise?.localiza_bcc_email ?? null,
   };
+}
+
+function resolveLocalizaBcc(perFranchise: string | null): string | undefined {
+  // Per-franchise column wins; env var is the transitional fallback. Empty
+  // strings collapse to undefined so we never send `bcc: [""]`.
+  const fallback = process.env.LOCALIZA_NOTIFICATION_BCC_EMAIL;
+  return perFranchise || fallback || undefined;
 }
 
 function formatDate(dateStr: string): string {
@@ -122,7 +137,7 @@ export async function sendReservationNotifications(
 ): Promise<void> {
   try {
     const reservation = await fetchReservationContext(reservationId);
-    const branding = await getFranchiseBranding(franchiseCode);
+    const { branding, localizaBccEmail } = await getFranchiseContext(franchiseCode);
 
     const customer = reservation.customers as {
       first_name: string;
@@ -145,7 +160,7 @@ export async function sendReservationNotifications(
     };
 
     const localizaEmail = process.env.LOCALIZA_NOTIFICATION_EMAIL;
-    const localizaBcc = process.env.LOCALIZA_NOTIFICATION_BCC_EMAIL;
+    const localizaBcc = resolveLocalizaBcc(localizaBccEmail);
 
     if (status === "reservado") {
       const html = await renderEmail(
@@ -406,7 +421,7 @@ export async function sendReservationRequestEmail(
 ): Promise<void> {
   try {
     const reservation = await fetchReservationContext(reservationId);
-    const branding = await getFranchiseBranding(franchiseCode);
+    const { branding } = await getFranchiseContext(franchiseCode);
 
     const customer = reservation.customers as {
       first_name: string;

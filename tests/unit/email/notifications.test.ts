@@ -48,17 +48,40 @@ const mockReservation = {
   pickup_location: { name: "Bogotá Aeropuerto" },
   return_location: { name: "Bogotá Aeropuerto" },
   categories: { name: "Gama C Económico" },
+  monthly_mileage: null as number | null,
 };
 
-function setupMock(reservation = mockReservation) {
+interface MockOpts {
+  reservation?: typeof mockReservation;
+  franchiseRow?: Record<string, unknown> | null;
+}
+
+// Routes `.from(table)` to per-table query results so the franchise lookup is
+// distinguishable from the reservation lookup. The previous shared-mock setup
+// returned the reservation object for every query, which masked franchise-row
+// reads — those reads now drive Localiza BCC routing per SCEN-001..005.
+function setupMock({ reservation = mockReservation, franchiseRow }: MockOpts = {}) {
+  const defaultFranchise = {
+    display_name: "Alquila tu Carro",
+    phone: "+57 301 672 9250",
+    whatsapp: "573016729250",
+    logo_url: null,
+    website: "https://alquilatucarro.com",
+    localiza_bcc_email: "info@alquilatucarro.com",
+  };
+  const franchise = franchiseRow === undefined ? defaultFranchise : franchiseRow;
+
   vi.mocked(createAdminClient).mockReturnValue({
-    from: vi.fn().mockReturnValue({
+    from: vi.fn((table: string) => ({
       select: vi.fn().mockReturnValue({
         eq: vi.fn().mockReturnValue({
-          single: vi.fn().mockResolvedValue({ data: reservation, error: null }),
+          single: vi.fn().mockResolvedValue({
+            data: table === "franchises" ? franchise : reservation,
+            error: null,
+          }),
         }),
       }),
-    }),
+    })),
   } as unknown as ReturnType<typeof createAdminClient>);
 }
 
@@ -67,7 +90,7 @@ describe("sendReservationNotifications", () => {
     vi.clearAllMocks();
     setupMock();
     process.env.LOCALIZA_NOTIFICATION_EMAIL = "localiza@test.com";
-    process.env.LOCALIZA_NOTIFICATION_BCC_EMAIL = "bcc@test.com";
+    process.env.LOCALIZA_NOTIFICATION_BCC_EMAIL = "fallback@test.com";
   });
 
   it("sends reserved email to customer on status reservado", async () => {
@@ -92,7 +115,10 @@ describe("sendReservationNotifications", () => {
       expect.objectContaining({ to: "juan@example.com", subject: "Reserva Pendiente" })
     );
     expect(calls[1][0]).toEqual(
-      expect.objectContaining({ to: "localiza@test.com", subject: "Notificación de reserva en espera", bcc: "bcc@test.com" })
+      expect.objectContaining({
+        to: "localiza@test.com",
+        subject: "Notificación de reserva en espera",
+      })
     );
   });
 
@@ -102,18 +128,6 @@ describe("sendReservationNotifications", () => {
     expect(sendEmail).toHaveBeenCalledWith(
       expect.objectContaining({ to: "juan@example.com", subject: "Reserva Sin Disponibilidad" })
     );
-  });
-
-  it("sends total insurance notification to Localiza when total_insurance is true", async () => {
-    setupMock({ ...mockReservation, total_insurance: true });
-
-    await sendReservationNotifications("res-123", "reservado", "alquilatucarro");
-
-    const calls = vi.mocked(sendEmail).mock.calls;
-    const insuranceCall = calls.find((c) => c[0].subject === "Notificación de reserva con seguro total");
-    expect(insuranceCall).toBeDefined();
-    expect(insuranceCall![0].to).toBe("localiza@test.com");
-    expect(insuranceCall![0].bcc).toBe("bcc@test.com");
   });
 
   it("does not send emails for statuses without templates", async () => {
@@ -128,5 +142,182 @@ describe("sendReservationNotifications", () => {
       .mocked(logNotification)
       .mock.calls.find((c) => c[0].notification_type === "_debug_commit_marker");
     expect(markerCall).toBeUndefined();
+  });
+
+  // ─── Localiza BCC routing per franchise (SCEN-001..005) ─────────────
+
+  // SCEN-001: alquilatucarro reservation with extras → BCC routes to alquilatucarro's mailbox.
+  it("routes Localiza extras BCC to the franchise-specific mailbox (alquilatucarro)", async () => {
+    setupMock({
+      reservation: { ...mockReservation, baby_seat: true },
+      franchiseRow: {
+        display_name: "Alquila tu Carro",
+        phone: "",
+        whatsapp: null,
+        logo_url: null,
+        website: "https://alquilatucarro.com",
+        localiza_bcc_email: "info@alquilatucarro.com",
+      },
+    });
+
+    await sendReservationNotifications("res-123", "reservado", "alquilatucarro");
+
+    const extrasCall = vi
+      .mocked(sendEmail)
+      .mock.calls.find((c) => c[0].subject === "Notificación de reserva con servicios adicionales");
+    expect(extrasCall).toBeDefined();
+    expect(extrasCall![0].bcc).toBe("info@alquilatucarro.com");
+    expect(extrasCall![0].bcc).not.toBe("fallback@test.com");
+  });
+
+  // SCEN-002: alquilame reservation → BCC routes to alquilame's mailbox.
+  it("routes Localiza seguro_total BCC to alquilame's mailbox for alquilame reservations", async () => {
+    setupMock({
+      reservation: { ...mockReservation, franchise: "alquilame", total_insurance: true },
+      franchiseRow: {
+        display_name: "Alquilame",
+        phone: "",
+        whatsapp: null,
+        logo_url: null,
+        website: "https://alquilame.co",
+        localiza_bcc_email: "alquilamecol@gmail.com",
+      },
+    });
+
+    await sendReservationNotifications("res-123", "reservado", "alquilame");
+
+    const insuranceCall = vi
+      .mocked(sendEmail)
+      .mock.calls.find((c) => c[0].subject === "Notificación de reserva con seguro total");
+    expect(insuranceCall).toBeDefined();
+    expect(insuranceCall![0].bcc).toBe("alquilamecol@gmail.com");
+  });
+
+  // SCEN-003: NULL column → falls back to LOCALIZA_NOTIFICATION_BCC_EMAIL.
+  it("falls back to LOCALIZA_NOTIFICATION_BCC_EMAIL when franchise localiza_bcc_email is NULL", async () => {
+    setupMock({
+      reservation: { ...mockReservation, total_insurance: true },
+      franchiseRow: {
+        display_name: "Alquila tu Carro",
+        phone: "",
+        whatsapp: null,
+        logo_url: null,
+        website: "https://alquilatucarro.com",
+        localiza_bcc_email: null,
+      },
+    });
+
+    await sendReservationNotifications("res-123", "reservado", "alquilatucarro");
+
+    const insuranceCall = vi
+      .mocked(sendEmail)
+      .mock.calls.find((c) => c[0].subject === "Notificación de reserva con seguro total");
+    expect(insuranceCall).toBeDefined();
+    expect(insuranceCall![0].bcc).toBe("fallback@test.com");
+  });
+
+  // SCEN-003b: NULL column AND env var unset → no BCC field on the payload.
+  it("omits BCC when both franchise column and env var are missing", async () => {
+    delete process.env.LOCALIZA_NOTIFICATION_BCC_EMAIL;
+    setupMock({
+      reservation: { ...mockReservation, total_insurance: true },
+      franchiseRow: {
+        display_name: "Alquila tu Carro",
+        phone: "",
+        whatsapp: null,
+        logo_url: null,
+        website: "https://alquilatucarro.com",
+        localiza_bcc_email: null,
+      },
+    });
+
+    await sendReservationNotifications("res-123", "reservado", "alquilatucarro");
+
+    const insuranceCall = vi
+      .mocked(sendEmail)
+      .mock.calls.find((c) => c[0].subject === "Notificación de reserva con seguro total");
+    expect(insuranceCall).toBeDefined();
+    expect(insuranceCall![0].bcc).toBeUndefined();
+  });
+
+  // SCEN-004: All four Localiza notification types use the franchise BCC consistently.
+  it("applies the franchise-specific BCC to all four Localiza notification types", async () => {
+    const sharedFranchise = {
+      display_name: "Alquicarros",
+      phone: "",
+      whatsapp: null,
+      logo_url: null,
+      website: "https://alquicarros.com",
+      localiza_bcc_email: "alquicarroscolombia@gmail.com",
+    };
+
+    // pendiente_localiza
+    setupMock({
+      reservation: { ...mockReservation, franchise: "alquicarros" },
+      franchiseRow: sharedFranchise,
+    });
+    await sendReservationNotifications("res-123", "pendiente", "alquicarros");
+    const pendingLocaliza = vi
+      .mocked(sendEmail)
+      .mock.calls.find((c) => c[0].subject === "Notificación de reserva en espera");
+    expect(pendingLocaliza?.[0].bcc).toBe("alquicarroscolombia@gmail.com");
+
+    // seguro_total_localiza
+    vi.clearAllMocks();
+    setupMock({
+      reservation: { ...mockReservation, franchise: "alquicarros", total_insurance: true },
+      franchiseRow: sharedFranchise,
+    });
+    await sendReservationNotifications("res-123", "reservado", "alquicarros");
+    const insurance = vi
+      .mocked(sendEmail)
+      .mock.calls.find((c) => c[0].subject === "Notificación de reserva con seguro total");
+    expect(insurance?.[0].bcc).toBe("alquicarroscolombia@gmail.com");
+
+    // extras_localiza
+    vi.clearAllMocks();
+    setupMock({
+      reservation: { ...mockReservation, franchise: "alquicarros", baby_seat: true },
+      franchiseRow: sharedFranchise,
+    });
+    await sendReservationNotifications("res-123", "reservado", "alquicarros");
+    const extras = vi
+      .mocked(sendEmail)
+      .mock.calls.find((c) => c[0].subject === "Notificación de reserva con servicios adicionales");
+    expect(extras?.[0].bcc).toBe("alquicarroscolombia@gmail.com");
+
+    // mensualidad_localiza
+    vi.clearAllMocks();
+    setupMock({
+      reservation: { ...mockReservation, franchise: "alquicarros", monthly_mileage: 2000 },
+      franchiseRow: sharedFranchise,
+    });
+    await sendReservationNotifications("res-123", "mensualidad", "alquicarros");
+    const monthly = vi
+      .mocked(sendEmail)
+      .mock.calls.find((c) => c[0].subject === "Notificación de reserva mensual");
+    expect(monthly?.[0].bcc).toBe("alquicarroscolombia@gmail.com");
+  });
+
+  // SCEN-005: Non-Localiza notifications carry no BCC.
+  it("does not attach the franchise BCC to customer-facing notifications", async () => {
+    setupMock({
+      franchiseRow: {
+        display_name: "Alquila tu Carro",
+        phone: "",
+        whatsapp: null,
+        logo_url: null,
+        website: "https://alquilatucarro.com",
+        localiza_bcc_email: "info@alquilatucarro.com",
+      },
+    });
+
+    await sendReservationNotifications("res-123", "reservado", "alquilatucarro");
+
+    const reservedCall = vi
+      .mocked(sendEmail)
+      .mock.calls.find((c) => c[0].subject === "Reserva Aprobada");
+    expect(reservedCall).toBeDefined();
+    expect(reservedCall![0].bcc).toBeUndefined();
   });
 });

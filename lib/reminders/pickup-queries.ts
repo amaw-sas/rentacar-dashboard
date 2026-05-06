@@ -1,4 +1,4 @@
-import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { addDays, subDays, format } from "date-fns";
 
 /** Returns current date in Colombia (UTC-5) */
@@ -45,7 +45,7 @@ async function queryReservations(
   hourFrom?: string,
   hourTo?: string
 ): Promise<ReservationRecord[]> {
-  const supabase = await createClient();
+  const supabase = createAdminClient();
 
   let query = supabase
     .from("reservations")
@@ -94,7 +94,7 @@ export async function getSameDayMorningReservations(): Promise<
   const today = todayCOL();
   const tomorrow = addDays(today, 1);
 
-  const supabase = await createClient();
+  const supabase = createAdminClient();
 
   const { data, error } = await supabase
     .from("reservations")
@@ -138,7 +138,7 @@ export async function getPostMorningReservations(): Promise<
   const today = todayCOL();
   const yesterday = subDays(today, 1);
 
-  const supabase = await createClient();
+  const supabase = createAdminClient();
 
   const { data, error } = await supabase
     .from("reservations")
@@ -176,7 +176,7 @@ export async function getPostLateReservations(): Promise<ReservationRecord[]> {
 export async function getReservationForReminder(
   reservationId: string,
 ): Promise<ReservationRecord | null> {
-  const supabase = await createClient();
+  const supabase = createAdminClient();
   const { data, error } = await supabase
     .from("reservations")
     .select(RESERVATION_REMINDER_SELECT)

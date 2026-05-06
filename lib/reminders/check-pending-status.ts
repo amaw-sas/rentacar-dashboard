@@ -1,4 +1,4 @@
-import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { sendReservationNotifications } from "@/lib/email/notifications";
 import { sendStatusWhatsApp } from "@/lib/wati/notifications";
 import type { ReservationStatus } from "@/lib/schemas/reservation";
@@ -26,7 +26,7 @@ export async function checkPendingReservationStatuses(): Promise<{
     return { checked: 0, updated: 0, errors: 0 };
   }
 
-  const supabase = await createClient();
+  const supabase = createAdminClient();
 
   const { data: pendingReservations, error } = await supabase
     .from("reservations")

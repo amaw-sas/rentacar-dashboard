@@ -121,25 +121,34 @@ export async function sendPickupReminderForReservation(
   const templateName = WHATSAPP_TEMPLATE_MAP[type];
   const broadcastName = `${BROADCAST_LABEL[type]} ${todayStr}`;
 
+  const isSameDay = type === "same-day-morning" || type === "same-day-late";
+  const baseParams = [
+    { name: "fullname", value: fullName },
+    { name: "reservation_code", value: reservation.reservation_code },
+    { name: "pickup_date", value: formatPickupDate(reservation.pickup_date) },
+    { name: "pickup_hour", value: formatPickupHour(reservation.pickup_hour) },
+    { name: "pickup_location", value: reservation.pickup_location.name },
+    { name: "franchise_name", value: branding.franchiseName },
+  ];
+
   const params = isPost
     ? [
         { name: "fullname", value: fullName },
         { name: "franchise_name", value: branding.franchiseName },
       ]
-    : [
-        { name: "fullname", value: fullName },
-        { name: "reservation_code", value: reservation.reservation_code },
-        {
-          name: "pickup_date",
-          value: formatPickupDate(reservation.pickup_date),
-        },
-        {
-          name: "pickup_hour",
-          value: formatPickupHour(reservation.pickup_hour),
-        },
-        { name: "pickup_location", value: reservation.pickup_location.name },
-        { name: "franchise_name", value: branding.franchiseName },
-      ];
+    : isSameDay
+      ? [
+          ...baseParams,
+          {
+            name: "pickup_location_address",
+            value: reservation.pickup_location.pickup_address,
+          },
+          {
+            name: "pickup_location_map",
+            value: reservation.pickup_location.pickup_map,
+          },
+        ]
+      : baseParams;
 
   await sendTemplateMessage(customer.phone, templateName, broadcastName, params);
 

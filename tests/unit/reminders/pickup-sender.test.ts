@@ -52,7 +52,7 @@ vi.mock("@/lib/supabase/admin", () => ({
   }),
 }));
 
-const baseReservation: ReservationRecord = {
+const baseReservation = {
   id: "res-abc-123",
   franchise: "alquilatucarro",
   reservation_code: "AV78XC3JDA",
@@ -64,8 +64,12 @@ const baseReservation: ReservationRecord = {
     phone: "+573001234567",
     email: "juan@example.com",
   },
-  pickup_location: { name: "Bogotá Aeropuerto", pickup_address: "Av El Dorado" },
-};
+  pickup_location: {
+    name: "Bogotá Aeropuerto",
+    pickup_address: "Av El Dorado",
+    pickup_map: "https://maps.app.goo.gl/test123",
+  },
+} as unknown as ReservationRecord;
 
 const TYPE_TO_NOTIFICATION_TYPE: Record<ReminderType, string> = {
   week: "whatsapp_pre_pickup_week",
@@ -132,6 +136,58 @@ describe("sendPickupReminderForReservation", () => {
       expect.any(Array),
     );
   });
+
+  for (const type of ["post-morning", "post-late"] as ReminderType[]) {
+    it(`sends only fullname + franchise_name params for ${type}`, async () => {
+      await sendPickupReminderForReservation(baseReservation, type);
+      const params = vi.mocked(sendTemplateMessage).mock.calls[0][3];
+      expect(params).toEqual([
+        { name: "fullname", value: "Juan Perez" },
+        { name: "franchise_name", value: "AlquilaTuCarro" },
+      ]);
+    });
+  }
+
+  for (const type of ["week", "three-days"] as ReminderType[]) {
+    it(`sends 6 params (no address/map) for ${type}`, async () => {
+      await sendPickupReminderForReservation(baseReservation, type);
+      const params = vi.mocked(sendTemplateMessage).mock.calls[0][3];
+      const names = params.map((p) => p.name);
+      expect(names).toEqual([
+        "fullname",
+        "reservation_code",
+        "pickup_date",
+        "pickup_hour",
+        "pickup_location",
+        "franchise_name",
+      ]);
+      expect(names).not.toContain("pickup_location_address");
+      expect(names).not.toContain("pickup_location_map");
+    });
+  }
+
+  for (const type of ["same-day-morning", "same-day-late"] as ReminderType[]) {
+    it(`sends 8 params including pickup_location_address + pickup_location_map for ${type}`, async () => {
+      await sendPickupReminderForReservation(baseReservation, type);
+      const params = vi.mocked(sendTemplateMessage).mock.calls[0][3];
+      const byName = Object.fromEntries(params.map((p) => [p.name, p.value]));
+      expect(Object.keys(byName)).toEqual(
+        expect.arrayContaining([
+          "fullname",
+          "reservation_code",
+          "pickup_date",
+          "pickup_hour",
+          "pickup_location",
+          "franchise_name",
+          "pickup_location_address",
+          "pickup_location_map",
+        ]),
+      );
+      expect(params).toHaveLength(8);
+      expect(byName.pickup_location_address).toBe("Av El Dorado");
+      expect(byName.pickup_location_map).toBe("https://maps.app.goo.gl/test123");
+    });
+  }
 });
 
 describe("sendPickupReminders error path", () => {

@@ -27,6 +27,7 @@ interface ReservationRecord {
   pickup_location: {
     name: string;
     pickup_address: string;
+    pickup_map: string;
   };
 }
 
@@ -37,7 +38,7 @@ const RESERVATION_REMINDER_SELECT = `
       pickup_date,
       pickup_hour,
       customers (first_name, last_name, phone, email),
-      pickup_location:locations!pickup_location_id (name, pickup_address)
+      pickup_location:locations!pickup_location_id (name, pickup_address, pickup_map)
     `;
 
 async function queryReservations(
@@ -106,7 +107,7 @@ export async function getSameDayMorningReservations(): Promise<
       pickup_date,
       pickup_hour,
       customers (first_name, last_name, phone, email),
-      pickup_location:locations!pickup_location_id (name, pickup_address)
+      pickup_location:locations!pickup_location_id (name, pickup_address, pickup_map)
     `
     )
     .eq("status", "reservado")
@@ -150,7 +151,7 @@ export async function getPostMorningReservations(): Promise<
       pickup_date,
       pickup_hour,
       customers (first_name, last_name, phone, email),
-      pickup_location:locations!pickup_location_id (name, pickup_address)
+      pickup_location:locations!pickup_location_id (name, pickup_address, pickup_map)
     `
     )
     .eq("status", "reservado")

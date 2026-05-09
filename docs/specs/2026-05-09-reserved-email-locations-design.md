@@ -141,7 +141,7 @@ Files explicitly **not** modified:
 6. **Email-client rendering (concrete oracles).** Given the rendered HTML for scenarios 1 and 2, when validated against snapshot fixtures committed under `tests/unit/email/__snapshots__/reserved-confirmation.html`, then:
    - The output HTML matches the snapshot byte-for-byte (deterministic via stable mock data).
    - The button anchor has `href` = expected URL, `target="_blank"`, `rel="noopener noreferrer"`, `aria-label` containing the location name, and inline style includes `padding:12px 18px` and `background:` + the franchise hex.
-   - When the snapshot is opened at 320px viewport in `@react-email/render` preview, no element has computed `width > 320px` (asserted via DOM measurement in the snapshot test).
+   - **Declared-width assertion** (jsdom has no layout engine, so we inspect declared values, not computed): no element in the rendered HTML declares an inline `width:` or `max-width:` style — or a `width=` attribute — greater than 320px. Asserted by parsing the HTML with `linkedom`/`jsdom`, walking all elements, and pattern-matching the `style` attribute and `width` attribute against numeric values > 320.
 
 ## Satisfaction criteria
 

@@ -44,6 +44,8 @@
 - A new test block in `tests/unit/email/notifications.test.ts` (or co-located helper test) covers the 5 negative cases above and 2 positive cases — all green.
 - `pnpm vitest run tests/unit/email/notifications.test.ts` passes.
 
+**Note on dead code:** This step lands the helper without callers. Intentional — Step 3 is the first consumer. Merging Step 1 alone leaves `isSafeMapUrl` reachable only from its test; ESLint may warn `no-unused-vars` on the const if no export is used. Mitigate by exporting the function (`export function isSafeMapUrl…`) so the lint rule treats it as a public surface, even though the only in-tree consumer arrives in Step 3.
+
 ---
 
 ### Step 2 — Extend `fetchReservationContext` SELECT | Size: S | Dependencies: Step 1
@@ -103,8 +105,8 @@
 **Scenario embedded:**
 - **Scenario 1** (same location): given the same-location fixture, when the template renders, then the rendered HTML contains the `pickup_address` text twice (one occurrence per Dirección row) and the `pickup_map` URL appears as `href` on exactly two `<a>` elements within the Detalles table.
 
-**Acceptance criteria:**
-- Snapshot test (created in Step 5) for the same-location fixture passes.
+**Acceptance criteria** (standalone — no forward dependency on Step 5):
+- An ad-hoc inline assertion (one `it()` block in this same step's tests, OR a temporary `console.log` walked manually in dev) confirms the rendered HTML for the same-location fixture contains exactly 2 occurrences of the `pickup_address` substring AND exactly 2 `<a` elements whose `href` includes `https://maps.app.goo.gl`. Step 5 supersedes this with the formal jsdom-parsed snapshot test.
 - Manual re-render of the existing dev fixture in the dev preview shows the two new rows with a visible button styled in the franchise color.
 - `pnpm typecheck` and `pnpm lint` pass.
 
@@ -124,7 +126,7 @@ For each fixture: render via `renderEmail()`, parse the resulting HTML with `new
 - **Fixture A & B:** for each Dirección row, locate the `<a>` element and assert: `getAttribute("href")` equals the expected URL, `target === "_blank"`, `rel === "noopener noreferrer"`, `getAttribute("aria-label")` includes the corresponding location name; `getAttribute("style")` includes the substrings `padding:12px 18px` (or normalized form), `background:` followed by the franchise hex, `border-radius:6px`.
 - **Fixture B specifically:** assert that the recogida `href` !== devolución `href` (different physical spots).
 - **Fixture C:** within the pickup row's container, count of `<a>` elements whose `href` starts with `https://maps` is exactly `0`; the address text node IS present.
-- **Declared-width oracle (all fixtures):** walk every element; for each, parse the `style` attribute for `width:` or `max-width:` and the `width=` HTML attribute; assert no parsed numeric value > 320 (per spec § scenario 6 declared-width assertion).
+- **Declared-width oracle (all fixtures):** walk every element; for each, parse the `style` attribute for `width:` or `max-width:` (treat unitless or `px`-suffixed values as pixels; ignore `%` and `em`/`rem` values which are container-relative and cannot exceed the parent), and parse the bare HTML `width="N"` attribute (always pixels for HTML tables — this is the unit `<table width="600">` uses). Assert no parsed numeric pixel value > 320 in any element (per spec § scenario 6 declared-width assertion).
 
 **Why now:** Snapshot infrastructure can only be written once the template renders the new content. Combining the fixture creation here keeps the snapshot test self-contained.
 
@@ -150,6 +152,7 @@ For each fixture: render via `renderEmail()`, parse the resulting HTML with `new
 **Scope of NOT-tested (intentional):**
 - Real cross-client rendering in Outlook, Apple Mail (would require Litmus/Email-on-Acid; out of scope per spec — accepted risk).
 - Live Google Maps shortlink resolution (out of scope per spec).
+- Dark-mode auto-inversion in Apple Mail / Gmail iOS — accepted per spec § Dark mode (decision: rely on native client behavior, no `color-scheme` meta).
 
 ---
 

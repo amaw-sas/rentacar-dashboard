@@ -139,7 +139,7 @@ Files explicitly **not** modified:
    - A `console.warn` is emitted whose payload contains BOTH the location's `code` (e.g., `"AABOT"`) AND the rejected URL substring. Asserted via spy on `console.warn` checking the joined argument string includes both.
 
 6. **Email-client rendering (concrete oracles).** Given the rendered HTML for scenarios 1 and 2, when validated against snapshot fixtures committed under `tests/unit/email/__snapshots__/reserved-confirmation.html`, then:
-   - The output HTML matches the snapshot byte-for-byte (deterministic via stable mock data).
+   - The output HTML satisfies oracle-based assertions on attributes, style substrings, and structural counts (NOT byte-for-byte equality — see plan § Risk Tracker for the rationale of preferring oracles over full-HTML snapshots).
    - The button anchor has `href` = expected URL, `target="_blank"`, `rel="noopener noreferrer"`, `aria-label` containing the location name, and inline style includes `padding:12px 18px` and `background:` + the franchise hex.
    - **Declared-width assertion** (jsdom has no layout engine, so we inspect declared values, not computed): no element in the rendered HTML declares an inline `width:` or `max-width:` style — or a `width=` attribute — greater than 320px. Asserted by parsing the HTML with `jsdom` (already a dev-dep), walking all elements, and pattern-matching the `style` attribute and `width` attribute against numeric values > 320.
 

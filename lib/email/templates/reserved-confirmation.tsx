@@ -8,6 +8,42 @@ const formatCOP = (value: number) =>
     minimumFractionDigits: 0,
   }).format(value);
 
+// AddressRow renders the "Dirección" cell with optional Maps button. Inlined
+// in this file (not in shared ReservationDetails) so the 9 other templates
+// that consume the shared component remain unaffected — see spec
+// docs/specs/2026-05-09-reserved-email-locations-design.md § Affected files.
+function AddressRow({
+  address,
+  mapUrl,
+  locationName,
+  franchiseColor,
+}: {
+  address: string;
+  mapUrl: string | undefined;
+  locationName: string;
+  franchiseColor: string;
+}) {
+  return (
+    <Row style={tableRow}>
+      <Column style={labelCell}>Dirección</Column>
+      <Column style={valueCell}>
+        <Text style={addressText}>{address}</Text>
+        {mapUrl && (
+          <Link
+            href={mapUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label={`Abrir ${locationName} en Google Maps (nueva pestaña)`}
+            style={{ ...mapButton, backgroundColor: franchiseColor }}
+          >
+            Ver en Google Maps →
+          </Link>
+        )}
+      </Column>
+    </Row>
+  );
+}
+
 interface ReservedClientEmailProps {
   franchiseName: string;
   franchiseColor: string;
@@ -72,7 +108,7 @@ export function ReservedClientEmail(props: ReservedClientEmailProps) {
       </Text>
 
       <Section>
-        <Text style={detailsSectionTitle}>Detalles de la Reserva</Text>
+        <Text style={sectionTitle}>Detalles de la Reserva</Text>
 
         <Section style={detailsTable}>
           {props.reserveCode && (
@@ -95,23 +131,12 @@ export function ReservedClientEmail(props: ReservedClientEmailProps) {
             <Column style={labelCell}>Lugar de Recogida</Column>
             <Column style={valueCell}>{props.pickupLocation}</Column>
           </Row>
-          <Row style={tableRow}>
-            <Column style={labelCell}>Dirección</Column>
-            <Column style={valueCell}>
-              <Text style={addressText}>{props.pickupAddress}</Text>
-              {props.pickupMapUrl && (
-                <Link
-                  href={props.pickupMapUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  aria-label={`Abrir ${props.pickupLocation} en Google Maps (nueva pestaña)`}
-                  style={{ ...mapButton, backgroundColor: props.franchiseColor }}
-                >
-                  Ver en Google Maps →
-                </Link>
-              )}
-            </Column>
-          </Row>
+          <AddressRow
+            address={props.pickupAddress}
+            mapUrl={props.pickupMapUrl}
+            locationName={props.pickupLocation}
+            franchiseColor={props.franchiseColor}
+          />
           <Row style={tableRow}>
             <Column style={labelCell}>Fecha de Recogida</Column>
             <Column style={valueCell}>
@@ -122,23 +147,12 @@ export function ReservedClientEmail(props: ReservedClientEmailProps) {
             <Column style={labelCell}>Lugar de Devolución</Column>
             <Column style={valueCell}>{props.returnLocation}</Column>
           </Row>
-          <Row style={tableRow}>
-            <Column style={labelCell}>Dirección</Column>
-            <Column style={valueCell}>
-              <Text style={addressText}>{props.returnAddress}</Text>
-              {props.returnMapUrl && (
-                <Link
-                  href={props.returnMapUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  aria-label={`Abrir ${props.returnLocation} en Google Maps (nueva pestaña)`}
-                  style={{ ...mapButton, backgroundColor: props.franchiseColor }}
-                >
-                  Ver en Google Maps →
-                </Link>
-              )}
-            </Column>
-          </Row>
+          <AddressRow
+            address={props.returnAddress}
+            mapUrl={props.returnMapUrl}
+            locationName={props.returnLocation}
+            franchiseColor={props.franchiseColor}
+          />
           <Row style={tableRow}>
             <Column style={labelCell}>Fecha de Devolución</Column>
             <Column style={valueCell}>
@@ -363,8 +377,6 @@ const sectionTitle = {
   color: "#18181b",
   marginBottom: "12px",
 };
-
-const detailsSectionTitle = sectionTitle;
 
 const detailsTable = {
   width: "100%",

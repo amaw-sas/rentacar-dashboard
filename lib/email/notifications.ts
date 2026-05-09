@@ -2,6 +2,17 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { sendEmail } from "./send";
 import { renderEmail } from "./render";
 import { ReservedClientEmail } from "./templates/reserved-confirmation";
+import { PendingClientEmail } from "./templates/pending-client";
+import { FailedClientEmail } from "./templates/failed-client";
+import { ReservationRequestEmail } from "./templates/reservation-request";
+import { PendingLocalizaEmail } from "./templates/pending-localiza";
+import { TotalInsuranceLocalizaEmail } from "./templates/total-insurance-localiza";
+import { ExtrasLocalizaEmail } from "./templates/extras-localiza";
+import { MonthlyLocalizaEmail } from "./templates/monthly-localiza";
+import { MonthlyClientEmail } from "./templates/monthly-client";
+import type { ReservationStatus } from "@/lib/schemas/reservation";
+import { format } from "date-fns";
+import { es } from "date-fns/locale";
 
 export function isSafeMapUrl(u: string): boolean {
   return (
@@ -22,17 +33,24 @@ function safeMapUrlOrWarn(
   return undefined;
 }
 
-import { PendingClientEmail } from "./templates/pending-client";
-import { FailedClientEmail } from "./templates/failed-client";
-import { ReservationRequestEmail } from "./templates/reservation-request";
-import { PendingLocalizaEmail } from "./templates/pending-localiza";
-import { TotalInsuranceLocalizaEmail } from "./templates/total-insurance-localiza";
-import { ExtrasLocalizaEmail } from "./templates/extras-localiza";
-import { MonthlyLocalizaEmail } from "./templates/monthly-localiza";
-import { MonthlyClientEmail } from "./templates/monthly-client";
-import type { ReservationStatus } from "@/lib/schemas/reservation";
-import { format } from "date-fns";
-import { es } from "date-fns/locale";
+type LocationFallback = {
+  pickup_address?: string;
+  pickup_map?: string;
+  return_address?: string | null;
+  return_map?: string | null;
+};
+
+function resolveReturnPair(loc: LocationFallback): { address: string; mapRaw: string } {
+  // Atomic both-or-neither: only honor the return_* override when BOTH are
+  // non-empty after trim. Migration 025 has CHECK on pickup_* but not on
+  // return_*; whitespace-only or mixed-null pairs fall back to pickup_*.
+  const useOverride =
+    Boolean(loc.return_address?.trim()) && Boolean(loc.return_map?.trim());
+  return {
+    address: useOverride ? (loc.return_address as string) : (loc.pickup_address ?? ""),
+    mapRaw: useOverride ? (loc.return_map as string) : (loc.pickup_map ?? ""),
+  };
+}
 import { FRANCHISE_BRANDING } from "@/lib/constants/franchises";
 
 interface ReservationData {
@@ -202,17 +220,10 @@ export async function sendReservationNotifications(
 
     if (status === "reservado") {
       const pickupAddress = pickupLoc.pickup_address ?? "";
-      const useReturnOverride =
-        Boolean(returnLoc.return_address) && Boolean(returnLoc.return_map);
-      const returnAddress = useReturnOverride
-        ? (returnLoc.return_address as string)
-        : (returnLoc.pickup_address ?? "");
-      const pickupMapRaw = pickupLoc.pickup_map ?? "";
-      const returnMapRaw = useReturnOverride
-        ? (returnLoc.return_map as string)
-        : (returnLoc.pickup_map ?? "");
-      const pickupMapUrl = safeMapUrlOrWarn(pickupMapRaw, pickupLoc.code);
-      const returnMapUrl = safeMapUrlOrWarn(returnMapRaw, returnLoc.code);
+      const pickupMapUrl = safeMapUrlOrWarn(pickupLoc.pickup_map ?? "", pickupLoc.code);
+      const returnPair = resolveReturnPair(returnLoc);
+      const returnAddress = returnPair.address;
+      const returnMapUrl = safeMapUrlOrWarn(returnPair.mapRaw, returnLoc.code);
 
       const html = await renderEmail(
         ReservedClientEmail({

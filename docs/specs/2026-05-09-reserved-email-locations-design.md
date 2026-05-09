@@ -56,7 +56,28 @@ sendReservationNotifications(reservationId, "reservado", franchiseCode)
 
 ### Fallback semantics
 
-Migration `025_locations_address_map_fields.sql` makes `pickup_address` and `pickup_map` `NOT NULL` with non-blank `CHECK` constraints. The `return_*` columns are nullable and represent **a different physical spot for returns at this same location** (e.g., AABOT picks up at El Dorado airport but returns at "Diagonal 24C, 99-45 — a 5 minutos del Aeropuerto"). When `return_address` is null, the location returns at the same spot it picks up — so we fall back to its `pickup_address`/`pickup_map`. This is the only correct interpretation of the schema.
+Migration `025_locations_address_map_fields.sql` makes `pickup_address` and `pickup_map` `NOT NULL` with non-blank `CHECK` constraints. The `return_*` columns are nullable and represent **a different physical spot for returns at this same location** (e.g., AABOT picks up at El Dorado airport but returns at "Diagonal 24C, 99-45 — a 5 minutos del Aeropuerto"). When `return_address` is null, the location returns at the same spot it picks up — so we fall back to its `pickup_address`/`pickup_map`.
+
+**Atomic pair fallback.** The schema does NOT enforce a both-or-neither constraint on `return_address`/`return_map`, but the seeded data convention is to set both or neither. To prevent inconsistent rendering (e.g., a `return_map` URL that doesn't match the `return_address` text, or vice versa), the fallback is **atomic**:
+
+```ts
+const useReturnOverride = Boolean(returnLoc.return_address) && Boolean(returnLoc.return_map);
+const returnAddress = useReturnOverride ? returnLoc.return_address : returnLoc.pickup_address;
+const returnMapUrl  = useReturnOverride ? returnLoc.return_map     : returnLoc.pickup_map;
+```
+
+If either column is missing, both fall back together. Never mix-and-match.
+
+### URL safety and HTML escaping
+
+The `pickup_map` and `returnMapUrl` values are rendered as `<a href={url}>`. Migration 025's `CHECK` only validates non-blank — it does NOT validate URL shape. A future bad row could ship `javascript:alert(1)` and reach the email client. To prevent this, validate at the data layer (in `notifications.ts`) before passing to the template:
+
+```ts
+const isSafeMapUrl = (u: string) =>
+  u.startsWith("https://maps.app.goo.gl/") || u.startsWith("https://www.google.com/maps");
+```
+
+If `isSafeMapUrl(url)` returns false, omit the button (render only the address text). Log a warning so the data team can fix the row. The address text itself is rendered as JSX children — React Email escapes it by default; no further sanitization needed.
 
 ### Render
 
@@ -73,42 +94,68 @@ Two rows added inline inside `reserved-confirmation.tsx` (NOT in the shared `Res
 | Fecha de Devolución| 20 de mayo 2026 - 9:00 AM     |
 ```
 
-The "Ver en Google Maps" button is an `<a>` styled inline-block (table-based, email-safe — no flexbox), padding `8px 14px`, background = `franchiseColor`, white text, `border-radius: 6px`, `text-decoration: none`, `font-size: 13px`. The `href` is the raw `pickup_map` / `returnMapUrl` value.
+The "Ver en Google Maps" button is an `<a>` styled inline-block (table-based, email-safe — no flexbox):
+
+- `padding: 12px 18px` (yields ≥44px touch-target height for mobile a11y, WCAG 2.5.5)
+- `background: franchiseColor`, `color: #ffffff`, `font-size: 14px`, `font-weight: 600`
+- `border-radius: 6px` (gracefully degrades to square in Outlook), `text-decoration: none`
+- `display: inline-block`, `mso-padding-alt: 0` (Outlook spacing safe)
+- `target="_blank"` + `rel="noopener noreferrer"` (link opens in new context — required for safe external nav)
+- `aria-label="Abrir {locationName} en Google Maps (nueva pestaña)"` so screen readers convey destination + new-tab behavior
+
+The `href` is the validated map URL (see "URL safety" below). When validation fails, the button is omitted entirely — only the address text remains.
+
+### Dark mode
+
+Decision: **accept native client inversion**. Apple Mail and Gmail iOS may auto-invert colors; the franchise color and white text remain legible after inversion (verified for the 3 franchise palette colors). No `prefers-color-scheme` media query, no `color-scheme` meta — both have inconsistent client support and add complexity beyond the goal.
 
 ## Affected files
 
 | File | Change |
 |---|---|
-| `lib/email/notifications.ts` | Extend the `SELECT` for the `reservado` branch to include the 4 new location columns. Compute `returnAddress`/`returnMapUrl` with fallback. Pass 4 new props to `ReservedClientEmail`. |
-| `lib/email/templates/reserved-confirmation.tsx` | Add 4 required props. Render two new rows (one under each location row) with address text + button. Add ~3 style consts for the button. |
-| `tests/unit/email/notifications.test.ts` | Extend mock fixture (`pickup_location`/`return_location`) with the 4 new columns. Add assertion that `renderEmail` is called with props containing the address strings and map URLs. Add a test for the null-`return_address` fallback case. |
+| `lib/email/notifications.ts` | Extend the `SELECT` in `fetchReservationContext` to include the 4 new location columns on `pickup_location` and `return_location`. Inside the `reservado` branch, compute `pickupAddress`/`pickupMapUrl`/`returnAddress`/`returnMapUrl` with atomic fallback + URL-safety check. Pass 4 new props to `ReservedClientEmail`. Other status branches and `sendReservationRequestEmail` continue to ignore the extra columns — harmless additions to the SELECT. |
+| `lib/email/templates/reserved-confirmation.tsx` | Add 4 props (`pickupAddress`, `pickupMapUrl?`, `returnAddress`, `returnMapUrl?` — map URLs optional because URL-safety check may strip them). Render two new rows (one under each location row) with address text + conditional button. Add style consts for the button. Pass `pickupLocationName` / `returnLocationName` to a small inline helper for the `aria-label`. |
+| `tests/unit/email/notifications.test.ts` | Extend mock fixture (`pickup_location`/`return_location`) with the 4 new columns. Add assertions: (a) `renderEmail` receives props containing the address strings and map URLs; (b) atomic fallback when `return_address` is null AND `return_map` is null; (c) atomic fallback triggers when `return_map` is set but `return_address` is null (mixed-null pair → fall back together); (d) malformed `pickup_map` (e.g., `javascript:`) results in `pickupMapUrl=undefined` passed to the template AND a console warning. |
+
+Files explicitly **not** modified:
+- `lib/email/templates/components/reservation-details.tsx` — shared by `pending-client`, `pending-localiza`, `extras-localiza`, `total-insurance-localiza`, `monthly-client`, `monthly-localiza`, `pickup-reminder`, `post-pickup-reminder`, `reservation-request`. Out of scope.
+- No generated `database.types.ts` exists in this project (verified) — rollback is a clean 3-file revert.
 
 Files explicitly **not** modified:
 - `lib/email/templates/components/reservation-details.tsx` — shared by `pending-client`, `pending-localiza`, `extras-localiza`, `total-insurance-localiza`, `monthly-client`, `monthly-localiza`, `pickup-reminder`, `post-pickup-reminder`, `reservation-request`. Out of scope.
 
 ## Observable scenarios
 
-1. **Same pickup/return location.** Given a `reservado` reservation where `pickup_location_id === return_location_id` (e.g., both = "Aeropuerto El Dorado"), when `sendReservationNotifications` fires, then the rendered email contains the location's `pickup_address` text twice (once under "Lugar de Recogida", once under "Lugar de Devolución") and the `pickup_map` URL appears twice as button `href` values.
+1. **Same pickup/return location.** Given a `reservado` reservation where `pickup_location_id === return_location_id` (e.g., both = "Aeropuerto El Dorado"), when `sendReservationNotifications` fires, then the rendered HTML contains the location's `pickup_address` text twice (once under "Lugar de Recogida", once under "Lugar de Devolución") and the `pickup_map` URL appears twice as button `href` attributes.
 
-2. **Distinct locations, return has explicit `return_*`.** Given a `reservado` reservation where pickup_location = AABOT (has `return_address` populated) and return_location = AABOT, when notifications fire, then the email shows AABOT's `pickup_address` for recogida and AABOT's `return_address` (the different physical spot) for devolución, with each address paired with its respective map URL.
+2. **Distinct locations, return has explicit `return_*` pair.** Given a `reservado` reservation where pickup_location = AABOT (has both `return_address` and `return_map` populated) and return_location = AABOT, when notifications fire, then the email shows AABOT's `pickup_address`+`pickup_map` for recogida and AABOT's `return_address`+`return_map` (the different physical spot) for devolución.
 
-3. **Distinct locations, return location has `return_address = null`.** Given a `reservado` reservation where return_location's `return_address` is null, when notifications fire, then the rendered email's devolución block uses that location's `pickup_address` and `pickup_map` (fallback path).
+3. **Distinct locations, return pair fully null.** Given a `reservado` reservation where return_location has `return_address = null` AND `return_map = null`, when notifications fire, then the rendered email's devolución block uses that location's `pickup_address` and `pickup_map` (fallback path).
 
-4. **Email-client rendering.** When the rendered HTML is opened in Gmail, Outlook, and Apple Mail, then the "Ver en Google Maps" button is visibly styled as a button (background color = franchise color), is clickable, opens the correct shortlink, and the address text wraps cleanly without horizontal overflow on a 320px-wide mobile viewport.
+4. **Mixed-null return pair.** Given a `reservado` reservation where return_location has `return_address = "Some street"` but `return_map = null` (or vice versa), when notifications fire, then the atomic fallback triggers — devolución block shows the location's `pickup_address` and `pickup_map`, NOT the partial override. Verified by unit assertion comparing rendered props.
+
+5. **Malformed map URL.** Given a `reservado` reservation where `pickup_map = "javascript:alert(1)"` (or any URL not starting with `https://maps.app.goo.gl/` / `https://www.google.com/maps`), when notifications fire, then the email renders the address text but omits the button entirely; a `console.warn` is emitted naming the location `code` and the rejected URL.
+
+6. **Email-client rendering (concrete oracles).** Given the rendered HTML for scenarios 1 and 2, when validated against snapshot fixtures committed under `tests/unit/email/__snapshots__/reserved-confirmation.html`, then:
+   - The output HTML matches the snapshot byte-for-byte (deterministic via stable mock data).
+   - The button anchor has `href` = expected URL, `target="_blank"`, `rel="noopener noreferrer"`, `aria-label` containing the location name, and inline style includes `padding:12px 18px` and `background:` + the franchise hex.
+   - When the snapshot is opened at 320px viewport in `@react-email/render` preview, no element has computed `width > 320px` (asserted via DOM measurement in the snapshot test).
 
 ## Satisfaction criteria
 
-- All 4 scenarios above produce the stated observable outcome.
-- `vitest run tests/unit/email/notifications.test.ts` passes with the new fixtures and assertions.
-- Manual visual check: render `ReservedClientEmail` with sample props (Same-location and Distinct-location fixtures) → both visually correct in Gmail web preview.
-- Linter and TypeScript pass: `pnpm lint && pnpm typecheck`.
-- No regression in the 5+ other templates that import `ReservationDetails` (no changes to that file).
+- All 6 scenarios above produce the stated observable outcome — verified by automated tests, not visual judgment.
+- `pnpm vitest run tests/unit/email/` passes with the extended fixtures, snapshot fixture, and 4 new assertions.
+- `pnpm lint && pnpm typecheck` pass.
+- No regression in the 5+ other templates that import `ReservationDetails` (no changes to that file — verified by `git diff` scope).
+- Snapshot fixtures committed alongside the test, reviewable in PR diff.
 
 ## Risks
 
 - **Risk:** `pickup_map` shortlinks could expire or be rate-limited by Google. **Mitigation:** these shortlinks already exist in production data; they have not failed historically. Out of scope for this change.
-- **Risk:** Some addresses are long (2 sentences, e.g., AABOT pickup). **Mitigation:** addressed by cell padding + natural text wrap; verified visually as part of satisfaction criteria.
+- **Risk:** Some addresses are long (2 sentences, e.g., AABOT pickup). **Mitigation:** addressed by cell padding + natural text wrap; verified by snapshot 320px-width assertion.
 - **Risk:** Outlook may strip `border-radius` from button. **Mitigation:** acceptable degradation — button is still clickable as a square.
+- **Risk:** A new bad row in `locations.pickup_map` slips through the non-blank `CHECK` with a malicious URI scheme. **Mitigation:** runtime URL allowlist in `notifications.ts` (see "URL safety"). Logged warning surfaces the bad row to the data team without breaking the email.
+- **Risk:** Adding columns to the shared `fetchReservationContext` SELECT increases payload for non-`reservado` callers. **Mitigation:** 4 short-text columns per location, ~200 bytes max — negligible. Confirmed callers are `sendReservationNotifications` (uses extras only in `reservado` branch) and `sendReservationRequestEmail` (ignores extras).
 
 ## Rollout
 

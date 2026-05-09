@@ -121,7 +121,7 @@ Decision: **accept native client inversion**. Apple Mail and Gmail iOS may auto-
 
 Files explicitly **not** modified:
 - `lib/email/templates/components/reservation-details.tsx` — shared by `pending-client`, `pending-localiza`, `extras-localiza`, `total-insurance-localiza`, `monthly-client`, `monthly-localiza`, `pickup-reminder`, `post-pickup-reminder`, `reservation-request`. Out of scope.
-- No generated `database.types.ts` exists in this project (verified) — rollback is a clean 3-file revert.
+- No generated `database.types.ts` exists in this project (verified) — rollback is a clean 4-file revert (the 3 modified files above plus the new `tests/unit/email/reserved-confirmation.snapshot.test.ts`).
 
 ## Observable scenarios
 
@@ -161,4 +161,4 @@ Files explicitly **not** modified:
 
 ## Rollout
 
-Standard merge → deploy → next `reservado` event in production. No data migration, no env vars, no feature flag. Rollback = revert the 3-file commit.
+Standard merge → deploy → next `reservado` event in production. No data migration, no env vars, no feature flag. Rollback = revert the 4-file commit (or merge revert).

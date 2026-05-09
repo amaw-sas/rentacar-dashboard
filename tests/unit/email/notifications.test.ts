@@ -82,8 +82,20 @@ const mockReservation = {
     email: "juan@example.com",
     phone: "+573001234567",
   },
-  pickup_location: { name: "Bogotá Aeropuerto" },
-  return_location: { name: "Bogotá Aeropuerto" },
+  pickup_location: {
+    name: "Bogotá Aeropuerto",
+    code: "AABOT",
+    pickup_address: "Aeropuerto El Dorado, Piso 1 Puerta 7",
+    pickup_map: "https://maps.app.goo.gl/U3Sct9jNM8BrLFR78",
+  },
+  return_location: {
+    name: "Bogotá Aeropuerto",
+    code: "AABOT",
+    pickup_address: "Aeropuerto El Dorado, Piso 1 Puerta 7",
+    pickup_map: "https://maps.app.goo.gl/U3Sct9jNM8BrLFR78",
+    return_address: "Diagonal 24C, 99-45 - a 5 minutos del Aeropuerto",
+    return_map: "https://maps.app.goo.gl/JjpsSCHkCrgGYa9P7",
+  },
   categories: { name: "Gama C Económico" },
   monthly_mileage: null as number | null,
 };

@@ -64,8 +64,12 @@ async function fetchReservationContext(reservationId: string) {
       `
       *,
       customers (first_name, last_name, email, phone),
-      pickup_location:locations!pickup_location_id (name),
-      return_location:locations!return_location_id (name),
+      pickup_location:locations!pickup_location_id (
+        name, code, pickup_address, pickup_map
+      ),
+      return_location:locations!return_location_id (
+        name, code, pickup_address, pickup_map, return_address, return_map
+      ),
       rental_companies (
         extra_driver_day_price,
         wash_price,

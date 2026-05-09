@@ -18,9 +18,13 @@ interface ReservedClientEmailProps {
   customerName: string;
   categoryName: string;
   pickupLocation: string;
+  pickupAddress: string;
+  pickupMapUrl?: string;
   pickupDate: string;
   pickupHour: string;
   returnLocation: string;
+  returnAddress: string;
+  returnMapUrl?: string;
   returnDate: string;
   returnHour: string;
   selectedDays: number;

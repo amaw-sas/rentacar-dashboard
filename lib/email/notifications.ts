@@ -10,6 +10,18 @@ export function isSafeMapUrl(u: string): boolean {
   );
 }
 
+function safeMapUrlOrWarn(
+  url: string,
+  locationCode: string | undefined
+): string | undefined {
+  if (!url) return undefined;
+  if (isSafeMapUrl(url)) return url;
+  console.warn(
+    `[email] rejected unsafe map URL for location ${locationCode ?? "<unknown>"}: ${url}`
+  );
+  return undefined;
+}
+
 import { PendingClientEmail } from "./templates/pending-client";
 import { FailedClientEmail } from "./templates/failed-client";
 import { ReservationRequestEmail } from "./templates/reservation-request";
@@ -159,8 +171,22 @@ export async function sendReservationNotifications(
     };
     const customerName = `${customer.first_name} ${customer.last_name}`;
     const customerEmail = customer.email;
-    const pickupLocation = (reservation.pickup_location as { name: string })?.name ?? "";
-    const returnLocation = (reservation.return_location as { name: string })?.name ?? "";
+    const pickupLoc = (reservation.pickup_location ?? {}) as {
+      name?: string;
+      code?: string;
+      pickup_address?: string;
+      pickup_map?: string;
+    };
+    const returnLoc = (reservation.return_location ?? {}) as {
+      name?: string;
+      code?: string;
+      pickup_address?: string;
+      pickup_map?: string;
+      return_address?: string | null;
+      return_map?: string | null;
+    };
+    const pickupLocation = pickupLoc.name ?? "";
+    const returnLocation = returnLoc.name ?? "";
     const categoryName = reservation.category_code;
 
     const rentalCompany = (reservation.rental_companies ?? {}) as {
@@ -175,15 +201,32 @@ export async function sendReservationNotifications(
     const localizaBcc = resolveLocalizaBcc(localizaBccEmail);
 
     if (status === "reservado") {
+      const pickupAddress = pickupLoc.pickup_address ?? "";
+      const useReturnOverride =
+        Boolean(returnLoc.return_address) && Boolean(returnLoc.return_map);
+      const returnAddress = useReturnOverride
+        ? (returnLoc.return_address as string)
+        : (returnLoc.pickup_address ?? "");
+      const pickupMapRaw = pickupLoc.pickup_map ?? "";
+      const returnMapRaw = useReturnOverride
+        ? (returnLoc.return_map as string)
+        : (returnLoc.pickup_map ?? "");
+      const pickupMapUrl = safeMapUrlOrWarn(pickupMapRaw, pickupLoc.code);
+      const returnMapUrl = safeMapUrlOrWarn(returnMapRaw, returnLoc.code);
+
       const html = await renderEmail(
         ReservedClientEmail({
           ...branding,
           customerName,
           categoryName,
           pickupLocation,
+          pickupAddress,
+          pickupMapUrl,
           pickupDate: formatDate(reservation.pickup_date),
           pickupHour: formatHour(reservation.pickup_hour),
           returnLocation,
+          returnAddress,
+          returnMapUrl,
           returnDate: formatDate(reservation.return_date),
           returnHour: formatHour(reservation.return_hour),
           selectedDays: reservation.selected_days,

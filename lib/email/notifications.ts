@@ -2,6 +2,14 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { sendEmail } from "./send";
 import { renderEmail } from "./render";
 import { ReservedClientEmail } from "./templates/reserved-confirmation";
+
+export function isSafeMapUrl(u: string): boolean {
+  return (
+    u.startsWith("https://maps.app.goo.gl/") ||
+    u.startsWith("https://www.google.com/maps/")
+  );
+}
+
 import { PendingClientEmail } from "./templates/pending-client";
 import { FailedClientEmail } from "./templates/failed-client";
 import { ReservationRequestEmail } from "./templates/reservation-request";

@@ -3,7 +3,44 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { sendEmail } from "@/lib/email/send";
 import { renderEmail } from "@/lib/email/render";
 import { logNotification } from "@/lib/actions/notification-logs";
-import { sendReservationNotifications } from "@/lib/email/notifications";
+import {
+  sendReservationNotifications,
+  isSafeMapUrl,
+} from "@/lib/email/notifications";
+
+describe("isSafeMapUrl", () => {
+  it("accepts a real maps.app.goo.gl shortlink", () => {
+    expect(isSafeMapUrl("https://maps.app.goo.gl/yxKpFsswp4DKd6BL7")).toBe(true);
+  });
+
+  it("accepts a long www.google.com/maps URL", () => {
+    expect(
+      isSafeMapUrl(
+        "https://www.google.com/maps/place/Aeropuerto+El+Dorado/@4.7016,-74.1469,15z"
+      )
+    ).toBe(true);
+  });
+
+  it("rejects javascript: URI (XSS)", () => {
+    expect(isSafeMapUrl("javascript:alert(1)")).toBe(false);
+  });
+
+  it("rejects http:// (no TLS — MITM vector)", () => {
+    expect(isSafeMapUrl("http://maps.app.goo.gl/x")).toBe(false);
+  });
+
+  it("rejects maps.app.goo.gl without trailing slash (no path)", () => {
+    expect(isSafeMapUrl("https://maps.app.goo.gl")).toBe(false);
+  });
+
+  it("rejects host-smuggling: google.com/mapsX-evil", () => {
+    expect(isSafeMapUrl("https://www.google.com/mapsX-evil")).toBe(false);
+  });
+
+  it("rejects empty string", () => {
+    expect(isSafeMapUrl("")).toBe(false);
+  });
+});
 
 vi.mock("@/lib/supabase/admin", () => ({
   createAdminClient: vi.fn(),

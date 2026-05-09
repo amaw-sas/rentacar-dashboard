@@ -3,10 +3,15 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { sendEmail } from "@/lib/email/send";
 import { renderEmail } from "@/lib/email/render";
 import { logNotification } from "@/lib/actions/notification-logs";
+import { ReservedClientEmail } from "@/lib/email/templates/reserved-confirmation";
 import {
   sendReservationNotifications,
   isSafeMapUrl,
 } from "@/lib/email/notifications";
+
+vi.mock("@/lib/email/templates/reserved-confirmation", () => ({
+  ReservedClientEmail: vi.fn(() => null),
+}));
 
 describe("isSafeMapUrl", () => {
   it("accepts a real maps.app.goo.gl shortlink", () => {
@@ -93,8 +98,8 @@ const mockReservation = {
     code: "AABOT",
     pickup_address: "Aeropuerto El Dorado, Piso 1 Puerta 7",
     pickup_map: "https://maps.app.goo.gl/U3Sct9jNM8BrLFR78",
-    return_address: "Diagonal 24C, 99-45 - a 5 minutos del Aeropuerto",
-    return_map: "https://maps.app.goo.gl/JjpsSCHkCrgGYa9P7",
+    return_address: "Diagonal 24C, 99-45 - a 5 minutos del Aeropuerto" as string | null,
+    return_map: "https://maps.app.goo.gl/JjpsSCHkCrgGYa9P7" as string | null,
   },
   categories: { name: "Gama C Económico" },
   monthly_mileage: null as number | null,
@@ -368,5 +373,129 @@ describe("sendReservationNotifications", () => {
       .mock.calls.find((c) => c[0].subject === "Reserva Aprobada");
     expect(reservedCall).toBeDefined();
     expect(reservedCall![0].bcc).toBeUndefined();
+  });
+
+  // ─── Reserved email pickup/return address + map props (Step 3/5) ────
+
+  describe("reserved email — pickup/return address+map props", () => {
+    function lastReservedEmailProps() {
+      const calls = vi.mocked(ReservedClientEmail).mock.calls;
+      return (calls[calls.length - 1]?.[0] ?? {}) as unknown as Record<
+        string,
+        unknown
+      >;
+    }
+
+    it("scenario 1: passes pickup address+map and falls back to pickup for return when same location with no return_* override", async () => {
+      setupMock({
+        reservation: {
+          ...mockReservation,
+          pickup_location: {
+            name: "Bogotá Aeropuerto",
+            code: "AABOT",
+            pickup_address: "Aeropuerto El Dorado, Piso 1 Puerta 7",
+            pickup_map: "https://maps.app.goo.gl/U3Sct9jNM8BrLFR78",
+          },
+          return_location: {
+            name: "Bogotá Aeropuerto",
+            code: "AABOT",
+            pickup_address: "Aeropuerto El Dorado, Piso 1 Puerta 7",
+            pickup_map: "https://maps.app.goo.gl/U3Sct9jNM8BrLFR78",
+            return_address: null,
+            return_map: null,
+          },
+        },
+      });
+
+      await sendReservationNotifications("res-123", "reservado", "alquilatucarro");
+
+      const props = lastReservedEmailProps();
+      expect(props.pickupAddress).toBe("Aeropuerto El Dorado, Piso 1 Puerta 7");
+      expect(props.pickupMapUrl).toBe("https://maps.app.goo.gl/U3Sct9jNM8BrLFR78");
+      expect(props.returnAddress).toBe("Aeropuerto El Dorado, Piso 1 Puerta 7");
+      expect(props.returnMapUrl).toBe("https://maps.app.goo.gl/U3Sct9jNM8BrLFR78");
+    });
+
+    it("scenario 2: uses return_* override when return location has both return_address AND return_map populated", async () => {
+      // Default mockReservation has both override fields populated
+      await sendReservationNotifications("res-123", "reservado", "alquilatucarro");
+
+      const props = lastReservedEmailProps();
+      expect(props.pickupAddress).toBe("Aeropuerto El Dorado, Piso 1 Puerta 7");
+      expect(props.pickupMapUrl).toBe("https://maps.app.goo.gl/U3Sct9jNM8BrLFR78");
+      expect(props.returnAddress).toBe("Diagonal 24C, 99-45 - a 5 minutos del Aeropuerto");
+      expect(props.returnMapUrl).toBe("https://maps.app.goo.gl/JjpsSCHkCrgGYa9P7");
+    });
+
+    it("scenario 4: atomic fallback when return_address is set but return_map is null (mixed-null pair rejected)", async () => {
+      setupMock({
+        reservation: {
+          ...mockReservation,
+          return_location: {
+            name: "Bogotá Aeropuerto",
+            code: "AABOT",
+            pickup_address: "Aeropuerto El Dorado, Piso 1 Puerta 7",
+            pickup_map: "https://maps.app.goo.gl/U3Sct9jNM8BrLFR78",
+            return_address: "Diagonal 24C, 99-45 - a 5 minutos del Aeropuerto",
+            return_map: null,
+          },
+        },
+      });
+
+      await sendReservationNotifications("res-123", "reservado", "alquilatucarro");
+
+      const props = lastReservedEmailProps();
+      expect(props.returnAddress).toBe("Aeropuerto El Dorado, Piso 1 Puerta 7");
+      expect(props.returnMapUrl).toBe("https://maps.app.goo.gl/U3Sct9jNM8BrLFR78");
+    });
+
+    it("scenario 4 (inverse): atomic fallback when return_map is set but return_address is null", async () => {
+      setupMock({
+        reservation: {
+          ...mockReservation,
+          return_location: {
+            name: "Bogotá Aeropuerto",
+            code: "AABOT",
+            pickup_address: "Aeropuerto El Dorado, Piso 1 Puerta 7",
+            pickup_map: "https://maps.app.goo.gl/U3Sct9jNM8BrLFR78",
+            return_address: null,
+            return_map: "https://maps.app.goo.gl/JjpsSCHkCrgGYa9P7",
+          },
+        },
+      });
+
+      await sendReservationNotifications("res-123", "reservado", "alquilatucarro");
+
+      const props = lastReservedEmailProps();
+      expect(props.returnAddress).toBe("Aeropuerto El Dorado, Piso 1 Puerta 7");
+      expect(props.returnMapUrl).toBe("https://maps.app.goo.gl/U3Sct9jNM8BrLFR78");
+    });
+
+    it("scenario 5: rejects malformed pickup_map and warns with location code + rejected URL", async () => {
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      setupMock({
+        reservation: {
+          ...mockReservation,
+          pickup_location: {
+            name: "Bogotá Aeropuerto",
+            code: "AABOT",
+            pickup_address: "Aeropuerto El Dorado, Piso 1 Puerta 7",
+            pickup_map: "javascript:alert(1)",
+          },
+        },
+      });
+
+      await sendReservationNotifications("res-123", "reservado", "alquilatucarro");
+
+      const props = lastReservedEmailProps();
+      expect(props.pickupAddress).toBe("Aeropuerto El Dorado, Piso 1 Puerta 7");
+      expect(props.pickupMapUrl).toBeUndefined();
+
+      const warnPayload = warnSpy.mock.calls.flat().join(" ");
+      expect(warnPayload).toContain("AABOT");
+      expect(warnPayload).toContain("javascript:alert(1)");
+
+      warnSpy.mockRestore();
+    });
   });
 });

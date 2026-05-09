@@ -10,9 +10,13 @@ const baseProps = {
   customerName: "Juan Perez",
   categoryName: "Gama C Económico",
   pickupLocation: "Bogotá Aeropuerto",
+  pickupAddress: "Aeropuerto El Dorado, Piso 1 Puerta 7",
+  pickupMapUrl: "https://maps.app.goo.gl/U3Sct9jNM8BrLFR78",
   pickupDate: "15 de mayo 2026",
   pickupHour: "9:00 AM",
   returnLocation: "Bogotá Aeropuerto",
+  returnAddress: "Aeropuerto El Dorado, Piso 1 Puerta 7",
+  returnMapUrl: "https://maps.app.goo.gl/U3Sct9jNM8BrLFR78",
   returnDate: "20 de mayo 2026",
   returnHour: "9:00 AM",
   selectedDays: 5,
@@ -100,5 +104,48 @@ describe("ReservedClientEmail pickup instructions", () => {
     expect(html).toMatch(/\$\s?300\.000/);
     // Old defaults must NOT leak through
     expect(html).not.toMatch(/\$\s?12\.000/);
+  });
+
+  describe("Dirección + Ver en Google Maps button", () => {
+    function countMatches(html: string, re: RegExp): number {
+      return (html.match(re) ?? []).length;
+    }
+
+    it("renders pickup and return addresses + 2 Google Maps anchor buttons (same-location fixture)", async () => {
+      const html = await render(ReservedClientEmail(baseProps));
+
+      // Address text appears once per Dirección row → 2 occurrences total
+      expect(countMatches(html, /Aeropuerto El Dorado, Piso 1 Puerta 7/g)).toBe(2);
+
+      // 2 anchor elements with href starting https://maps.app.goo.gl/
+      expect(
+        countMatches(html, /<a[^>]*href="https:\/\/maps\.app\.goo\.gl\/[^"]+"/g)
+      ).toBe(2);
+
+      // Button label localized
+      expect(html).toMatch(/Ver en Google Maps/);
+
+      // a11y: target=_blank + rel must be on the buttons
+      expect(html).toMatch(/target="_blank"/);
+      expect(html).toMatch(/rel="noopener noreferrer"/);
+      expect(html).toMatch(/aria-label="Abrir Bogot(á|&#225;|&aacute;) Aeropuerto en Google Maps[^"]*"/);
+    });
+
+    it("omits the button when map URL is undefined (URL filtered as unsafe upstream)", async () => {
+      const html = await render(
+        ReservedClientEmail({
+          ...baseProps,
+          pickupMapUrl: undefined,
+        })
+      );
+
+      // Pickup address still rendered
+      expect(html).toContain("Aeropuerto El Dorado, Piso 1 Puerta 7");
+
+      // Only 1 Maps anchor (return only — pickup omitted)
+      expect(
+        countMatches(html, /<a[^>]*href="https:\/\/maps\.app\.goo\.gl\/[^"]+"/g)
+      ).toBe(1);
+    });
   });
 });

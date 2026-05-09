@@ -1,6 +1,5 @@
-import { Section, Text, Heading, Hr, Row, Column } from "@react-email/components";
+import { Section, Text, Heading, Hr, Row, Column, Link } from "@react-email/components";
 import { EmailLayout } from "./components/email-layout";
-import { ReservationDetails } from "./components/reservation-details";
 
 const formatCOP = (value: number) =>
   new Intl.NumberFormat("es-CO", {
@@ -8,6 +7,42 @@ const formatCOP = (value: number) =>
     currency: "COP",
     minimumFractionDigits: 0,
   }).format(value);
+
+// AddressRow renders the "Dirección" cell with optional Maps button. Inlined
+// in this file (not in shared ReservationDetails) so the 9 other templates
+// that consume the shared component remain unaffected — see spec
+// docs/specs/2026-05-09-reserved-email-locations-design.md § Affected files.
+function AddressRow({
+  address,
+  mapUrl,
+  locationName,
+  franchiseColor,
+}: {
+  address: string;
+  mapUrl: string | undefined;
+  locationName: string;
+  franchiseColor: string;
+}) {
+  return (
+    <Row style={tableRow}>
+      <Column style={labelCell}>Dirección</Column>
+      <Column style={valueCell}>
+        <Text style={addressText}>{address}</Text>
+        {mapUrl && (
+          <Link
+            href={mapUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label={`Abrir ${locationName} en Google Maps (nueva pestaña)`}
+            style={{ ...mapButton, backgroundColor: franchiseColor }}
+          >
+            Ver en Google Maps →
+          </Link>
+        )}
+      </Column>
+    </Row>
+  );
+}
 
 interface ReservedClientEmailProps {
   franchiseName: string;
@@ -18,9 +53,13 @@ interface ReservedClientEmailProps {
   customerName: string;
   categoryName: string;
   pickupLocation: string;
+  pickupAddress: string;
+  pickupMapUrl?: string;
   pickupDate: string;
   pickupHour: string;
   returnLocation: string;
+  returnAddress: string;
+  returnMapUrl?: string;
   returnDate: string;
   returnHour: string;
   selectedDays: number;
@@ -68,18 +107,64 @@ export function ReservedClientEmail(props: ReservedClientEmailProps) {
         los detalles de tu reserva.
       </Text>
 
-      <ReservationDetails
-        customerName={props.customerName}
-        categoryName={props.categoryName}
-        pickupLocation={props.pickupLocation}
-        pickupDate={props.pickupDate}
-        pickupHour={props.pickupHour}
-        returnLocation={props.returnLocation}
-        returnDate={props.returnDate}
-        returnHour={props.returnHour}
-        selectedDays={props.selectedDays}
-        reserveCode={props.reserveCode}
-      />
+      <Section>
+        <Text style={sectionTitle}>Detalles de la Reserva</Text>
+
+        <Section style={detailsTable}>
+          {props.reserveCode && (
+            <Row style={tableRow}>
+              <Column style={labelCell}>Código de Reserva</Column>
+              <Column style={valueCell}>
+                <Text style={codeText}>{props.reserveCode}</Text>
+              </Column>
+            </Row>
+          )}
+          <Row style={tableRow}>
+            <Column style={labelCell}>Cliente</Column>
+            <Column style={valueCell}>{props.customerName}</Column>
+          </Row>
+          <Row style={tableRow}>
+            <Column style={labelCell}>Categoría</Column>
+            <Column style={valueCell}>{props.categoryName}</Column>
+          </Row>
+          <Row style={tableRow}>
+            <Column style={labelCell}>Lugar de Recogida</Column>
+            <Column style={valueCell}>{props.pickupLocation}</Column>
+          </Row>
+          <AddressRow
+            address={props.pickupAddress}
+            mapUrl={props.pickupMapUrl}
+            locationName={props.pickupLocation}
+            franchiseColor={props.franchiseColor}
+          />
+          <Row style={tableRow}>
+            <Column style={labelCell}>Fecha de Recogida</Column>
+            <Column style={valueCell}>
+              {props.pickupDate} - {props.pickupHour}
+            </Column>
+          </Row>
+          <Row style={tableRow}>
+            <Column style={labelCell}>Lugar de Devolución</Column>
+            <Column style={valueCell}>{props.returnLocation}</Column>
+          </Row>
+          <AddressRow
+            address={props.returnAddress}
+            mapUrl={props.returnMapUrl}
+            locationName={props.returnLocation}
+            franchiseColor={props.franchiseColor}
+          />
+          <Row style={tableRow}>
+            <Column style={labelCell}>Fecha de Devolución</Column>
+            <Column style={valueCell}>
+              {props.returnDate} - {props.returnHour}
+            </Column>
+          </Row>
+          <Row style={tableRow}>
+            <Column style={labelCell}>Días</Column>
+            <Column style={valueCell}>{props.selectedDays}</Column>
+          </Row>
+        </Section>
+      </Section>
 
       <Hr style={divider} />
 
@@ -291,6 +376,55 @@ const sectionTitle = {
   fontWeight: "bold" as const,
   color: "#18181b",
   marginBottom: "12px",
+};
+
+const detailsTable = {
+  width: "100%",
+  borderCollapse: "collapse" as const,
+};
+
+const tableRow = {
+  borderBottom: "1px solid #e4e4e7",
+};
+
+const labelCell = {
+  padding: "8px 12px",
+  fontSize: "13px",
+  color: "#71717a",
+  width: "40%",
+  verticalAlign: "top" as const,
+};
+
+const valueCell = {
+  padding: "8px 12px",
+  fontSize: "13px",
+  color: "#18181b",
+  fontWeight: "500" as const,
+};
+
+const codeText = {
+  fontSize: "16px",
+  fontWeight: "bold" as const,
+  color: "#18181b",
+  margin: "0",
+};
+
+const addressText = {
+  fontSize: "13px",
+  color: "#18181b",
+  lineHeight: "1.5",
+  margin: "0 0 8px",
+};
+
+const mapButton = {
+  display: "inline-block" as const,
+  padding: "12px 18px",
+  color: "#ffffff",
+  fontSize: "14px",
+  fontWeight: 600 as const,
+  borderRadius: "6px",
+  textDecoration: "none" as const,
+  msoPaddingAlt: "0",
 };
 
 const divider = {

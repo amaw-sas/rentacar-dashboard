@@ -74,10 +74,12 @@ The `pickup_map` and `returnMapUrl` values are rendered as `<a href={url}>`. Mig
 
 ```ts
 const isSafeMapUrl = (u: string) =>
-  u.startsWith("https://maps.app.goo.gl/") || u.startsWith("https://www.google.com/maps");
+  u.startsWith("https://maps.app.goo.gl/") || u.startsWith("https://www.google.com/maps/");
 ```
 
-If `isSafeMapUrl(url)` returns false, omit the button (render only the address text). Log a warning so the data team can fix the row. The address text itself is rendered as JSX children — React Email escapes it by default; no further sanitization needed.
+Both prefixes require a trailing `/` so attackers cannot smuggle a different host via path tricks (e.g., `https://www.google.com/mapsX-evil`).
+
+If `isSafeMapUrl(url)` returns false, omit the button (render only the address text). Log a warning that includes the offending location's `code` and the rejected URL — the `code` enables the data team to find and fix the row in one query. The address text itself is rendered as JSX children — React Email escapes it by default; no further sanitization needed.
 
 ### Render
 
@@ -115,14 +117,11 @@ Decision: **accept native client inversion**. Apple Mail and Gmail iOS may auto-
 |---|---|
 | `lib/email/notifications.ts` | Extend the `SELECT` in `fetchReservationContext` to include the 4 new location columns on `pickup_location` and `return_location`. Inside the `reservado` branch, compute `pickupAddress`/`pickupMapUrl`/`returnAddress`/`returnMapUrl` with atomic fallback + URL-safety check. Pass 4 new props to `ReservedClientEmail`. Other status branches and `sendReservationRequestEmail` continue to ignore the extra columns — harmless additions to the SELECT. |
 | `lib/email/templates/reserved-confirmation.tsx` | Add 4 props (`pickupAddress`, `pickupMapUrl?`, `returnAddress`, `returnMapUrl?` — map URLs optional because URL-safety check may strip them). Render two new rows (one under each location row) with address text + conditional button. Add style consts for the button. Pass `pickupLocationName` / `returnLocationName` to a small inline helper for the `aria-label`. |
-| `tests/unit/email/notifications.test.ts` | Extend mock fixture (`pickup_location`/`return_location`) with the 4 new columns. Add assertions: (a) `renderEmail` receives props containing the address strings and map URLs; (b) atomic fallback when `return_address` is null AND `return_map` is null; (c) atomic fallback triggers when `return_map` is set but `return_address` is null (mixed-null pair → fall back together); (d) malformed `pickup_map` (e.g., `javascript:`) results in `pickupMapUrl=undefined` passed to the template AND a console warning. |
+| `tests/unit/email/notifications.test.ts` | Extend mock fixture (`pickup_location`/`return_location`) with the 4 new columns plus a `code` field. Add assertions: (a) `renderEmail` receives props containing the address strings and map URLs; (b) atomic fallback when `return_address` is null AND `return_map` is null; (c) atomic fallback triggers when `return_map` is set but `return_address` is null (mixed-null pair → fall back together); (d) malformed `pickup_map` (e.g., `javascript:alert(1)`) results in `pickupMapUrl=undefined` passed to the template AND `console.warn` is called with arguments whose joined string includes BOTH the location `code` AND the rejected URL. Add a snapshot test (`tests/unit/email/reserved-confirmation.snapshot.test.ts`) that renders `ReservedClientEmail` with two fixtures (same-location, distinct-location), parses the HTML via `linkedom`/`jsdom`, and asserts: button `href`/`target`/`rel`/`aria-label`, inline-style substrings, no element exceeds 320px width, and structural-negative oracle for the malformed-URL fixture. |
 
 Files explicitly **not** modified:
 - `lib/email/templates/components/reservation-details.tsx` — shared by `pending-client`, `pending-localiza`, `extras-localiza`, `total-insurance-localiza`, `monthly-client`, `monthly-localiza`, `pickup-reminder`, `post-pickup-reminder`, `reservation-request`. Out of scope.
 - No generated `database.types.ts` exists in this project (verified) — rollback is a clean 3-file revert.
-
-Files explicitly **not** modified:
-- `lib/email/templates/components/reservation-details.tsx` — shared by `pending-client`, `pending-localiza`, `extras-localiza`, `total-insurance-localiza`, `monthly-client`, `monthly-localiza`, `pickup-reminder`, `post-pickup-reminder`, `reservation-request`. Out of scope.
 
 ## Observable scenarios
 
@@ -134,7 +133,10 @@ Files explicitly **not** modified:
 
 4. **Mixed-null return pair.** Given a `reservado` reservation where return_location has `return_address = "Some street"` but `return_map = null` (or vice versa), when notifications fire, then the atomic fallback triggers — devolución block shows the location's `pickup_address` and `pickup_map`, NOT the partial override. Verified by unit assertion comparing rendered props.
 
-5. **Malformed map URL.** Given a `reservado` reservation where `pickup_map = "javascript:alert(1)"` (or any URL not starting with `https://maps.app.goo.gl/` / `https://www.google.com/maps`), when notifications fire, then the email renders the address text but omits the button entirely; a `console.warn` is emitted naming the location `code` and the rejected URL.
+5. **Malformed map URL.** Given a `reservado` reservation where `pickup_map = "javascript:alert(1)"` (or any URL not starting with `https://maps.app.goo.gl/` / `https://www.google.com/maps/`), when notifications fire, then:
+   - The rendered HTML contains the pickup address text under the "Dirección" row.
+   - **Structural negative oracle:** within the pickup-row group, the count of `<a` elements whose `href` starts with `https://maps` is `0` (i.e., no button rendered). Asserted via DOM query, not a substring search.
+   - A `console.warn` is emitted whose payload contains BOTH the location's `code` (e.g., `"AABOT"`) AND the rejected URL substring. Asserted via spy on `console.warn` checking the joined argument string includes both.
 
 6. **Email-client rendering (concrete oracles).** Given the rendered HTML for scenarios 1 and 2, when validated against snapshot fixtures committed under `tests/unit/email/__snapshots__/reserved-confirmation.html`, then:
    - The output HTML matches the snapshot byte-for-byte (deterministic via stable mock data).

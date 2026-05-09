@@ -13,6 +13,44 @@ import { MonthlyClientEmail } from "./templates/monthly-client";
 import type { ReservationStatus } from "@/lib/schemas/reservation";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
+
+export function isSafeMapUrl(u: string): boolean {
+  return (
+    u.startsWith("https://maps.app.goo.gl/") ||
+    u.startsWith("https://www.google.com/maps/")
+  );
+}
+
+function safeMapUrlOrWarn(
+  url: string,
+  locationCode: string | undefined
+): string | undefined {
+  if (!url) return undefined;
+  if (isSafeMapUrl(url)) return url;
+  console.warn(
+    `[email] rejected unsafe map URL for location ${locationCode ?? "<unknown>"}: ${url}`
+  );
+  return undefined;
+}
+
+type LocationFallback = {
+  pickup_address?: string;
+  pickup_map?: string;
+  return_address?: string | null;
+  return_map?: string | null;
+};
+
+function resolveReturnPair(loc: LocationFallback): { address: string; mapRaw: string } {
+  // Atomic both-or-neither: only honor the return_* override when BOTH are
+  // non-empty after trim. Migration 025 has CHECK on pickup_* but not on
+  // return_*; whitespace-only or mixed-null pairs fall back to pickup_*.
+  const useOverride =
+    Boolean(loc.return_address?.trim()) && Boolean(loc.return_map?.trim());
+  return {
+    address: useOverride ? (loc.return_address as string) : (loc.pickup_address ?? ""),
+    mapRaw: useOverride ? (loc.return_map as string) : (loc.pickup_map ?? ""),
+  };
+}
 import { FRANCHISE_BRANDING } from "@/lib/constants/franchises";
 
 interface ReservationData {
@@ -56,8 +94,12 @@ async function fetchReservationContext(reservationId: string) {
       `
       *,
       customers (first_name, last_name, email, phone),
-      pickup_location:locations!pickup_location_id (name),
-      return_location:locations!return_location_id (name),
+      pickup_location:locations!pickup_location_id (
+        name, code, pickup_address, pickup_map
+      ),
+      return_location:locations!return_location_id (
+        name, code, pickup_address, pickup_map, return_address, return_map
+      ),
       rental_companies (
         extra_driver_day_price,
         wash_price,
@@ -147,8 +189,22 @@ export async function sendReservationNotifications(
     };
     const customerName = `${customer.first_name} ${customer.last_name}`;
     const customerEmail = customer.email;
-    const pickupLocation = (reservation.pickup_location as { name: string })?.name ?? "";
-    const returnLocation = (reservation.return_location as { name: string })?.name ?? "";
+    const pickupLoc = (reservation.pickup_location ?? {}) as {
+      name?: string;
+      code?: string;
+      pickup_address?: string;
+      pickup_map?: string;
+    };
+    const returnLoc = (reservation.return_location ?? {}) as {
+      name?: string;
+      code?: string;
+      pickup_address?: string;
+      pickup_map?: string;
+      return_address?: string | null;
+      return_map?: string | null;
+    };
+    const pickupLocation = pickupLoc.name ?? "";
+    const returnLocation = returnLoc.name ?? "";
     const categoryName = reservation.category_code;
 
     const rentalCompany = (reservation.rental_companies ?? {}) as {
@@ -163,15 +219,25 @@ export async function sendReservationNotifications(
     const localizaBcc = resolveLocalizaBcc(localizaBccEmail);
 
     if (status === "reservado") {
+      const pickupAddress = pickupLoc.pickup_address ?? "";
+      const pickupMapUrl = safeMapUrlOrWarn(pickupLoc.pickup_map ?? "", pickupLoc.code);
+      const returnPair = resolveReturnPair(returnLoc);
+      const returnAddress = returnPair.address;
+      const returnMapUrl = safeMapUrlOrWarn(returnPair.mapRaw, returnLoc.code);
+
       const html = await renderEmail(
         ReservedClientEmail({
           ...branding,
           customerName,
           categoryName,
           pickupLocation,
+          pickupAddress,
+          pickupMapUrl,
           pickupDate: formatDate(reservation.pickup_date),
           pickupHour: formatHour(reservation.pickup_hour),
           returnLocation,
+          returnAddress,
+          returnMapUrl,
           returnDate: formatDate(reservation.return_date),
           returnHour: formatHour(reservation.return_hour),
           selectedDays: reservation.selected_days,

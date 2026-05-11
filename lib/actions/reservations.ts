@@ -102,10 +102,15 @@ export async function updateReservation(
     return { error: firstError.message };
   }
 
+  // Status is owned exclusively by updateReservationStatus (state-machine validation
+  // + notifications). Strip it here so a stale form payload cannot revert a status
+  // change made via ReservationStatusActions. See issue #10.
+  const { status: _ignored, ...updatePayload } = parsed.data;
+
   const supabase = await createClient();
   const { error } = await supabase
     .from("reservations")
-    .update(parsed.data)
+    .update(updatePayload)
     .eq("id", id);
 
   if (error) {

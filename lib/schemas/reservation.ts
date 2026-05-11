@@ -45,21 +45,16 @@ export const STATUS_LABELS: Record<ReservationStatus, string> = {
   mensualidad: "Mensualidad",
 };
 
-export const VALID_TRANSITIONS: Record<ReservationStatus, ReservationStatus[]> = {
-  nueva: ["pendiente", "reservado", "sin_disponibilidad", "mensualidad", "cancelado"],
-  pendiente: ["reservado", "sin_disponibilidad", "indeterminado", "cancelado"],
-  reservado: ["utilizado", "no_recogido", "cancelado", "pendiente_modificar"],
-  sin_disponibilidad: ["nueva", "cancelado"],
-  utilizado: ["cancelado"],
-  no_contactado: ["cancelado"],
-  baneado: ["cancelado"],
-  no_recogido: ["cancelado"],
-  pendiente_pago: ["reservado", "cancelado"],
-  pendiente_modificar: ["reservado", "cancelado"],
-  cancelado: [],
-  indeterminado: ["reservado", "sin_disponibilidad", "cancelado"],
-  mensualidad: ["reservado", "sin_disponibilidad", "cancelado", "utilizado"],
-};
+// Free transition graph: any status can move to any other status (no self-loop).
+// The operator team requires being able to reverse reservations (e.g. cancelado → reservado).
+// The state machine is preserved as documentation/single-source-of-truth, not as a restrictive grid.
+export const VALID_TRANSITIONS: Record<ReservationStatus, ReservationStatus[]> =
+  Object.fromEntries(
+    RESERVATION_STATUSES.map((status) => [
+      status,
+      RESERVATION_STATUSES.filter((s) => s !== status),
+    ])
+  ) as Record<ReservationStatus, ReservationStatus[]>;
 
 export const MONTHLY_MILEAGE_OPTIONS = [
   { value: 1000, label: "1.000 km" },

@@ -176,6 +176,18 @@ describe("ReservationForm layout", () => {
     );
   });
 
+  // Status must NOT travel through the form payload — it is owned exclusively
+  // by ReservationStatusActions. A stale hidden input would overwrite a
+  // freshly-changed status on form submit (issue #10).
+  it("does not expose status as a form input", () => {
+    renderForm({
+      id: "55555555-5555-5555-5555-555555555555",
+      defaultStatus: "nueva",
+    });
+    expect(document.querySelector('input[name="status"]')).toBeNull();
+    expect(document.querySelector('select[name="status"]')).toBeNull();
+  });
+
   it("renders the customer preview as read-only", () => {
     renderForm();
     const nombre = screen.getByLabelText("Nombre") as HTMLInputElement;

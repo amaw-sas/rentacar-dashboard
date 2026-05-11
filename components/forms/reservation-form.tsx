@@ -912,7 +912,6 @@ export function ReservationForm({
       <input type="hidden" {...register("notification_required")} />
       <input type="hidden" {...register("reference_token")} />
       <input type="hidden" {...register("rate_qualifier")} />
-      <input type="hidden" {...register("status")} />
 
       <Card>
         <CardFooter className="flex justify-between pt-6">

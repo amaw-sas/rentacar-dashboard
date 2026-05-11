@@ -189,31 +189,39 @@ describe("reservationSchema", () => {
 });
 
 describe("VALID_TRANSITIONS", () => {
-  it("allows pendiente → reservado", () => {
-    expect(VALID_TRANSITIONS.pendiente).toContain("reservado");
-  });
-
-  it("allows pendiente → sin_disponibilidad", () => {
-    expect(VALID_TRANSITIONS.pendiente).toContain("sin_disponibilidad");
-  });
-
-  it("allows mensualidad → reservado", () => {
-    expect(VALID_TRANSITIONS.mensualidad).toContain("reservado");
-  });
-
-  it("does not allow reservado → pendiente", () => {
-    expect(VALID_TRANSITIONS.reservado).not.toContain("pendiente");
-  });
-
-  it("allows most statuses to transition to cancelado", () => {
-    const statuses = Object.keys(VALID_TRANSITIONS).filter((s) => s !== "cancelado");
-    for (const status of statuses) {
-      expect(VALID_TRANSITIONS[status as keyof typeof VALID_TRANSITIONS]).toContain("cancelado");
+  it("never includes a self-loop", () => {
+    for (const status of RESERVATION_STATUSES) {
+      expect(VALID_TRANSITIONS[status]).not.toContain(status);
     }
   });
 
-  it("cancelado has no outgoing transitions", () => {
-    expect(VALID_TRANSITIONS.cancelado).toHaveLength(0);
+  it("exposes every other status as a valid target", () => {
+    for (const status of RESERVATION_STATUSES) {
+      expect(VALID_TRANSITIONS[status]).toHaveLength(RESERVATION_STATUSES.length - 1);
+    }
+  });
+
+  it("allows reactivation from cancelado to active states", () => {
+    expect(VALID_TRANSITIONS.cancelado).toContain("reservado");
+    expect(VALID_TRANSITIONS.cancelado).toContain("pendiente");
+    expect(VALID_TRANSITIONS.cancelado).toContain("nueva");
+  });
+
+  it("allows reverting from utilizado/no_recogido to reservado", () => {
+    expect(VALID_TRANSITIONS.utilizado).toContain("reservado");
+    expect(VALID_TRANSITIONS.no_recogido).toContain("reservado");
+  });
+
+  it("allows reservado to step back to pendiente or nueva", () => {
+    expect(VALID_TRANSITIONS.reservado).toContain("pendiente");
+    expect(VALID_TRANSITIONS.reservado).toContain("nueva");
+  });
+
+  it("still allows every non-cancelado status to transition to cancelado", () => {
+    for (const status of RESERVATION_STATUSES) {
+      if (status === "cancelado") continue;
+      expect(VALID_TRANSITIONS[status]).toContain("cancelado");
+    }
   });
 });
 

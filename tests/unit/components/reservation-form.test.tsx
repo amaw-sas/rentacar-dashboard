@@ -153,10 +153,13 @@ describe("ReservationForm layout", () => {
       .map((el) => el.textContent?.trim());
     expect(titles).toContain("Estado");
     expect(screen.getByText("Estado actual:")).toBeInTheDocument();
-    // VALID_TRANSITIONS["nueva"] → pendiente, reservado, sin_disponibilidad, mensualidad, cancelado
+    // Free transition graph: from "nueva" we should see one button per other status.
     expect(screen.getByRole("button", { name: "Pendiente" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Reservado" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Cancelado" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Utilizado" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Baneado" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Nueva" })).toBeNull();
   });
 
   it("hides technical fields from operators", () => {

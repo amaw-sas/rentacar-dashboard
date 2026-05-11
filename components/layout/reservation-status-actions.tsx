@@ -33,7 +33,14 @@ const STATUS_VARIANT: Record<string, "default" | "secondary" | "destructive" | "
   mensualidad: "default",
 };
 
-const DANGEROUS_STATUSES: ReservationStatus[] = ["cancelado"];
+const DANGEROUS_TARGETS: ReservationStatus[] = ["cancelado", "baneado"];
+// Reactivating a reservation that has already been closed is unusual enough to warrant a prompt.
+const CONSOLIDATED_SOURCES: ReservationStatus[] = [
+  "cancelado",
+  "utilizado",
+  "no_recogido",
+  "baneado",
+];
 
 export function ReservationStatusActions({
   reservationId,
@@ -46,9 +53,14 @@ export function ReservationStatusActions({
   const validTargets = VALID_TRANSITIONS[currentStatus] ?? [];
 
   async function handleTransition(newStatus: ReservationStatus) {
-    if (DANGEROUS_STATUSES.includes(newStatus)) {
+    if (DANGEROUS_TARGETS.includes(newStatus)) {
       const confirmed = window.confirm(
-        `¿Estás seguro de cambiar el estado a "${STATUS_LABELS[newStatus]}"? Esta acción no se puede deshacer.`
+        `¿Cambiar el estado a "${STATUS_LABELS[newStatus]}"? Esta acción es delicada.`
+      );
+      if (!confirmed) return;
+    } else if (CONSOLIDATED_SOURCES.includes(currentStatus)) {
+      const confirmed = window.confirm(
+        `Estás reactivando una reserva en estado "${STATUS_LABELS[currentStatus]}". ¿Continuar y cambiarla a "${STATUS_LABELS[newStatus]}"?`
       );
       if (!confirmed) return;
     }
@@ -83,7 +95,7 @@ export function ReservationStatusActions({
             <Button
               key={target}
               size="sm"
-              variant={DANGEROUS_STATUSES.includes(target) ? "destructive" : "outline"}
+              variant={DANGEROUS_TARGETS.includes(target) ? "destructive" : "outline"}
               disabled={isPending}
               onClick={() => handleTransition(target)}
             >

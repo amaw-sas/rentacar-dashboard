@@ -31,6 +31,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Combobox } from "@/components/ui/combobox";
 import { ReservationStatusActions } from "@/components/layout/reservation-status-actions";
 
 interface SelectOption {
@@ -223,21 +224,24 @@ export function ReservationForm({
         <CardContent className="space-y-6">
           <div className="space-y-2">
             <Label htmlFor="customer_id">Cliente</Label>
-            <Select
+            <Combobox<CustomerOption>
+              id="customer_id"
+              options={customers}
               value={customerId}
-              onValueChange={(value) => setValue("customer_id", value)}
-            >
-              <SelectTrigger id="customer_id">
-                <SelectValue placeholder="Seleccionar cliente" />
-              </SelectTrigger>
-              <SelectContent>
-                {customers.map((c) => (
-                  <SelectItem key={c.id} value={c.id}>
-                    {c.first_name} {c.last_name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+              onChange={(value) =>
+                setValue("customer_id", value, { shouldValidate: true })
+              }
+              getId={(c) => c.id}
+              getLabel={(c) => `${c.first_name} ${c.last_name}`.trim()}
+              getSearchKeys={(c) => [
+                c.first_name,
+                c.last_name,
+                c.identification_number ?? "",
+              ]}
+              placeholder="Seleccionar cliente"
+              searchPlaceholder="Buscar por nombre o identificación…"
+              emptyMessage="Sin clientes que coincidan"
+            />
             {errors.customer_id && (
               <p className="text-sm text-destructive">{errors.customer_id.message}</p>
             )}

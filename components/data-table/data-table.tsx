@@ -53,16 +53,8 @@ export function DataTable<TData>({
         <div className="flex items-center">
           <Input
             placeholder={searchPlaceholder}
-            value={
-              (table
-                .getColumn(searchColumn)
-                ?.getFilterValue() as string) ?? ""
-            }
-            onChange={(e) =>
-              table
-                .getColumn(searchColumn)
-                ?.setFilterValue(e.target.value)
-            }
+            value={urlState.searchInput}
+            onChange={(e) => urlState.setSearchInput(e.target.value)}
             className="max-w-sm"
           />
         </div>

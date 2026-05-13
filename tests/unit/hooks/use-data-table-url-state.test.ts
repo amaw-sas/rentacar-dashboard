@@ -261,6 +261,172 @@ describe("useDataTableUrlState — sort + pagination setters", () => {
   });
 });
 
+describe("useDataTableUrlState — input buffer (SCEN-011)", () => {
+  it("SCEN-011: searchInput updates synchronously without waiting for URL flush", () => {
+    setUrl("");
+    const { result, rerender } = renderHook(() =>
+      useDataTableUrlState({ searchColumn: "full_name" }),
+    );
+
+    expect(result.current.searchInput).toBe("");
+
+    act(() => {
+      result.current.setSearchInput("l");
+    });
+    expect(result.current.searchInput).toBe("l");
+
+    act(() => {
+      result.current.setSearchInput("lo");
+    });
+    expect(result.current.searchInput).toBe("lo");
+
+    act(() => {
+      result.current.setSearchInput("lop");
+    });
+    expect(result.current.searchInput).toBe("lop");
+
+    // URL has not been written yet — only the buffer is updated synchronously.
+    expect(replaceMock).not.toHaveBeenCalled();
+
+    rerender();
+    expect(result.current.searchInput).toBe("lop");
+  });
+
+  it("SCEN-011: searchInput hydrates from URL on mount", () => {
+    setUrl("q=lopez");
+    const { result } = renderHook(() =>
+      useDataTableUrlState({ searchColumn: "full_name" }),
+    );
+
+    expect(result.current.searchInput).toBe("lopez");
+  });
+
+  it("SCEN-011: external URL change re-syncs searchInput", () => {
+    setUrl("q=old");
+    const { result, rerender } = renderHook(() =>
+      useDataTableUrlState({ searchColumn: "full_name" }),
+    );
+
+    expect(result.current.searchInput).toBe("old");
+
+    setUrl("q=new");
+    rerender();
+
+    expect(result.current.searchInput).toBe("new");
+  });
+
+  it("SCEN-011: searchInput is empty string when searchColumn is undefined", () => {
+    setUrl("q=ignored");
+    const { result } = renderHook(() => useDataTableUrlState());
+
+    expect(result.current.searchInput).toBe("");
+  });
+});
+
+describe("useDataTableUrlState — sort serialization for non-snake_case ids (SCEN-012)", () => {
+  it("SCEN-012: camelCase column id serializes to URL", () => {
+    setUrl("");
+    const { result } = renderHook(() => useDataTableUrlState());
+
+    act(() => {
+      result.current.onSortingChange([{ id: "createdAt", desc: false }]);
+    });
+
+    const url = lastReplaceUrl();
+    const qs = new URLSearchParams(url.split("?")[1] ?? "");
+    expect(qs.get("sort")).toBe("createdAt:asc");
+  });
+
+  it("SCEN-012: hyphenated column id serializes to URL", () => {
+    setUrl("");
+    const { result } = renderHook(() => useDataTableUrlState());
+
+    act(() => {
+      result.current.onSortingChange([{ id: "id-1", desc: true }]);
+    });
+
+    const url = lastReplaceUrl();
+    const qs = new URLSearchParams(url.split("?")[1] ?? "");
+    expect(qs.get("sort")).toBe("id-1:desc");
+  });
+
+  it("SCEN-012: dotted column id serializes to URL", () => {
+    setUrl("");
+    const { result } = renderHook(() => useDataTableUrlState());
+
+    act(() => {
+      result.current.onSortingChange([{ id: "amount.usd", desc: false }]);
+    });
+
+    const url = lastReplaceUrl();
+    const qs = new URLSearchParams(url.split("?")[1] ?? "");
+    expect(qs.get("sort")).toBe("amount.usd:asc");
+  });
+});
+
+describe("useDataTableUrlState — pagination sanitization (SCEN-013, SCEN-014)", () => {
+  it("SCEN-013: ?page=1e10 is rejected", () => {
+    setUrl("page=1e10");
+    const { result } = renderHook(() => useDataTableUrlState());
+
+    expect(result.current.pagination.pageIndex).toBe(0);
+  });
+
+  it("SCEN-013: ?page=0x10 is rejected", () => {
+    setUrl("page=0x10");
+    const { result } = renderHook(() => useDataTableUrlState());
+
+    expect(result.current.pagination.pageIndex).toBe(0);
+  });
+
+  it("SCEN-013: ?page=1e15 is rejected", () => {
+    setUrl("page=1e15");
+    const { result } = renderHook(() => useDataTableUrlState());
+
+    expect(result.current.pagination.pageIndex).toBe(0);
+  });
+
+  it("SCEN-013: ?page=9007199254740990 (beyond MAX_PAGE) is rejected", () => {
+    setUrl("page=9007199254740990");
+    const { result } = renderHook(() => useDataTableUrlState());
+
+    expect(result.current.pagination.pageIndex).toBe(0);
+  });
+
+  it("SCEN-014: serializePage produces digit string or drops key, never scientific notation", () => {
+    setUrl("");
+    const { result } = renderHook(() => useDataTableUrlState());
+
+    act(() => {
+      result.current.onPaginationChange({ pageIndex: 1e21, pageSize: 20 });
+    });
+
+    const url = lastReplaceUrl();
+    const qs = new URLSearchParams(url.split("?")[1] ?? "");
+    const pageRaw = qs.get("page");
+    if (pageRaw !== null) {
+      expect(pageRaw).toMatch(/^\d+$/);
+    }
+    expect(url).not.toMatch(/[eE]\+/);
+  });
+});
+
+describe("useDataTableUrlState — sort exact arity (SCEN-015)", () => {
+  it("SCEN-015: ?sort=full_name:asc:extra rejected", () => {
+    setUrl("sort=full_name:asc:extra");
+    const { result } = renderHook(() => useDataTableUrlState());
+
+    expect(result.current.sorting).toEqual([]);
+  });
+
+  it("SCEN-015: ?sort=full_name:asc: (trailing colon) rejected", () => {
+    setUrl("sort=full_name:asc:");
+    const { result } = renderHook(() => useDataTableUrlState());
+
+    expect(result.current.sorting).toEqual([]);
+  });
+});
+
 describe("useDataTableUrlState — debounced search setter", () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -268,6 +434,33 @@ describe("useDataTableUrlState — debounced search setter", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it("SCEN-016: badge click during pending debounce preserves freshly-clicked filter", () => {
+    setUrl("match_status=unmatched");
+    const { result, rerender } = renderHook(() =>
+      useDataTableUrlState({ searchColumn: "match_id" }),
+    );
+
+    act(() => {
+      result.current.setSearchInput("abc");
+    });
+
+    // Simulate badge navigation: URL changes BEFORE the debounce flushes.
+    setUrl("match_status=unmatched&payment_status=pending");
+    rerender();
+
+    // Now the 250ms debounce fires.
+    act(() => {
+      vi.advanceTimersByTime(250);
+    });
+
+    expect(replaceMock).toHaveBeenCalledTimes(1);
+    const url = replaceMock.mock.calls[0]?.[0] as string;
+    const qs = new URLSearchParams(url.split("?")[1] ?? "");
+    expect(qs.get("match_status")).toBe("unmatched");
+    expect(qs.get("payment_status")).toBe("pending");
+    expect(qs.get("q")).toBe("abc");
   });
 
   it("SCEN-009: rapid typing coalesces into a single router.replace after debounce", () => {

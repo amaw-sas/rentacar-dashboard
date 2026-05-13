@@ -99,6 +99,8 @@ Flat keys, empty values omitted:
 
 Keys outside this set are preserved verbatim — the hook reads `useSearchParams()` and merges, never replaces.
 
+**Column id assumption:** sort serialization uses `:` as separator. Column ids are assumed to match `[a-z0-9_]+` (consistent with the existing snake_case convention across all columns files). A column id containing `:` would break parsing; if that ever needs to change, switch to a two-key encoding (`?sortBy=&sortDir=`).
+
 ## Behavior rules
 
 - **History**: every update uses `router.replace`, never `push`. No history pollution while the user types.
@@ -130,17 +132,23 @@ Required adjustment: `buildFilterUrl` currently only carries `import_batch_id` b
 | `app/(dashboard)/commissions/page.tsx` | Extend `buildFilterUrl` to forward `q`, `sort`, `page` from `searchParams`. |
 | Other 8 listings | Zero changes — they inherit the fix through `DataTable`. |
 
+**Single source of truth for `pageSize`:** the hook owns the default (`20`). `DataTable` no longer sets `initialState.pagination.pageSize` — the value flows in via the hook's `PaginationState` return. This avoids duplication and keeps the constant in one place.
+
 Blast radius: 1 new file, 2 modified files. No schema migrations, no API surface changes, no breaking changes for consumers.
 
 ## Risks
 
-- **Suspense boundary**: `useSearchParams()` in the App Router can require a Suspense boundary on the calling tree. `DataTable` is already a client component used inside server pages; verify in runtime that no warning fires.
+- **Suspense boundary**: `useSearchParams()` in the App Router only requires `<Suspense>` when the consuming client component renders during static generation. All affected pages are authenticated server components inside `(dashboard)` that fetch live data — they are dynamically rendered, so no Suspense wrapper is needed. Verified at runtime regardless.
 - **First-render flicker**: react-table applies the URL-derived state on the first render. Confirm visually (agent-browser) that there is no flicker between default state and hydrated state.
 - **Debounce + unmount**: pending timers must be cleared on unmount and on router navigation to avoid late writes. Standard cleanup pattern; covered by tests.
+- **Mid-debounce navigation**: if the operator triggers a navigation (e.g. clicks a server-side filter badge) before the 250ms search debounce flushes, the URL still carries the previous `q` value. Acceptable: badge click + typing-in-progress is a rare combo and consistency with the URL beats a stale write race.
 
 ## Validation strategy
 
 ### Unit tests (`tests/unit/hooks/use-data-table-url-state.test.ts`)
+
+> Note: `conventions.md` describes test layout as "mirroring the `lib/` tree". The intent is to mirror the source path; for files under `hooks/` the mirrored path is `tests/unit/hooks/…`, which is consistent with the convention's spirit.
+
 
 - Parses `?q=&sort=&page=` correctly into react-table state shapes.
 - `?page=abc` and `?sort=col:foo` sanitize to defaults without throwing.

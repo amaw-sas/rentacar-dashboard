@@ -18,6 +18,9 @@ export default async function CommissionsPage({
     match_status?: string;
     payment_status?: string;
     import_batch_id?: string;
+    q?: string;
+    sort?: string;
+    page?: string;
   }>;
 }) {
   const params = await searchParams;
@@ -41,6 +44,10 @@ export default async function CommissionsPage({
       if (activeMatchStatus) p.set("match_status", activeMatchStatus);
       if (value && value !== activePaymentStatus) p.set("payment_status", value);
     }
+
+    if (params.q) p.set("q", params.q);
+    if (params.sort) p.set("sort", params.sort);
+    if (params.page) p.set("page", params.page);
 
     const qs = p.toString();
     return `/commissions${qs ? `?${qs}` : ""}`;

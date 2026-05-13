@@ -1,10 +1,7 @@
 "use client"
 
-import { useState } from "react"
 import {
   type ColumnDef,
-  type ColumnFiltersState,
-  type SortingState,
   flexRender,
   getCoreRowModel,
   getFilteredRowModel,
@@ -16,6 +13,7 @@ import {
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { useDataTableUrlState } from "@/hooks/use-data-table-url-state"
 
 interface DataTableProps<TData> {
   columns: ColumnDef<TData, unknown>[]
@@ -30,8 +28,7 @@ export function DataTable<TData>({
   searchPlaceholder = "Buscar...",
   searchColumn,
 }: DataTableProps<TData>) {
-  const [sorting, setSorting] = useState<SortingState>([])
-  const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([])
+  const urlState = useDataTableUrlState({ searchColumn })
 
   const table = useReactTable({
     data,
@@ -40,10 +37,14 @@ export function DataTable<TData>({
     getSortedRowModel: getSortedRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
-    onSortingChange: setSorting,
-    onColumnFiltersChange: setColumnFilters,
-    initialState: { pagination: { pageSize: 20 } },
-    state: { sorting, columnFilters },
+    onSortingChange: urlState.onSortingChange,
+    onColumnFiltersChange: urlState.onColumnFiltersChange,
+    onPaginationChange: urlState.onPaginationChange,
+    state: {
+      sorting: urlState.sorting,
+      columnFilters: urlState.columnFilters,
+      pagination: urlState.pagination,
+    },
   })
 
   return (

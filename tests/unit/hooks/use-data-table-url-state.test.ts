@@ -1,0 +1,413 @@
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { act, renderHook } from "@testing-library/react";
+
+const replaceMock = vi.fn();
+let currentParams: URLSearchParams = new URLSearchParams();
+const pathnameMock = vi.fn(() => "/customers");
+
+vi.mock("next/navigation", () => ({
+  useSearchParams: () => currentParams,
+  usePathname: () => pathnameMock(),
+  useRouter: () => ({
+    replace: replaceMock,
+    push: vi.fn(),
+    back: vi.fn(),
+    forward: vi.fn(),
+    refresh: vi.fn(),
+    prefetch: vi.fn(),
+  }),
+}));
+
+import { useDataTableUrlState } from "@/hooks/use-data-table-url-state";
+
+function setUrl(query: string) {
+  currentParams = new URLSearchParams(query);
+}
+
+beforeEach(() => {
+  replaceMock.mockClear();
+  pathnameMock.mockClear();
+  pathnameMock.mockReturnValue("/customers");
+  setUrl("");
+});
+
+describe("useDataTableUrlState — URL parsing (Step 3 scenarios)", () => {
+  it("SCEN-001 hydration: ?q=lopez with searchColumn populates columnFilters", () => {
+    setUrl("q=lopez");
+    const { result } = renderHook(() =>
+      useDataTableUrlState({ searchColumn: "full_name" }),
+    );
+
+    expect(result.current.columnFilters).toEqual([
+      { id: "full_name", value: "lopez" },
+    ]);
+  });
+
+  it("SCEN-001 hydration: ?q without searchColumn is ignored", () => {
+    setUrl("q=lopez");
+    const { result } = renderHook(() => useDataTableUrlState());
+
+    expect(result.current.columnFilters).toEqual([]);
+  });
+
+  it("SCEN-002 hydration: ?sort=full_name:asc maps to sorting state", () => {
+    setUrl("sort=full_name:asc");
+    const { result } = renderHook(() => useDataTableUrlState());
+
+    expect(result.current.sorting).toEqual([{ id: "full_name", desc: false }]);
+  });
+
+  it("SCEN-002 hydration: ?sort=full_name:desc maps with desc=true", () => {
+    setUrl("sort=full_name:desc");
+    const { result } = renderHook(() => useDataTableUrlState());
+
+    expect(result.current.sorting).toEqual([{ id: "full_name", desc: true }]);
+  });
+
+  it("SCEN-002 hydration: ?page=2 maps to pageIndex=1 with default pageSize=20", () => {
+    setUrl("page=2");
+    const { result } = renderHook(() => useDataTableUrlState());
+
+    expect(result.current.pagination).toEqual({ pageIndex: 1, pageSize: 20 });
+  });
+
+  it("SCEN-002 hydration: missing page defaults to pageIndex=0", () => {
+    setUrl("");
+    const { result } = renderHook(() => useDataTableUrlState());
+
+    expect(result.current.pagination).toEqual({ pageIndex: 0, pageSize: 20 });
+  });
+
+  it("SCEN-002 hydration: respects custom pageSize option", () => {
+    setUrl("page=3");
+    const { result } = renderHook(() =>
+      useDataTableUrlState({ pageSize: 50 }),
+    );
+
+    expect(result.current.pagination).toEqual({ pageIndex: 2, pageSize: 50 });
+  });
+
+  it("SCEN-003: pasted URL hydrates all three (q, sort, page) simultaneously", () => {
+    setUrl("q=lopez&sort=full_name:asc&page=2");
+    const { result } = renderHook(() =>
+      useDataTableUrlState({ searchColumn: "full_name" }),
+    );
+
+    expect(result.current.columnFilters).toEqual([
+      { id: "full_name", value: "lopez" },
+    ]);
+    expect(result.current.sorting).toEqual([{ id: "full_name", desc: false }]);
+    expect(result.current.pagination).toEqual({ pageIndex: 1, pageSize: 20 });
+  });
+
+  it("SCEN-008 sanitization: ?page=abc coerces to pageIndex=0", () => {
+    setUrl("page=abc");
+    const { result } = renderHook(() => useDataTableUrlState());
+
+    expect(result.current.pagination.pageIndex).toBe(0);
+  });
+
+  it("SCEN-008 sanitization: ?page=-3 coerces to pageIndex=0", () => {
+    setUrl("page=-3");
+    const { result } = renderHook(() => useDataTableUrlState());
+
+    expect(result.current.pagination.pageIndex).toBe(0);
+  });
+
+  it("SCEN-008 sanitization: ?sort=full_name:invalid is ignored (no sorting applied)", () => {
+    setUrl("sort=full_name:invalid");
+    const { result } = renderHook(() => useDataTableUrlState());
+
+    expect(result.current.sorting).toEqual([]);
+  });
+
+  it("SCEN-008 sanitization: ?sort=Bad-Column:asc with non-conforming id is ignored", () => {
+    setUrl("sort=Bad-Column:asc");
+    const { result } = renderHook(() => useDataTableUrlState());
+
+    expect(result.current.sorting).toEqual([]);
+  });
+
+  it("SCEN-008 sanitization: ?q= (empty) does not populate columnFilters", () => {
+    setUrl("q=");
+    const { result } = renderHook(() =>
+      useDataTableUrlState({ searchColumn: "full_name" }),
+    );
+
+    expect(result.current.columnFilters).toEqual([]);
+  });
+
+  it("SCEN-008 sanitization: combined malformed URL produces full defaults without throwing", () => {
+    setUrl("page=abc&sort=full_name:invalid&q=");
+
+    expect(() =>
+      renderHook(() =>
+        useDataTableUrlState({ searchColumn: "full_name" }),
+      ),
+    ).not.toThrow();
+
+    const { result } = renderHook(() =>
+      useDataTableUrlState({ searchColumn: "full_name" }),
+    );
+    expect(result.current.columnFilters).toEqual([]);
+    expect(result.current.sorting).toEqual([]);
+    expect(result.current.pagination).toEqual({ pageIndex: 0, pageSize: 20 });
+  });
+});
+
+function lastReplaceUrl(): string {
+  expect(replaceMock).toHaveBeenCalled();
+  const args = replaceMock.mock.calls.at(-1);
+  return args?.[0] as string;
+}
+
+describe("useDataTableUrlState — sort + pagination setters", () => {
+  it("SCEN-007: onPaginationChange preserves q + sort and writes page key", () => {
+    setUrl("q=lopez&sort=full_name:asc");
+    const { result } = renderHook(() =>
+      useDataTableUrlState({ searchColumn: "full_name" }),
+    );
+
+    act(() => {
+      result.current.onPaginationChange({ pageIndex: 1, pageSize: 20 });
+    });
+
+    const url = lastReplaceUrl();
+    expect(url).toMatch(/^\/customers\?/);
+    const qs = new URLSearchParams(url.split("?")[1]);
+    expect(qs.get("q")).toBe("lopez");
+    expect(qs.get("sort")).toBe("full_name:asc");
+    expect(qs.get("page")).toBe("2");
+  });
+
+  it("SCEN-007: pageIndex=0 drops the page key (page 1 is implicit)", () => {
+    setUrl("q=lopez&page=3");
+    const { result } = renderHook(() =>
+      useDataTableUrlState({ searchColumn: "full_name" }),
+    );
+
+    act(() => {
+      result.current.onPaginationChange({ pageIndex: 0, pageSize: 20 });
+    });
+
+    const url = lastReplaceUrl();
+    const qs = new URLSearchParams(url.split("?")[1] ?? "");
+    expect(qs.has("page")).toBe(false);
+    expect(qs.get("q")).toBe("lopez");
+  });
+
+  it("SCEN-006 (sort variant): onSortingChange resets page and preserves q", () => {
+    setUrl("page=3&q=lopez");
+    const { result } = renderHook(() =>
+      useDataTableUrlState({ searchColumn: "full_name" }),
+    );
+
+    act(() => {
+      result.current.onSortingChange([{ id: "full_name", desc: false }]);
+    });
+
+    const url = lastReplaceUrl();
+    const qs = new URLSearchParams(url.split("?")[1] ?? "");
+    expect(qs.get("sort")).toBe("full_name:asc");
+    expect(qs.get("q")).toBe("lopez");
+    expect(qs.has("page")).toBe(false);
+  });
+
+  it("clearing sort drops the sort key", () => {
+    setUrl("sort=full_name:asc&q=lopez");
+    const { result } = renderHook(() =>
+      useDataTableUrlState({ searchColumn: "full_name" }),
+    );
+
+    act(() => {
+      result.current.onSortingChange([]);
+    });
+
+    const url = lastReplaceUrl();
+    const qs = new URLSearchParams(url.split("?")[1] ?? "");
+    expect(qs.has("sort")).toBe(false);
+    expect(qs.get("q")).toBe("lopez");
+  });
+
+  it("setters preserve foreign keys (commissions-style server-side filters)", () => {
+    setUrl("match_status=unmatched&payment_status=pending");
+    const { result } = renderHook(() => useDataTableUrlState());
+
+    act(() => {
+      result.current.onSortingChange([{ id: "amount", desc: true }]);
+    });
+
+    const url = lastReplaceUrl();
+    const qs = new URLSearchParams(url.split("?")[1] ?? "");
+    expect(qs.get("match_status")).toBe("unmatched");
+    expect(qs.get("payment_status")).toBe("pending");
+    expect(qs.get("sort")).toBe("amount:desc");
+  });
+
+  it("setter accepts updater function form (react-table protocol)", () => {
+    setUrl("");
+    const { result } = renderHook(() => useDataTableUrlState());
+
+    act(() => {
+      result.current.onPaginationChange((prev) => ({
+        ...prev,
+        pageIndex: prev.pageIndex + 2,
+      }));
+    });
+
+    const url = lastReplaceUrl();
+    const qs = new URLSearchParams(url.split("?")[1] ?? "");
+    expect(qs.get("page")).toBe("3");
+  });
+});
+
+describe("useDataTableUrlState — debounced search setter", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("SCEN-009: rapid typing coalesces into a single router.replace after debounce", () => {
+    setUrl("");
+    const { result } = renderHook(() =>
+      useDataTableUrlState({ searchColumn: "full_name" }),
+    );
+
+    act(() => {
+      result.current.onColumnFiltersChange([
+        { id: "full_name", value: "l" },
+      ]);
+    });
+    act(() => {
+      vi.advanceTimersByTime(100);
+    });
+    act(() => {
+      result.current.onColumnFiltersChange([
+        { id: "full_name", value: "lo" },
+      ]);
+    });
+    act(() => {
+      vi.advanceTimersByTime(100);
+    });
+    act(() => {
+      result.current.onColumnFiltersChange([
+        { id: "full_name", value: "lop" },
+      ]);
+    });
+    act(() => {
+      vi.advanceTimersByTime(100);
+    });
+    act(() => {
+      result.current.onColumnFiltersChange([
+        { id: "full_name", value: "lope" },
+      ]);
+    });
+    act(() => {
+      vi.advanceTimersByTime(100);
+    });
+    act(() => {
+      result.current.onColumnFiltersChange([
+        { id: "full_name", value: "lopez" },
+      ]);
+    });
+
+    expect(replaceMock).not.toHaveBeenCalled();
+
+    act(() => {
+      vi.advanceTimersByTime(250);
+    });
+
+    expect(replaceMock).toHaveBeenCalledTimes(1);
+    const url = replaceMock.mock.calls[0]?.[0] as string;
+    const qs = new URLSearchParams(url.split("?")[1] ?? "");
+    expect(qs.get("q")).toBe("lopez");
+  });
+
+  it("SCEN-010: pending debounce does not fire after unmount", () => {
+    setUrl("");
+    const { result, unmount } = renderHook(() =>
+      useDataTableUrlState({ searchColumn: "full_name" }),
+    );
+
+    act(() => {
+      result.current.onColumnFiltersChange([
+        { id: "full_name", value: "l" },
+      ]);
+    });
+
+    unmount();
+
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+
+    expect(replaceMock).not.toHaveBeenCalled();
+  });
+
+  it("SCEN-006 (filter variant): debounced search resets page to 1 when flushed", () => {
+    setUrl("page=3");
+    const { result } = renderHook(() =>
+      useDataTableUrlState({ searchColumn: "full_name" }),
+    );
+
+    act(() => {
+      result.current.onColumnFiltersChange([
+        { id: "full_name", value: "x" },
+      ]);
+    });
+    act(() => {
+      vi.advanceTimersByTime(250);
+    });
+
+    expect(replaceMock).toHaveBeenCalledTimes(1);
+    const url = replaceMock.mock.calls[0]?.[0] as string;
+    const qs = new URLSearchParams(url.split("?")[1] ?? "");
+    expect(qs.get("q")).toBe("x");
+    expect(qs.has("page")).toBe(false);
+  });
+
+  it("SCEN-004: debounced search preserves foreign keys (commissions)", () => {
+    setUrl("match_status=unmatched");
+    const { result } = renderHook(() =>
+      useDataTableUrlState({ searchColumn: "match_id" }),
+    );
+
+    act(() => {
+      result.current.onColumnFiltersChange([
+        { id: "match_id", value: "abc" },
+      ]);
+    });
+    act(() => {
+      vi.advanceTimersByTime(250);
+    });
+
+    expect(replaceMock).toHaveBeenCalledTimes(1);
+    const url = replaceMock.mock.calls[0]?.[0] as string;
+    const qs = new URLSearchParams(url.split("?")[1] ?? "");
+    expect(qs.get("match_status")).toBe("unmatched");
+    expect(qs.get("q")).toBe("abc");
+  });
+
+  it("clearing the filter removes the ?q= key after debounce", () => {
+    setUrl("q=old&page=2");
+    const { result } = renderHook(() =>
+      useDataTableUrlState({ searchColumn: "full_name" }),
+    );
+
+    act(() => {
+      result.current.onColumnFiltersChange([]);
+    });
+    act(() => {
+      vi.advanceTimersByTime(250);
+    });
+
+    expect(replaceMock).toHaveBeenCalledTimes(1);
+    const url = replaceMock.mock.calls[0]?.[0] as string;
+    const qs = new URLSearchParams(url.split("?")[1] ?? "");
+    expect(qs.has("q")).toBe(false);
+    expect(qs.has("page")).toBe(false);
+  });
+});

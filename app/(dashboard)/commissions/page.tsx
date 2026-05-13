@@ -98,11 +98,16 @@ export default async function CommissionsPage({
 
         {(activeMatchStatus || activePaymentStatus) && (
           <Link
-            href={
-              params.import_batch_id
-                ? `/commissions?import_batch_id=${params.import_batch_id}`
-                : "/commissions"
-            }
+            href={(() => {
+              const p = new URLSearchParams();
+              if (params.import_batch_id)
+                p.set("import_batch_id", params.import_batch_id);
+              if (params.q) p.set("q", params.q);
+              if (params.sort) p.set("sort", params.sort);
+              if (params.page) p.set("page", params.page);
+              const qs = p.toString();
+              return `/commissions${qs ? `?${qs}` : ""}`;
+            })()}
           >
             <Badge variant="secondary" className="cursor-pointer">
               Limpiar filtros

@@ -1,0 +1,6 @@
+[
+  {"id":"00cf5351-cac3-414e-84cc-2682369065ca","first_name":"prueba","last_name":"prueba","identification_type":"CC","identification_number":"1007489090","phone":"+57 312 4366514","email":"dc005241@gmail.com","notes":"","status":"active","created_at":"2026-04-16T19:44:00.062546+00:00","updated_at":"2026-05-12T23:04:21.580819+00:00"},
+  {"id":"3875bbd8-f73d-4a66-836a-f26e904523bf","first_name":"test","last_name":"prueba pruevba","identification_type":"CC","identification_number":"00000099999","phone":"+57 301 6729250","email":"info@alquilatucarro.com","notes":"","status":"active","created_at":"2026-05-12T16:05:13.69544+00:00","updated_at":"2026-05-12T16:05:13.69544+00:00"},
+  {"id":"8a891056-0c65-43e4-ad6a-2690dabe41cd","first_name":"prueba","last_name":"prueba","identification_type":"CC","identification_number":"1245678","phone":"+57 312 4366514","email":"dc005241@gmail.com","notes":"","status":"active","created_at":"2026-05-12T19:56:54.930095+00:00","updated_at":"2026-05-12T19:56:54.930095+00:00"},
+  {"id":"6904efa7-ea13-4422-94fa-2d5be72b6fda","first_name":"diana","last_name":"test prueba test","identification_type":"PP","identification_number":"999999","phone":"+57 301 6729250","email":"info@alquilatucarro.com","notes":"","status":"active","created_at":"2026-05-13T16:59:01.977708+00:00","updated_at":"2026-05-13T16:59:01.977708+00:00"}
+]

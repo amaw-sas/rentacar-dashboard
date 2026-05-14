@@ -189,24 +189,32 @@ export function useReservationsTableUrlState(
     }
   }, [urlSearchValue]);
 
+  const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // Distinguish "our writeUrl/clearAll set the URL" (internal) from
   // "browser back / sidebar nav set the URL" (external). External changes
   // must cancel any pending search debounce so the operator's discarded
   // typing does not clobber the new URL state.
+  //
+  // The detection lives in the render body (not a useEffect) because the
+  // useEffect alternative trips react-hooks/immutability on the
+  // debounceTimer mutation. The render-body pattern is idempotent —
+  // subsequent renders with the same paramsKey skip the block, so a
+  // Concurrent-Mode render retry is safe.
   const justWroteRef = useRef(false);
   const lastParamsKey = useRef(paramsKey);
-  useEffect(() => {
-    if (lastParamsKey.current === paramsKey) return;
+  /* eslint-disable react-hooks/refs -- intentional render-body tracking;
+     safe because the block is idempotent across re-renders */
+  if (lastParamsKey.current !== paramsKey) {
+    const externalChange = !justWroteRef.current;
     lastParamsKey.current = paramsKey;
-    if (justWroteRef.current) {
-      justWroteRef.current = false;
-      return;
-    }
-    if (debounceTimer.current !== null) {
+    justWroteRef.current = false;
+    if (externalChange && debounceTimer.current !== null) {
       clearTimeout(debounceTimer.current);
       debounceTimer.current = null;
     }
-  }, [paramsKey]);
+  }
+  /* eslint-enable react-hooks/refs */
 
   const writeUrl = useCallback(
     (
@@ -236,21 +244,21 @@ export function useReservationsTableUrlState(
     writeUrlRef.current = writeUrl;
   }, [writeUrl]);
 
-  const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const cancelPending = useCallback(() => {
-    if (debounceTimer.current !== null) {
-      clearTimeout(debounceTimer.current);
-      debounceTimer.current = null;
-    }
-  }, []);
-  useEffect(() => cancelPending, [cancelPending, pathname]);
+  useEffect(() => {
+    return () => {
+      if (debounceTimer.current !== null) {
+        clearTimeout(debounceTimer.current);
+        debounceTimer.current = null;
+      }
+    };
+  }, [pathname]);
 
   const setFilter = useCallback(
     <K extends keyof FilterState>(key: K, value: FilterState[K]) => {
       if (key === "search") {
         const next = String(value ?? "").slice(0, SEARCH_MAX_LEN);
         setSearchInputState(next);
-        cancelPending();
+        if (debounceTimer.current !== null) clearTimeout(debounceTimer.current);
         debounceTimer.current = setTimeout(() => {
           debounceTimer.current = null;
           writeUrlRef.current({ q: next || null }, true);
@@ -273,16 +281,19 @@ export function useReservationsTableUrlState(
       const raw = value as string;
       writeUrl({ [key]: raw && raw !== ALL ? raw : null }, true);
     },
-    [cancelPending, debounceMs, writeUrl],
+    [debounceMs, writeUrl],
   );
 
   const clearAll = useCallback(() => {
-    cancelPending();
+    if (debounceTimer.current !== null) {
+      clearTimeout(debounceTimer.current);
+      debounceTimer.current = null;
+    }
     setSearchInputState("");
     const updates: Partial<Record<ManagedKey, null>> = {};
     for (const key of MANAGED_KEYS) updates[key] = null;
     writeUrl(updates, false);
-  }, [cancelPending, writeUrl]);
+  }, [writeUrl]);
 
   const onSortingChange = useCallback<OnChangeFn<SortingState>>(
     (updater) => {

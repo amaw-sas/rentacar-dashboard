@@ -258,7 +258,7 @@ export function VehicleCategoryForm({
           <Button
             type="button"
             variant="outline"
-            onClick={() => router.push("/categories")}
+            onClick={() => router.back()}
           >
             Cancelar
           </Button>

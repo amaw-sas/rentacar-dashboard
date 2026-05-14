@@ -206,7 +206,7 @@ export function FranchiseForm({ defaultValues, id }: FranchiseFormProps) {
           <Button
             type="button"
             variant="outline"
-            onClick={() => router.push("/franchises")}
+            onClick={() => router.back()}
           >
             Cancelar
           </Button>

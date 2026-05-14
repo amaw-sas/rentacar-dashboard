@@ -176,7 +176,7 @@ export function CustomerForm({ defaultValues, id }: CustomerFormProps) {
           <Button
             type="button"
             variant="outline"
-            onClick={() => router.push("/customers")}
+            onClick={() => router.back()}
           >
             Cancelar
           </Button>

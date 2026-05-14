@@ -219,7 +219,7 @@ export function LocationForm({ defaultValues, id, rentalCompanies, cities }: Loc
           <Button
             type="button"
             variant="outline"
-            onClick={() => router.push("/locations")}
+            onClick={() => router.back()}
           >
             Cancelar
           </Button>

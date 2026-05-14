@@ -55,3 +55,15 @@ next-env.d.ts
 /.visual-companion/
 /docs/specs/
 .env*.local
+
+# git worktrees colocated with the repo
+/.worktrees/
+
+# AI Framework template rules (one-time sync)
+/.ralph/*
+!/.ralph/specs/
+!/.ralph/specs/**
+!/docs/specs/
+!/docs/specs/**
+/.claude/metrics.jsonl
+/.claude/metrics.jsonl.*

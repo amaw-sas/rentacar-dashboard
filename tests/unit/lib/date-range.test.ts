@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 
 import {
   formatRangeLabel,
+  fromLocalIsoDate,
   isWithinDateRange,
   toLocalIsoDate,
 } from "@/lib/date-range";
@@ -81,5 +82,39 @@ describe("formatRangeLabel", () => {
   it("SCEN-023 cross-year range shows year on both ends", () => {
     const range = { from: date("2025-12-29"), to: date("2026-01-03") };
     expect(formatRangeLabel(range)).toBe("29 dic 2025 – 3 ene 2026");
+  });
+});
+
+describe("fromLocalIsoDate", () => {
+  it("SCEN-030 parses YYYY-MM-DD into a local-TZ Date", () => {
+    const result = fromLocalIsoDate("2026-05-14");
+    expect(result).toBeDefined();
+    expect(result?.getFullYear()).toBe(2026);
+    expect(result?.getMonth()).toBe(4);
+    expect(result?.getDate()).toBe(14);
+  });
+
+  it("SCEN-031 handles leap-year Feb 29", () => {
+    const result = fromLocalIsoDate("2024-02-29");
+    expect(result?.getFullYear()).toBe(2024);
+    expect(result?.getMonth()).toBe(1);
+    expect(result?.getDate()).toBe(29);
+  });
+
+  it("SCEN-032 returns undefined for malformed input", () => {
+    expect(fromLocalIsoDate("invalid")).toBeUndefined();
+    expect(fromLocalIsoDate("")).toBeUndefined();
+    expect(fromLocalIsoDate("2026/05/14")).toBeUndefined();
+    expect(fromLocalIsoDate("26-5-14")).toBeUndefined();
+    expect(fromLocalIsoDate("2026-05-14T00:00:00")).toBeUndefined();
+  });
+
+  it("SCEN-033 round-trips with toLocalIsoDate", () => {
+    const cases = ["2026-05-14", "2024-02-29", "2025-12-31", "2026-01-01"];
+    for (const iso of cases) {
+      const parsed = fromLocalIsoDate(iso);
+      expect(parsed).toBeDefined();
+      expect(toLocalIsoDate(parsed!)).toBe(iso);
+    }
   });
 });

@@ -928,7 +928,7 @@ export function ReservationForm({
             <Button
               type="button"
               variant="outline"
-              onClick={() => router.push("/reservations")}
+              onClick={() => router.back()}
             >
               Cancelar
             </Button>

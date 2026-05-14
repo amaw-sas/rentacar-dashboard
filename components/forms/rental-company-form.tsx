@@ -280,7 +280,7 @@ export function RentalCompanyForm({ defaultValues, id }: RentalCompanyFormProps)
           <Button
             type="button"
             variant="outline"
-            onClick={() => router.push("/rental-companies")}
+            onClick={() => router.back()}
           >
             Cancelar
           </Button>

@@ -118,7 +118,7 @@ export function CityForm({ defaultValues, id }: CityFormProps) {
           <Button
             type="button"
             variant="outline"
-            onClick={() => router.push("/cities")}
+            onClick={() => router.back()}
           >
             Cancelar
           </Button>

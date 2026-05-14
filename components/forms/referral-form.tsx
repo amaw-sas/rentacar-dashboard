@@ -188,7 +188,7 @@ export function ReferralForm({ defaultValues, id }: ReferralFormProps) {
           <Button
             type="button"
             variant="outline"
-            onClick={() => router.push("/referrals")}
+            onClick={() => router.back()}
           >
             Cancelar
           </Button>

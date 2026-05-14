@@ -459,6 +459,60 @@ describe("useDataTableUrlState — debounced search setter", () => {
     vi.useRealTimers();
   });
 
+  it("SCEN-017: onPaginationChange that yields the current URL does NOT call router.replace", () => {
+    vi.useRealTimers();
+    setUrl("q=ana");
+    const { result } = renderHook(() =>
+      useDataTableUrlState({ searchColumn: "full_name" }),
+    );
+
+    act(() => {
+      result.current.onPaginationChange({ pageIndex: 0, pageSize: 20 });
+    });
+
+    expect(replaceMock).not.toHaveBeenCalled();
+  });
+
+  it("SCEN-017: onSortingChange that yields the current URL does NOT call router.replace", () => {
+    vi.useRealTimers();
+    setUrl("");
+    const { result } = renderHook(() => useDataTableUrlState());
+
+    act(() => {
+      result.current.onSortingChange([]);
+    });
+
+    expect(replaceMock).not.toHaveBeenCalled();
+  });
+
+  it("SCEN-019: full filter cycle followed by autoReset-style pagination call produces exactly ONE replace", () => {
+    setUrl("");
+    const { result, rerender } = renderHook(() =>
+      useDataTableUrlState({ searchColumn: "full_name" }),
+    );
+
+    act(() => {
+      result.current.setSearchInput("ana");
+    });
+    act(() => {
+      vi.advanceTimersByTime(250);
+    });
+
+    expect(replaceMock).toHaveBeenCalledTimes(1);
+
+    // Simulate Next.js soft-navigation re-render with the new URL.
+    setUrl("q=ana");
+    rerender();
+
+    // Now simulate react-table's autoResetPageIndex firing onPaginationChange
+    // with pageIndex=0 — the redundant reset path that previously looped.
+    act(() => {
+      result.current.onPaginationChange({ pageIndex: 0, pageSize: 20 });
+    });
+
+    expect(replaceMock).toHaveBeenCalledTimes(1);
+  });
+
   it("SCEN-016: badge click during pending debounce preserves freshly-clicked filter", () => {
     setUrl("match_status=unmatched");
     const { result, rerender } = renderHook(() =>

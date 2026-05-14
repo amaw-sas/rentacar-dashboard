@@ -40,6 +40,12 @@ export function DataTable<TData>({
     onSortingChange: urlState.onSortingChange,
     onColumnFiltersChange: urlState.onColumnFiltersChange,
     onPaginationChange: urlState.onPaginationChange,
+    // Page reset on filter/sort change is handled explicitly in
+    // useDataTableUrlState via resetPage:true on writeUrl. Disabling the
+    // react-table auto-reset prevents a feedback loop where a new data
+    // reference (from RSC refetch) triggers onPaginationChange, which we
+    // turn into a router.replace, which triggers another RSC refetch, etc.
+    autoResetPageIndex: false,
     state: {
       sorting: urlState.sorting,
       columnFilters: urlState.columnFilters,

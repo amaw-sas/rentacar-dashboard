@@ -109,6 +109,10 @@ export function useDataTableUrlState(options?: UseDataTableUrlStateOptions) {
       else next.delete(key);
       if (resetPage) next.delete("page");
       const qs = next.toString();
+      // Skip when target equals current — router.replace with the same href
+      // still triggers an RSC payload fetch in App Router, which combined with
+      // react-table's autoResetPageIndex produces a feedback loop.
+      if (qs === paramsKey) return;
       router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
     },
     [paramsKey, pathname, router],

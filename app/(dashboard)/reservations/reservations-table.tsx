@@ -15,7 +15,9 @@ import {
 import { EraserIcon } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { type DateRange, isWithinDateRange } from "@/lib/date-range";
 import { Button } from "@/components/ui/button";
+import { DateRangePicker } from "@/components/ui/date-range-picker";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -46,19 +48,25 @@ const ALL = "__all__";
 export const ALL_CITIES = ALL;
 const PRIORITY_SORT = { id: "priority", desc: false } as const;
 
-const initialFilters = {
+interface FilterState {
+  franchise: string;
+  status: string;
+  city: string;
+  referral: string;
+  createdRange: DateRange | undefined;
+  pickupRange: DateRange | undefined;
+  search: string;
+}
+
+const initialFilters: FilterState = {
   franchise: ALL,
   status: ALL,
   city: ALL,
   referral: ALL,
-  createdFrom: "",
-  createdTo: "",
-  pickupFrom: "",
-  pickupTo: "",
+  createdRange: undefined,
+  pickupRange: undefined,
   search: "",
 };
-
-type FilterState = typeof initialFilters;
 
 function matchesSearch(row: ReservationRow, term: string) {
   if (!term) return true;
@@ -74,14 +82,6 @@ function matchesSearch(row: ReservationRow, term: string) {
     row.reservation_code ?? "",
   ];
   return fields.some((f) => f.toLowerCase().includes(needle));
-}
-
-function inDateRange(iso: string, from: string, to: string) {
-  if (!from && !to) return true;
-  const value = iso.slice(0, 10);
-  if (from && value < from) return false;
-  if (to && value > to) return false;
-  return true;
 }
 
 export function matchesCity(row: ReservationRow, cityFilter: string) {
@@ -120,13 +120,9 @@ export function ReservationsTable({
         (row.referrals?.id ?? row.referral_id ?? "") !== filters.referral
       )
         return false;
-      if (
-        !inDateRange(row.created_at, filters.createdFrom, filters.createdTo)
-      )
+      if (!isWithinDateRange(row.created_at, filters.createdRange))
         return false;
-      if (
-        !inDateRange(row.pickup_date, filters.pickupFrom, filters.pickupTo)
-      )
+      if (!isWithinDateRange(row.pickup_date, filters.pickupRange))
         return false;
       if (!matchesSearch(row, filters.search)) return false;
       return true;
@@ -219,44 +215,20 @@ export function ReservationsTable({
 
         <div className="flex flex-col gap-1">
           <label className="text-xs text-muted-foreground">Creación</label>
-          <div className="flex items-center gap-1">
-            <Input
-              type="date"
-              value={filters.createdFrom}
-              onChange={(e) => update("createdFrom", e.target.value)}
-              className="w-36"
-              aria-label="Creación desde"
-            />
-            <span className="text-muted-foreground">–</span>
-            <Input
-              type="date"
-              value={filters.createdTo}
-              onChange={(e) => update("createdTo", e.target.value)}
-              className="w-36"
-              aria-label="Creación hasta"
-            />
-          </div>
+          <DateRangePicker
+            value={filters.createdRange}
+            onChange={(range) => update("createdRange", range)}
+            placeholder="Creación"
+          />
         </div>
 
         <div className="flex flex-col gap-1">
           <label className="text-xs text-muted-foreground">Recogida</label>
-          <div className="flex items-center gap-1">
-            <Input
-              type="date"
-              value={filters.pickupFrom}
-              onChange={(e) => update("pickupFrom", e.target.value)}
-              className="w-36"
-              aria-label="Recogida desde"
-            />
-            <span className="text-muted-foreground">–</span>
-            <Input
-              type="date"
-              value={filters.pickupTo}
-              onChange={(e) => update("pickupTo", e.target.value)}
-              className="w-36"
-              aria-label="Recogida hasta"
-            />
-          </div>
+          <DateRangePicker
+            value={filters.pickupRange}
+            onChange={(range) => update("pickupRange", range)}
+            placeholder="Recogida"
+          />
         </div>
 
         <div className="flex flex-col gap-1">

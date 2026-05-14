@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type {
-  ColumnFiltersState,
   OnChangeFn,
   PaginationState,
   SortingState,
@@ -49,6 +48,7 @@ export interface UseReservationsTableUrlStateOptions {
 
 const DEFAULT_PAGE_SIZE = 20;
 const DEFAULT_SEARCH_DEBOUNCE_MS = 250;
+const SEARCH_MAX_LEN = 200;
 const COLUMN_ID_RE = /^[\w.-]+$/;
 const SORT_DIRS = new Set(["asc", "desc"]);
 const PAGE_DIGITS_RE = /^\d+$/;
@@ -92,12 +92,16 @@ function parseDateRange(
   fromKey: string,
   toKey: string,
 ): DateRange | undefined {
-  const fromRaw = params.get(fromKey);
-  const toRaw = params.get(toKey);
-  const from = fromRaw ? fromLocalIsoDate(fromRaw) : undefined;
-  const to = toRaw ? fromLocalIsoDate(toRaw) : undefined;
-  if (!from && !to && !fromRaw && !toRaw) return undefined;
+  const from = fromLocalIsoDate(params.get(fromKey) ?? "");
+  const to = fromLocalIsoDate(params.get(toKey) ?? "");
   if (!from && !to) return undefined;
+  // Normalize inverted ranges — react-day-picker can emit a transient
+  // {from: A, to: B} where B<A mid-drag, and hand-edited share links
+  // sometimes swap endpoints by mistake. Swapping is more forgiving than
+  // dropping the range silently (which would hide every row).
+  if (from && to && toLocalIsoDate(from) > toLocalIsoDate(to)) {
+    return { from: to, to: from };
+  }
   return { from, to };
 }
 
@@ -145,15 +149,6 @@ function serializePage(pageIndex: number): string | null {
   return page.toString(10);
 }
 
-function dateRangeKeys(
-  key: "createdRange" | "pickupRange",
-): { from: ManagedKey; to: ManagedKey } {
-  if (key === "createdRange") {
-    return { from: "created_from", to: "created_to" };
-  }
-  return { from: "pickup_from", to: "pickup_to" };
-}
-
 export function useReservationsTableUrlState(
   options?: UseReservationsTableUrlStateOptions,
 ) {
@@ -174,7 +169,7 @@ export function useReservationsTableUrlState(
       referral: parseStringFilter(p, "referral"),
       createdRange: parseDateRange(p, "created_from", "created_to"),
       pickupRange: parseDateRange(p, "pickup_from", "pickup_to"),
-      search: p.get("q") ?? "",
+      search: (p.get("q") ?? "").slice(0, SEARCH_MAX_LEN),
     };
     return {
       filters: f,
@@ -194,6 +189,25 @@ export function useReservationsTableUrlState(
     }
   }, [urlSearchValue]);
 
+  // Distinguish "our writeUrl/clearAll set the URL" (internal) from
+  // "browser back / sidebar nav set the URL" (external). External changes
+  // must cancel any pending search debounce so the operator's discarded
+  // typing does not clobber the new URL state.
+  const justWroteRef = useRef(false);
+  const lastParamsKey = useRef(paramsKey);
+  useEffect(() => {
+    if (lastParamsKey.current === paramsKey) return;
+    lastParamsKey.current = paramsKey;
+    if (justWroteRef.current) {
+      justWroteRef.current = false;
+      return;
+    }
+    if (debounceTimer.current !== null) {
+      clearTimeout(debounceTimer.current);
+      debounceTimer.current = null;
+    }
+  }, [paramsKey]);
+
   const writeUrl = useCallback(
     (
       updates: Partial<Record<ManagedKey, string | null>>,
@@ -212,6 +226,7 @@ export function useReservationsTableUrlState(
       if (resetPage) next.delete("page");
       const qs = next.toString();
       if (qs === paramsKey) return;
+      justWroteRef.current = true;
       router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
     },
     [paramsKey, pathname, router],
@@ -233,7 +248,7 @@ export function useReservationsTableUrlState(
   const setFilter = useCallback(
     <K extends keyof FilterState>(key: K, value: FilterState[K]) => {
       if (key === "search") {
-        const next = String(value ?? "");
+        const next = String(value ?? "").slice(0, SEARCH_MAX_LEN);
         setSearchInputState(next);
         cancelPending();
         debounceTimer.current = setTimeout(() => {
@@ -244,19 +259,19 @@ export function useReservationsTableUrlState(
       }
       if (key === "createdRange" || key === "pickupRange") {
         const range = value as DateRange | undefined;
-        const { from, to } = dateRangeKeys(key);
+        const prefix = key === "createdRange" ? "created" : "pickup";
         writeUrl(
           {
-            [from]: range?.from ? toLocalIsoDate(range.from) : null,
-            [to]: range?.to ? toLocalIsoDate(range.to) : null,
+            [`${prefix}_from`]: range?.from ? toLocalIsoDate(range.from) : null,
+            [`${prefix}_to`]: range?.to ? toLocalIsoDate(range.to) : null,
           },
           true,
         );
         return;
       }
-      // Enum/string keys: ALL → drop key; other → set.
-      const raw = String(value ?? "");
-      writeUrl({ [key]: raw === ALL || raw === "" ? null : raw }, true);
+      // Enum/string keys: ALL or empty → drop key; other → set.
+      const raw = value as string;
+      writeUrl({ [key]: raw && raw !== ALL ? raw : null }, true);
     },
     [cancelPending, debounceMs, writeUrl],
   );
@@ -264,12 +279,10 @@ export function useReservationsTableUrlState(
   const clearAll = useCallback(() => {
     cancelPending();
     setSearchInputState("");
-    const next = new URLSearchParams(paramsKey);
-    for (const key of MANAGED_KEYS) next.delete(key);
-    const qs = next.toString();
-    if (qs === paramsKey) return;
-    router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
-  }, [cancelPending, paramsKey, pathname, router]);
+    const updates: Partial<Record<ManagedKey, null>> = {};
+    for (const key of MANAGED_KEYS) updates[key] = null;
+    writeUrl(updates, false);
+  }, [cancelPending, writeUrl]);
 
   const onSortingChange = useCallback<OnChangeFn<SortingState>>(
     (updater) => {
@@ -289,13 +302,6 @@ export function useReservationsTableUrlState(
     [pagination, writeUrl],
   );
 
-  const onColumnFiltersChange = useCallback<OnChangeFn<ColumnFiltersState>>(
-    () => {
-      // Reservations filters in useMemo outside react-table; no-op.
-    },
-    [],
-  );
-
   return {
     filters,
     searchInput,
@@ -305,6 +311,5 @@ export function useReservationsTableUrlState(
     pagination,
     onSortingChange,
     onPaginationChange,
-    onColumnFiltersChange,
   };
 }

@@ -131,6 +131,26 @@ describe("useReservationsTableUrlState — URL parsing (Steps 3+4)", () => {
     expect(range?.to?.getDate()).toBe(31);
   });
 
+  it("SCEN-017 inverted DateRange is normalized by swapping endpoints", () => {
+    setUrl("pickup_from=2026-12-31&pickup_to=2026-01-01");
+    const { result } = renderHook(() => useReservationsTableUrlState());
+
+    const range = result.current.filters.pickupRange;
+    expect(range?.from?.getMonth()).toBe(0); // January after swap
+    expect(range?.from?.getDate()).toBe(1);
+    expect(range?.to?.getMonth()).toBe(11); // December after swap
+    expect(range?.to?.getDate()).toBe(31);
+  });
+
+  it("SCEN-017 single-day range (from === to) is not swapped", () => {
+    setUrl("created_from=2026-05-14&created_to=2026-05-14");
+    const { result } = renderHook(() => useReservationsTableUrlState());
+
+    const range = result.current.filters.createdRange;
+    expect(range?.from?.getDate()).toBe(14);
+    expect(range?.to?.getDate()).toBe(14);
+  });
+
   it("SCEN-014 full pasted URL hydrates everything", () => {
     setUrl(
       "franchise=alquilatucarro&status=pendiente&pickup_from=2026-05-01&pickup_to=2026-05-31&q=lopez&sort=created_at:desc&page=2",
@@ -445,6 +465,51 @@ describe("useReservationsTableUrlState — search debounce + buffer", () => {
     });
 
     expect(replaceMock).not.toHaveBeenCalled();
+  });
+
+  it("SCEN-019 external URL change cancels pending search debounce", () => {
+    setUrl("");
+    const { result, rerender } = renderHook(() =>
+      useReservationsTableUrlState(),
+    );
+
+    act(() => {
+      result.current.setFilter("search", "abc");
+    });
+
+    // External URL change — back button / sidebar / Limpiar filtros.
+    setUrl("franchise=alquilatucarro");
+    rerender();
+
+    // Debounce window passes.
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+
+    expect(replaceMock).not.toHaveBeenCalled();
+  });
+
+  it("SCEN-020 search input is truncated to SEARCH_MAX_LEN characters", () => {
+    setUrl("");
+    const { result } = renderHook(() => useReservationsTableUrlState());
+
+    const huge = "x".repeat(5000);
+    act(() => {
+      result.current.setFilter("search", huge);
+    });
+
+    // Buffer is truncated synchronously.
+    expect(result.current.searchInput.length).toBe(200);
+    expect(result.current.searchInput).toBe("x".repeat(200));
+
+    act(() => {
+      vi.advanceTimersByTime(250);
+    });
+
+    expect(replaceMock).toHaveBeenCalledTimes(1);
+    const url = replaceMock.mock.calls[0]?.[0] as string;
+    const qs = new URLSearchParams(url.split("?")[1] ?? "");
+    expect(qs.get("q")?.length).toBe(200);
   });
 
   it("SCEN-016 mid-debounce filter change preserves freshly-changed filter", () => {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import {
   flexRender,
   getCoreRowModel,
@@ -32,7 +32,6 @@ import {
 } from "@/lib/schemas/reservation";
 import {
   ALL,
-  type FilterState,
   useReservationsTableUrlState,
 } from "@/hooks/use-reservations-table-url-state";
 import { columns, type ReservationRow } from "./columns";
@@ -75,9 +74,7 @@ export function ReservationsTable({
   cities,
 }: ReservationsTableProps) {
   const url = useReservationsTableUrlState();
-  const filters = url.filters;
-  const update = <K extends keyof FilterState>(key: K, value: FilterState[K]) =>
-    url.setFilter(key, value);
+  const { filters, setFilter } = url;
 
   const filtered = useMemo(() => {
     return data.filter((row) => {
@@ -108,7 +105,6 @@ export function ReservationsTable({
     getPaginationRowModel: getPaginationRowModel(),
     onSortingChange: url.onSortingChange,
     onPaginationChange: url.onPaginationChange,
-    onColumnFiltersChange: url.onColumnFiltersChange,
     autoResetPageIndex: false,
     initialState: {
       columnVisibility: { priority: false },
@@ -116,7 +112,17 @@ export function ReservationsTable({
     state: { sorting: url.sorting, pagination: url.pagination },
   });
 
-  const clearAll = url.clearAll;
+  // Clamp pageIndex back to 0 when a stale bookmark or revalidatePath
+  // leaves the operator on an out-of-range page (filtered.length > 0
+  // but pageIndex >= pageCount). Without this the UI shows "Sin
+  // resultados" against rows that exist on earlier pages.
+  const pageCount = table.getPageCount();
+  const { pageIndex, pageSize } = url.pagination;
+  useEffect(() => {
+    if (filtered.length > 0 && pageIndex >= pageCount) {
+      url.onPaginationChange({ pageIndex: 0, pageSize });
+    }
+  }, [filtered.length, pageIndex, pageCount, pageSize, url]);
 
   return (
     <div className="space-y-4">
@@ -125,7 +131,7 @@ export function ReservationsTable({
           <label className="text-xs text-muted-foreground">Franquicia</label>
           <Select
             value={filters.franchise}
-            onValueChange={(v) => update("franchise", v)}
+            onValueChange={(v) => setFilter("franchise", v)}
           >
             <SelectTrigger className="w-44">
               <SelectValue placeholder="Franquicia" />
@@ -145,7 +151,7 @@ export function ReservationsTable({
           <label className="text-xs text-muted-foreground">Estado</label>
           <Select
             value={filters.status}
-            onValueChange={(v) => update("status", v)}
+            onValueChange={(v) => setFilter("status", v)}
           >
             <SelectTrigger className="w-44">
               <SelectValue placeholder="Estado" />
@@ -165,7 +171,7 @@ export function ReservationsTable({
           <label className="text-xs text-muted-foreground">Ciudad</label>
           <Select
             value={filters.city}
-            onValueChange={(v) => update("city", v)}
+            onValueChange={(v) => setFilter("city", v)}
           >
             <SelectTrigger className="w-44">
               <SelectValue placeholder="Ciudad" />
@@ -185,7 +191,7 @@ export function ReservationsTable({
           <label className="text-xs text-muted-foreground">Creación</label>
           <DateRangePicker
             value={filters.createdRange}
-            onChange={(range) => update("createdRange", range)}
+            onChange={(range) => setFilter("createdRange", range)}
             placeholder="Creación"
           />
         </div>
@@ -194,7 +200,7 @@ export function ReservationsTable({
           <label className="text-xs text-muted-foreground">Recogida</label>
           <DateRangePicker
             value={filters.pickupRange}
-            onChange={(range) => update("pickupRange", range)}
+            onChange={(range) => setFilter("pickupRange", range)}
             placeholder="Recogida"
           />
         </div>
@@ -203,7 +209,7 @@ export function ReservationsTable({
           <label className="text-xs text-muted-foreground">Referido</label>
           <Select
             value={filters.referral}
-            onValueChange={(v) => update("referral", v)}
+            onValueChange={(v) => setFilter("referral", v)}
           >
             <SelectTrigger className="w-44">
               <SelectValue placeholder="Referido" />
@@ -223,7 +229,7 @@ export function ReservationsTable({
           <label className="text-xs text-muted-foreground">Buscador</label>
           <Input
             value={url.searchInput}
-            onChange={(e) => update("search", e.target.value)}
+            onChange={(e) => setFilter("search", e.target.value)}
             placeholder="Nombre, ID, email, código…"
             className="min-w-[200px]"
           />
@@ -232,7 +238,7 @@ export function ReservationsTable({
         <Button
           variant="outline"
           size="icon"
-          onClick={clearAll}
+          onClick={url.clearAll}
           aria-label="Limpiar filtros"
           title="Limpiar filtros"
         >

@@ -121,8 +121,15 @@ describe("useDataTableUrlState — URL parsing (Step 3 scenarios)", () => {
     expect(result.current.sorting).toEqual([]);
   });
 
-  it("SCEN-008 sanitization: ?sort=Bad-Column:asc with non-conforming id is ignored", () => {
-    setUrl("sort=Bad-Column:asc");
+  it("SCEN-008 sanitization: ?sort=Bad Column:asc (whitespace) is ignored", () => {
+    setUrl("sort=" + encodeURIComponent("Bad Column") + ":asc");
+    const { result } = renderHook(() => useDataTableUrlState());
+
+    expect(result.current.sorting).toEqual([]);
+  });
+
+  it("SCEN-008 sanitization: ?sort with shell metachars in id is ignored", () => {
+    setUrl("sort=" + encodeURIComponent("foo;DROP") + ":asc");
     const { result } = renderHook(() => useDataTableUrlState());
 
     expect(result.current.sorting).toEqual([]);
@@ -361,6 +368,22 @@ describe("useDataTableUrlState — sort serialization for non-snake_case ids (SC
     const url = lastReplaceUrl();
     const qs = new URLSearchParams(url.split("?")[1] ?? "");
     expect(qs.get("sort")).toBe("amount.usd:asc");
+  });
+
+  it("SCEN-012 round-trip: camelCase sort survives the re-render after URL write", () => {
+    setUrl("sort=createdAt:asc");
+    const { result } = renderHook(() => useDataTableUrlState());
+
+    expect(result.current.sorting).toEqual([
+      { id: "createdAt", desc: false },
+    ]);
+  });
+
+  it("SCEN-012 round-trip: hyphenated sort survives the re-render", () => {
+    setUrl("sort=id-1:desc");
+    const { result } = renderHook(() => useDataTableUrlState());
+
+    expect(result.current.sorting).toEqual([{ id: "id-1", desc: true }]);
   });
 });
 

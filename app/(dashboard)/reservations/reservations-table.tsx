@@ -1,10 +1,7 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useEffect, useMemo } from "react";
 import {
-  type ColumnFiltersState,
-  type OnChangeFn,
-  type SortingState,
   flexRender,
   getCoreRowModel,
   getFilteredRowModel,
@@ -15,7 +12,7 @@ import {
 import { EraserIcon } from "lucide-react";
 
 import { cn } from "@/lib/utils";
-import { type DateRange, isWithinDateRange } from "@/lib/date-range";
+import { isWithinDateRange } from "@/lib/date-range";
 import { Button } from "@/components/ui/button";
 import { DateRangePicker } from "@/components/ui/date-range-picker";
 import { Input } from "@/components/ui/input";
@@ -33,6 +30,10 @@ import {
   isPriorityStatus,
   type ReservationStatus,
 } from "@/lib/schemas/reservation";
+import {
+  ALL,
+  useReservationsTableUrlState,
+} from "@/hooks/use-reservations-table-url-state";
 import { columns, type ReservationRow } from "./columns";
 
 type ReferralOption = { id: string; name: string };
@@ -44,29 +45,7 @@ interface ReservationsTableProps {
   cities: CityOption[];
 }
 
-const ALL = "__all__";
 export const ALL_CITIES = ALL;
-const PRIORITY_SORT = { id: "priority", desc: false } as const;
-
-interface FilterState {
-  franchise: string;
-  status: string;
-  city: string;
-  referral: string;
-  createdRange: DateRange | undefined;
-  pickupRange: DateRange | undefined;
-  search: string;
-}
-
-const initialFilters: FilterState = {
-  franchise: ALL,
-  status: ALL,
-  city: ALL,
-  referral: ALL,
-  createdRange: undefined,
-  pickupRange: undefined,
-  search: "",
-};
 
 function matchesSearch(row: ReservationRow, term: string) {
   if (!term) return true;
@@ -94,20 +73,8 @@ export function ReservationsTable({
   referrals,
   cities,
 }: ReservationsTableProps) {
-  const [filters, setFilters] = useState<FilterState>(initialFilters);
-  const [sorting, setSortingRaw] = useState<SortingState>([
-    PRIORITY_SORT,
-    { id: "created_at", desc: true },
-  ]);
-  const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
-
-  const setSorting = useCallback<OnChangeFn<SortingState>>((updater) => {
-    setSortingRaw((prev) => {
-      const next = typeof updater === "function" ? updater(prev) : updater;
-      const withoutPriority = next.filter((s) => s.id !== "priority");
-      return [PRIORITY_SORT, ...withoutPriority];
-    });
-  }, []);
+  const url = useReservationsTableUrlState();
+  const { filters, setFilter } = url;
 
   const filtered = useMemo(() => {
     return data.filter((row) => {
@@ -136,19 +103,26 @@ export function ReservationsTable({
     getSortedRowModel: getSortedRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
-    onSortingChange: setSorting,
-    onColumnFiltersChange: setColumnFilters,
+    onSortingChange: url.onSortingChange,
+    onPaginationChange: url.onPaginationChange,
+    autoResetPageIndex: false,
     initialState: {
-      pagination: { pageSize: 20 },
       columnVisibility: { priority: false },
     },
-    state: { sorting, columnFilters },
+    state: { sorting: url.sorting, pagination: url.pagination },
   });
 
-  const update = <K extends keyof FilterState>(key: K, value: FilterState[K]) =>
-    setFilters((prev) => ({ ...prev, [key]: value }));
-
-  const clearAll = () => setFilters(initialFilters);
+  // Clamp pageIndex back to 0 when a stale bookmark or revalidatePath
+  // leaves the operator on an out-of-range page (filtered.length > 0
+  // but pageIndex >= pageCount). Without this the UI shows "Sin
+  // resultados" against rows that exist on earlier pages.
+  const pageCount = table.getPageCount();
+  const { pageIndex, pageSize } = url.pagination;
+  useEffect(() => {
+    if (filtered.length > 0 && pageIndex >= pageCount) {
+      url.onPaginationChange({ pageIndex: 0, pageSize });
+    }
+  }, [filtered.length, pageIndex, pageCount, pageSize, url]);
 
   return (
     <div className="space-y-4">
@@ -157,7 +131,7 @@ export function ReservationsTable({
           <label className="text-xs text-muted-foreground">Franquicia</label>
           <Select
             value={filters.franchise}
-            onValueChange={(v) => update("franchise", v)}
+            onValueChange={(v) => setFilter("franchise", v)}
           >
             <SelectTrigger className="w-44">
               <SelectValue placeholder="Franquicia" />
@@ -177,7 +151,7 @@ export function ReservationsTable({
           <label className="text-xs text-muted-foreground">Estado</label>
           <Select
             value={filters.status}
-            onValueChange={(v) => update("status", v)}
+            onValueChange={(v) => setFilter("status", v)}
           >
             <SelectTrigger className="w-44">
               <SelectValue placeholder="Estado" />
@@ -197,7 +171,7 @@ export function ReservationsTable({
           <label className="text-xs text-muted-foreground">Ciudad</label>
           <Select
             value={filters.city}
-            onValueChange={(v) => update("city", v)}
+            onValueChange={(v) => setFilter("city", v)}
           >
             <SelectTrigger className="w-44">
               <SelectValue placeholder="Ciudad" />
@@ -217,7 +191,7 @@ export function ReservationsTable({
           <label className="text-xs text-muted-foreground">Creación</label>
           <DateRangePicker
             value={filters.createdRange}
-            onChange={(range) => update("createdRange", range)}
+            onChange={(range) => setFilter("createdRange", range)}
             placeholder="Creación"
           />
         </div>
@@ -226,7 +200,7 @@ export function ReservationsTable({
           <label className="text-xs text-muted-foreground">Recogida</label>
           <DateRangePicker
             value={filters.pickupRange}
-            onChange={(range) => update("pickupRange", range)}
+            onChange={(range) => setFilter("pickupRange", range)}
             placeholder="Recogida"
           />
         </div>
@@ -235,7 +209,7 @@ export function ReservationsTable({
           <label className="text-xs text-muted-foreground">Referido</label>
           <Select
             value={filters.referral}
-            onValueChange={(v) => update("referral", v)}
+            onValueChange={(v) => setFilter("referral", v)}
           >
             <SelectTrigger className="w-44">
               <SelectValue placeholder="Referido" />
@@ -254,8 +228,8 @@ export function ReservationsTable({
         <div className="flex flex-1 flex-col gap-1">
           <label className="text-xs text-muted-foreground">Buscador</label>
           <Input
-            value={filters.search}
-            onChange={(e) => update("search", e.target.value)}
+            value={url.searchInput}
+            onChange={(e) => setFilter("search", e.target.value)}
             placeholder="Nombre, ID, email, código…"
             className="min-w-[200px]"
           />
@@ -264,7 +238,7 @@ export function ReservationsTable({
         <Button
           variant="outline"
           size="icon"
-          onClick={clearAll}
+          onClick={url.clearAll}
           aria-label="Limpiar filtros"
           title="Limpiar filtros"
         >

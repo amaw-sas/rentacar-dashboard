@@ -11,6 +11,23 @@ export function toLocalIsoDate(date: Date): string {
   return `${y}-${m}-${d}`;
 }
 
+const ISO_DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+export function fromLocalIsoDate(iso: string): Date | undefined {
+  const match = ISO_DATE_RE.exec(iso);
+  if (!match) return undefined;
+  const [, y, mo, d] = match;
+  const date = new Date(Number(y), Number(mo) - 1, Number(d));
+  if (
+    date.getFullYear() !== Number(y) ||
+    date.getMonth() !== Number(mo) - 1 ||
+    date.getDate() !== Number(d)
+  ) {
+    return undefined;
+  }
+  return date;
+}
+
 export function isWithinDateRange(
   iso: string,
   range: DateRange | undefined,

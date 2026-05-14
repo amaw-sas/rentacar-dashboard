@@ -17,7 +17,10 @@ export interface UseDataTableUrlStateOptions {
 
 const DEFAULT_PAGE_SIZE = 20;
 const DEFAULT_SEARCH_DEBOUNCE_MS = 250;
-const COLUMN_ID_RE = /^[a-z0-9_]+$/;
+// Permissive on both serialize and parse sides — must accept any id react-table
+// emits (camelCase, snake_case, kebab-case, dotted). Still rejects spaces and
+// shell/HTML metachars from untrusted URLs (`<`, `>`, `&`, `;`, `'`, `"`, `/`).
+const COLUMN_ID_RE = /^[\w.-]+$/;
 const SORT_DIRS = new Set(["asc", "desc"]);
 const PAGE_DIGITS_RE = /^\d+$/;
 const MAX_PAGE = 10_000;

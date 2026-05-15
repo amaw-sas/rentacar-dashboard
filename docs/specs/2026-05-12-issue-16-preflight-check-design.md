@@ -234,12 +234,13 @@ Reglas operacionales:
 - Nunca imprimimos passwords ni URLs completas. `SUPABASE_DB_URL` aparece en el reporte como `postgresql://***@host:port/db`; una URL malformada se redacta del todo a `postgresql://***@***/***`.
 - Si falla la conexión a un lado, abortamos antes de intentar el otro. No queremos connections parciales colgando.
 - Las queries son resilientes: cada check corre en su propia transacción. Si una tabla legacy no existe (o el SQL tiene un typo), el `CheckResult` guarda `error=...` y seguimos con los demás.
-- **Precedencia**: si el reporte no se pudo persistir a ningún path el código `5` domina sobre `3` y `1` (sin evidencia durable de gating no se puede confiar en ninguna conclusión — "ningún silencio"); un fallback a `/tmp` exitoso NO es `5` (el reporte sí se escribió, con warning a stderr). Entre el resto: `0` si todos OK, `3` si hubo error de query, `1` si solo había gaps. `6` solo para un crash no capturado y sanitizado.
+- **Precedencia**: si el reporte no se pudo persistir a ningún path el código `5` domina sobre `3` y `1` (sin evidencia durable de gating no se puede confiar en ninguna conclusión — "ningún silencio"); un fallback a `/tmp` exitoso NO es `5` (el reporte sí se escribió, con warning a stderr). Entre el resto: `0` si todos OK, `3` si hubo error de query, `1` si solo había gaps. Una caída fatal de la conexión al destino *durante* los checks aborta con `2` y NO escribe JSON (distinto de un error de query por check). `6` solo para un crash no capturado y sanitizado.
+- **El exit code no es la decisión de gaps**: un exit ≠ 1 (en especial `3` = error de query) NO significa "sin gaps" — el código refleja solo la condición dominante. Un caller que ramifica solo por el exit code se pierde gaps reales: para la decisión de gaps hay que parsear el JSON (`passed` global y `gaps` por check), no el exit code.
 - `try/finally` cierra cursors y connections aunque algo explote.
 
 ## Testing
 
-Sin test suite automatizada. Son ~250 líneas de script read-only one-off; armar pytest acá es overhead que no devuelve nada.
+Sin test suite automatizada. Son ~540 líneas de script read-only one-off tras el endurecimiento de QA (masking de URL, escritura atómica, aislamiento por check, abort por pérdida fatal de conexión); armar pytest acá es overhead que no devuelve nada. La verificación es manual con harnesses ad-hoc puntuales.
 
 La verificación es manual y sigue un ciclo rojo-verde:
 

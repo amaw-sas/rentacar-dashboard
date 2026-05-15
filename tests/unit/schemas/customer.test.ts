@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { customerSchema } from "@/lib/schemas/customer";
+import { customerSchema, customerContactSchema } from "@/lib/schemas/customer";
 
 describe("customerSchema", () => {
   const valid = {
@@ -63,6 +63,120 @@ describe("customerSchema", () => {
     if (result.success) {
       expect(result.data.status).toBe("active");
       expect(result.data.phone).toBe("");
+    }
+  });
+});
+
+describe("customerContactSchema", () => {
+  const validContact = {
+    first_name: "Juan",
+    last_name: "Perez",
+    identification_type: "CC" as const,
+    identification_number: "1234567890",
+    phone: "+57 300 1234567",
+    email: "juan@example.com",
+  };
+
+  it("accepts a valid contact payload", () => {
+    const result = customerContactSchema.safeParse(validContact);
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects an invalid email", () => {
+    const result = customerContactSchema.safeParse({
+      ...validContact,
+      email: "noesunemail",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("requires first_name", () => {
+    const result = customerContactSchema.safeParse({
+      ...validContact,
+      first_name: "",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("requires last_name", () => {
+    const result = customerContactSchema.safeParse({
+      ...validContact,
+      last_name: "",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("requires identification_number", () => {
+    const result = customerContactSchema.safeParse({
+      ...validContact,
+      identification_number: "",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects an identification_type outside the enum", () => {
+    const result = customerContactSchema.safeParse({
+      ...validContact,
+      identification_type: "DNI",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts an empty phone (only non-required string)", () => {
+    const result = customerContactSchema.safeParse({
+      ...validContact,
+      phone: "",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects whitespace-only first_name / last_name / identification_number", () => {
+    for (const field of [
+      "first_name",
+      "last_name",
+      "identification_number",
+    ] as const) {
+      const result = customerContactSchema.safeParse({
+        ...validContact,
+        [field]: "   ",
+      });
+      expect(result.success, `${field} whitespace-only must fail`).toBe(false);
+    }
+  });
+
+  it("trims leading/trailing whitespace in the parsed output", () => {
+    const result = customerContactSchema.safeParse({
+      ...validContact,
+      first_name: "  Juan  ",
+      last_name: "  Perez  ",
+      identification_number: "  1234567890  ",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.first_name).toBe("Juan");
+      expect(result.data.last_name).toBe("Perez");
+      expect(result.data.identification_number).toBe("1234567890");
+    }
+  });
+
+  it("strips notes and status — output never carries them", () => {
+    const result = customerContactSchema.safeParse({
+      ...validContact,
+      notes: "cliente VIP",
+      status: "inactive",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect("notes" in result.data).toBe(false);
+      expect("status" in result.data).toBe(false);
+      expect(Object.keys(result.data).sort()).toEqual([
+        "email",
+        "first_name",
+        "identification_number",
+        "identification_type",
+        "last_name",
+        "phone",
+      ]);
     }
   });
 });

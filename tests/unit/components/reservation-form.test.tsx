@@ -1,6 +1,17 @@
 import { describe, it, expect, vi, afterEach, beforeAll } from "vitest";
-import { render, screen, cleanup } from "@testing-library/react";
+import {
+  render,
+  screen,
+  cleanup,
+  fireEvent,
+  waitFor,
+} from "@testing-library/react";
 import { ReservationForm } from "@/components/forms/reservation-form";
+
+const { refreshSpy, updateCustomerContactSpy } = vi.hoisted(() => ({
+  refreshSpy: vi.fn(),
+  updateCustomerContactSpy: vi.fn(),
+}));
 
 beforeAll(() => {
   if (!globalThis.ResizeObserver) {
@@ -19,13 +30,17 @@ beforeAll(() => {
 });
 
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push: vi.fn() }),
+  useRouter: () => ({ push: vi.fn(), back: vi.fn(), refresh: refreshSpy }),
 }));
 
 vi.mock("@/lib/actions/reservations", () => ({
   createReservation: vi.fn(),
   updateReservation: vi.fn(),
   updateReservationStatus: vi.fn(),
+}));
+
+vi.mock("@/lib/actions/customers", () => ({
+  updateCustomerContact: updateCustomerContactSpy,
 }));
 
 vi.mock("sonner", () => ({
@@ -188,16 +203,156 @@ describe("ReservationForm layout", () => {
     expect(document.querySelector('select[name="status"]')).toBeNull();
   });
 
-  it("renders the customer preview as read-only", () => {
+  // #36: customer contact fields are editable inline (no longer read-only).
+  // SCEN-005: with no customer selected, the fields and the "Guardar cliente"
+  // button are disabled — the action cannot run without a customer id.
+  it("disables customer contact editing when no customer is selected", () => {
     renderForm();
     const nombre = screen.getByLabelText("Nombre") as HTMLInputElement;
-    const tipoId = screen.getByLabelText("Tipo identificación") as HTMLInputElement;
-    const identificacion = screen.getByLabelText("Identificación") as HTMLInputElement;
+    const apellido = screen.getByLabelText("Apellido") as HTMLInputElement;
+    const identificacion = screen.getByLabelText(
+      "Identificación",
+    ) as HTMLInputElement;
     const telefono = screen.getByLabelText("Teléfono") as HTMLInputElement;
     const email = screen.getByLabelText("Email") as HTMLInputElement;
-    for (const input of [nombre, tipoId, identificacion, telefono, email]) {
-      expect(input).toHaveAttribute("readOnly");
+    for (const input of [nombre, apellido, identificacion, telefono, email]) {
+      expect(input).not.toHaveAttribute("readOnly");
+      expect(input).toBeDisabled();
     }
+    expect(
+      screen.getByRole("button", { name: "Guardar cliente" }),
+    ).toBeDisabled();
+  });
+
+  // SCEN-007 base: when a customer is selected the fields are editable and
+  // seeded from the persisted record; the button stays disabled until the
+  // operator actually changes something (draft == snapshot, not dirty).
+  it("enables and seeds customer contact fields when a customer is selected", () => {
+    renderForm({
+      id: "55555555-5555-5555-5555-555555555555",
+      defaultValues: {
+        customer_id: customers[0].id,
+        status: "reservado",
+      } as Parameters<typeof ReservationForm>[0]["defaultValues"],
+    });
+    const nombre = screen.getByLabelText("Nombre") as HTMLInputElement;
+    const apellido = screen.getByLabelText("Apellido") as HTMLInputElement;
+    const email = screen.getByLabelText("Email") as HTMLInputElement;
+    expect(nombre).toBeEnabled();
+    expect(nombre).not.toHaveAttribute("readOnly");
+    expect(nombre.value).toBe("Daniela");
+    expect(apellido.value).toBe("Carreño");
+    expect(email.value).toBe("dc005241@gmail.com");
+    // Not dirty yet → save disabled.
+    expect(
+      screen.getByRole("button", { name: "Guardar cliente" }),
+    ).toBeDisabled();
+  });
+
+  // SCEN-007: editing a field enables "Guardar cliente"; reverting to the
+  // exact persisted value disables it again (draft vs snapshot).
+  it("toggles the save button on dirty / revert", () => {
+    renderForm({
+      id: "55555555-5555-5555-5555-555555555555",
+      defaultValues: {
+        customer_id: customers[0].id,
+        status: "reservado",
+      } as Parameters<typeof ReservationForm>[0]["defaultValues"],
+    });
+    const email = screen.getByLabelText("Email") as HTMLInputElement;
+    const button = screen.getByRole("button", { name: "Guardar cliente" });
+
+    expect(button).toBeDisabled();
+    fireEvent.change(email, { target: { value: "nuevo@mail.com" } });
+    expect(button).toBeEnabled();
+    // Revert to the exact original value → not dirty again.
+    fireEvent.change(email, { target: { value: "dc005241@gmail.com" } });
+    expect(button).toBeDisabled();
+  });
+
+  // SCEN-001: a successful save resets dirty, shows the saved value, and
+  // calls router.refresh() to resync the combobox — without resubmitting
+  // the reservation.
+  it("persists the contact edit, resets dirty, and refreshes", async () => {
+    updateCustomerContactSpy.mockResolvedValueOnce({});
+    refreshSpy.mockClear();
+    renderForm({
+      id: "55555555-5555-5555-5555-555555555555",
+      defaultValues: {
+        customer_id: customers[0].id,
+        status: "reservado",
+      } as Parameters<typeof ReservationForm>[0]["defaultValues"],
+    });
+    const email = screen.getByLabelText("Email") as HTMLInputElement;
+    const button = screen.getByRole("button", { name: "Guardar cliente" });
+
+    fireEvent.change(email, { target: { value: "nuevo@mail.com" } });
+    expect(button).toBeEnabled();
+    fireEvent.click(button);
+
+    await waitFor(() => {
+      expect(updateCustomerContactSpy).toHaveBeenCalledTimes(1);
+    });
+    const [calledId, calledFd] = updateCustomerContactSpy.mock.calls[0];
+    expect(calledId).toBe(customers[0].id);
+    expect((calledFd as FormData).get("email")).toBe("nuevo@mail.com");
+
+    await waitFor(() => {
+      expect(refreshSpy).toHaveBeenCalledTimes(1);
+    });
+    // Dirty reset: button disabled again, field shows the saved value.
+    expect(button).toBeDisabled();
+    expect(email.value).toBe("nuevo@mail.com");
+  });
+
+  // SCEN-003: invalid email blocks the save — the action is never called
+  // and an inline error is shown.
+  it("blocks save on invalid email without calling the action", async () => {
+    updateCustomerContactSpy.mockClear();
+    renderForm({
+      id: "55555555-5555-5555-5555-555555555555",
+      defaultValues: {
+        customer_id: customers[0].id,
+        status: "reservado",
+      } as Parameters<typeof ReservationForm>[0]["defaultValues"],
+    });
+    const email = screen.getByLabelText("Email") as HTMLInputElement;
+    const button = screen.getByRole("button", { name: "Guardar cliente" });
+
+    fireEvent.change(email, { target: { value: "noesunemail" } });
+    fireEvent.click(button);
+
+    await waitFor(() => {
+      expect(screen.getByText("Email inválido")).toBeInTheDocument();
+    });
+    expect(updateCustomerContactSpy).not.toHaveBeenCalled();
+  });
+
+  // Regression (review-found, additive to the holdout): if the save action
+  // REJECTS (transport/server failure, not a returned {error}), the UI must
+  // not freeze. Given a dirty draft, when updateCustomerContact throws, then
+  // savingCustomer resets, an error is shown, and the button is usable again.
+  it("recovers if the save action throws — no permanent 'Guardando...' freeze", async () => {
+    updateCustomerContactSpy.mockRejectedValueOnce(new Error("network down"));
+    renderForm({
+      id: "55555555-5555-5555-5555-555555555555",
+      defaultValues: {
+        customer_id: customers[0].id,
+        status: "reservado",
+      } as Parameters<typeof ReservationForm>[0]["defaultValues"],
+    });
+    const email = screen.getByLabelText("Email") as HTMLInputElement;
+    fireEvent.change(email, { target: { value: "nuevo@mail.com" } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar cliente" }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("No se pudo guardar el cliente. Intenta de nuevo."),
+      ).toBeInTheDocument();
+    });
+    // Not frozen: dirty draft + not saving → button enabled again, label reset.
+    const button = screen.getByRole("button", { name: "Guardar cliente" });
+    expect(button).toBeEnabled();
   });
 
   it("renders Categoría as a Select (not a free-text input)", () => {

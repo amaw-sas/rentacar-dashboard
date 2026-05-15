@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
-import { customerSchema } from "@/lib/schemas/customer";
+import { customerSchema, customerContactSchema } from "@/lib/schemas/customer";
 
 export async function createCustomer(
   formData: FormData
@@ -57,5 +57,41 @@ export async function updateCustomer(
   }
 
   revalidatePath("/customers");
+  return {};
+}
+
+// Partial contact update invoked from the reservation edit form (#36).
+// Only the 6 contact columns are written — notes/status stay untouched.
+export async function updateCustomerContact(
+  id: string,
+  formData: FormData
+): Promise<{ error?: string }> {
+  if (!id) {
+    return { error: "Cliente no seleccionado" };
+  }
+
+  const raw = Object.fromEntries(formData.entries());
+  const parsed = customerContactSchema.safeParse(raw);
+
+  if (!parsed.success) {
+    const firstError = parsed.error.issues[0];
+    return { error: firstError.message };
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("customers")
+    .update(parsed.data)
+    .eq("id", id);
+
+  if (error) {
+    if (error.code === "23505" && error.message.includes("identification_number")) {
+      return { error: "Ya existe un cliente con ese número de identificación" };
+    }
+    return { error: error.message };
+  }
+
+  revalidatePath("/customers");
+  revalidatePath("/reservations");
   return {};
 }

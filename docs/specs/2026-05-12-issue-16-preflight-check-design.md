@@ -187,7 +187,7 @@ Esperado: 3 valores legacy, todos en el set permitido. 0 gaps.
 {
   "timestamp": "2026-05-12T15:30:00Z",
   "legacy_source": "mariadb://localhost/rentacar_audit",
-  "destination_source": "supabase prod (sanitized)",
+  "destination_source": "postgresql://***@db.<ref>.supabase.co:5432/postgres",
   "passed": false,
   "checks": [
     {
@@ -226,13 +226,15 @@ Exit codes claros, fallos visibles, ningún silencio:
 | `1` | ≥1 check con gaps | Reporte muestra gaps, decisión humana |
 | `2` | Connection failure (legacy o destino) | Mensaje a stderr identificando lado, sin credenciales |
 | `3` | Query failure (sintaxis, tabla no existe) | Mensaje con `check.name` + error SQL + qué lado |
-| `4` | Env vars requeridas faltantes | Lista las vars faltantes a stderr |
-| `5` | Output dir no escribible | Fallback a `/tmp/preflight-<ts>.json`, warn a stderr |
+| `4` | Env vars requeridas faltantes o vacías | Lista las vars a stderr |
+| `5` | Reporte NO persistido a ningún path (canónico Y `/tmp` ambos fallaron) — domina sobre gaps/errores | Arreglar permisos de filesystem y reintentar |
+| `6` | Error inesperado/no capturado (sanitizado — nunca el cuerpo del mensaje) | Leer el tipo de excepción en stderr e investigar |
 
 Reglas operacionales:
-- Nunca imprimimos passwords ni URLs completas. `SUPABASE_DB_URL` aparece en el reporte como `postgresql://***@host:port/db`.
+- Nunca imprimimos passwords ni URLs completas. `SUPABASE_DB_URL` aparece en el reporte como `postgresql://***@host:port/db`; una URL malformada se redacta del todo a `postgresql://***@***/***`.
 - Si falla la conexión a un lado, abortamos antes de intentar el otro. No queremos connections parciales colgando.
-- Las queries son resilientes: cada check corre en su propia transacción. Si una tabla legacy no existe (o el SQL tiene un typo), el `CheckResult` guarda `error=...` y seguimos con los demás. El exit code refleja qué pasó: 0 si todos OK, 3 si hubo error de query en alguno, 1 si solo había gaps.
+- Las queries son resilientes: cada check corre en su propia transacción. Si una tabla legacy no existe (o el SQL tiene un typo), el `CheckResult` guarda `error=...` y seguimos con los demás.
+- **Precedencia**: si el reporte no se pudo persistir a ningún path el código `5` domina sobre `3` y `1` (sin evidencia durable de gating no se puede confiar en ninguna conclusión — "ningún silencio"); un fallback a `/tmp` exitoso NO es `5` (el reporte sí se escribió, con warning a stderr). Entre el resto: `0` si todos OK, `3` si hubo error de query, `1` si solo había gaps. `6` solo para un crash no capturado y sanitizado.
 - `try/finally` cierra cursors y connections aunque algo explote.
 
 ## Testing

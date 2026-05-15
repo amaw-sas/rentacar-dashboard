@@ -24,11 +24,11 @@ No new top-level directories beyond `scripts/migration/`. No package manifest (n
 
 ## Prerequisites
 
-- Python 3.11+ available locally (`python --version`).
+- Python 3.11+ available locally (`python --version`). On Debian/Ubuntu/WSL the stdlib `venv` module ships separately — `sudo apt install python3-venv` if `python -m venv` fails with `ensurepip is not available` (observed on this WSL host 2026-05-15).
 - Legacy MariaDB local instance (`rentacar_audit`) loaded with the audit dump (already done in audit phase — commit `c70503e`).
-- `SUPABASE_DB_URL` available — the connection string from Supabase project settings (`Project Settings → Database → Connection string → URI`). The service-role key is NOT used here; we use direct Postgres connection.
+- `SUPABASE_DB_URL` available — the connection string from Supabase project settings (`Project Settings → Database → Connection string → URI`). The service-role key is NOT used here; we use direct Postgres connection. If the DB password is unknown, reset it (`Project Settings → Database → Reset database password`) — safe for the dashboard, which is fully key-based (`@supabase/ssr`) and uses no direct Postgres connection; only `supabase db push` needs re-auth afterward.
 - Operator can write to `docs/migration-runs/` (default; fallback to `/tmp` on permission failure per design §Error handling).
-- Optional for SCEN-001: a Supabase branch with issue #17 applied (4 legacy categories present with `status='inactive'`). If unavailable, only SCEN-002 (red) gets verified.
+- For SCEN-002 (red half): a Supabase branch with the 4 localiza categories `G/GR/LP/VP` deleted. **Reality check 2026-05-15: #17 is ALREADY applied to prod** (the 4 categories exist with `status='inactive'`, created 2026-03-30) — so prod is the GREEN state (SCEN-001), and the red state must be synthesized on a disposable Supabase branch. This inverts the original plan's assumption.
 
 ## Implementation Steps
 
@@ -67,7 +67,7 @@ Implement `run_check(check, legacy_cur, dest_cur) -> CheckResult`: execute `lega
 
 - **Size**: M
 - **Dependencies**: Step 3
-- **Acceptance**: running against current Supabase prod (categories without #17 applied) produces a `CheckResult` for `categories` with `gaps == ["G", "GR", "LP", "VP"]` (sorted) and `passed == False`; the other three checks complete and pass.
+- **Acceptance**: running against a red-state Supabase branch (the 4 localiza categories `G/GR/LP/VP` deleted) produces a `CheckResult` for `categories` with `gaps == ["G", "GR", "LP", "VP"]` (sorted) and `passed == False`; the other three checks complete and pass. (Current prod can NOT exercise this — #17 is already applied there.)
 - **Satisfies**: SCEN-002 (gap detection core logic).
 
 ### Step 5 — Report writer: JSON file + stdout summary (SCEN-005)
@@ -85,16 +85,16 @@ Implement the final return: `0` if all `result.passed`; `1` if any check has `ga
 
 - **Size**: S
 - **Dependencies**: Step 5
-- **Acceptance**: running against a state with all gaps resolved (#17 applied, or a Supabase branch) exits 0 and the report has `passed: true` (SCEN-001); running against current prod exits 1 (SCEN-002); running with a deliberately broken SQL exits 3.
+- **Acceptance**: running against current prod (all gaps resolved — #17 already applied) exits 0 and the report has `passed: true` (SCEN-001); running against the red-state Supabase branch exits 1 (SCEN-002); running with a deliberately broken SQL exits 3.
 - **Satisfies**: SCEN-001, SCEN-002 (exit code half).
 
 ### Step 7 — Manual red-green verification + evidence capture
 
-Run the verification matrix from the scenarios file (SCEN-002..006; SCEN-001 deferred — see Open questions). Capture for each scenario: the command run, exit code, stdout snippet, stderr snippet (where relevant), and the JSON report path. Save evidence in a brief `docs/migration-runs/preflight-verification-2026-05-12.md` (this verification doc IS committed since it documents the rojo-verde cycle; the gitignore only covers the auto-generated `preflight-*.json` reports). SCEN-001 is confirmed unavailable (#17 has no Supabase branch at this time), so document the skip and note that SCEN-001 will be re-verified once #17 lands. SCEN-006 mutates one check query to an invalid relation, asserts exit 3, and confirms the other three checks still complete (design §Error handling per-check isolation).
+Run the full verification matrix from the scenarios file (SCEN-001..006). Capture for each scenario: the command run, exit code, stdout snippet, stderr snippet (where relevant), and the JSON report path. Save evidence in a brief `docs/migration-runs/preflight-verification-2026-05-12.md` (this verification doc IS committed since it documents the rojo-verde cycle; the gitignore only covers the auto-generated `preflight-*.json` reports). **Strategy inverted from the original plan (reality 2026-05-15: #17 already in prod):** SCEN-001 (green, exit 0) is verified against current prod; SCEN-002 (red, exit 1) is verified against a disposable Supabase branch where the 4 localiza categories `G/GR/LP/VP` are deleted. The branch is created immediately before the SCEN-002 run and deleted immediately after (cost containment). SCEN-006 mutates one check query to an invalid relation, asserts exit 3, and confirms the other three checks still complete (design §Error handling per-check isolation).
 
-- **Size**: S
-- **Dependencies**: Step 6
-- **Acceptance**: verification doc exists with evidence captured for SCEN-002, SCEN-003, SCEN-004, SCEN-005, SCEN-006 (the five that don't require #17). SCEN-001 carries an explicit "deferred — #17 not available" note with a follow-up plan.
+- **Size**: M (was S — Supabase branch lifecycle added)
+- **Dependencies**: Step 6; `scripts/migration/.env` populated with `LEGACY_DB_*` + prod `SUPABASE_DB_URL`; branch-create authorization (cost).
+- **Acceptance**: verification doc exists with evidence captured for ALL of SCEN-001..006. No scenario deferred — the inverted strategy makes every scenario observable.
 - **Satisfies**: all scenarios via execution evidence (the SDD satisfaction gate).
 
 ## Phase grouping
@@ -110,8 +110,10 @@ Run the verification matrix from the scenarios file (SCEN-002..006; SCEN-001 def
 
 Manual red-green only. The design already justifies this: ~250 lines of read-only one-off script, pytest scaffolding doesn't earn its keep here.
 
-1. **Red half** (current prod state, #17 not applied): SCEN-002 must produce exit 1 with the 4 category gaps surfacing. If it doesn't, the script has a false negative and shouldn't ship — that's the whole point of running it.
-2. **Green half** (#17 applied on a Supabase branch, or simulated locally): SCEN-001 must produce exit 0 with all four checks passing.
+1. **Green half** (current prod — #17 already applied, the 4 categories exist inactive): SCEN-001 must produce exit 0 with all four checks passing.
+2. **Red half** (disposable Supabase branch with `G/GR/LP/VP` deleted from localiza): SCEN-002 must produce exit 1 with the 4 category gaps surfacing. If it doesn't, the script has a false negative and shouldn't ship — that's the whole point of running it.
+
+> Environments inverted vs. the original plan: prod turned out to already carry #17, so prod is now the green reference and the red state is synthesized on a branch.
 
 Steps 1–6 get exercised through SCEN-001 to SCEN-006. The scenarios file's verification matrix documents the evidence to capture for each.
 
@@ -128,7 +130,7 @@ Trivial. The script writes nothing to production databases — it's read-only on
 
 ## Resolved decisions
 
-- **Sequencing with #17 for SCEN-001 → DEFERRED.** No Supabase branch with #17 is available at verification time (operator-confirmed 2026-05-15). SCEN-001 verification is deferred and will be re-run once #17 lands. SCEN-002 is the load-bearing red half — it proves the script catches real gaps — so deferral is acceptable per the design.
+- **#17 reality + strategy inversion (corrected 2026-05-15).** Initial decision deferred SCEN-001 on the assumption that #17 was not applied. **MCP read-only verification against prod proved the opposite:** `G/GR/LP/VP` exist for localiza with `status='inactive'`, created 2026-03-30 — #17 is already in prod. Consequence: prod is the GREEN reference (SCEN-001, exit 0); SCEN-002's red state must be synthesized on a disposable Supabase branch (delete the 4 categories there). No scenario is deferred. The holdout scenarios are unchanged (they are state-parameterized — only which environment satisfies each Given moved); no amend needed.
 - **Resilience stress-test → INCLUDED as SCEN-006.** The per-check transaction isolation in design §Error handling is now an explicit holdout scenario: mutate one check query to an invalid relation, assert exit 3, confirm the other three checks still complete. Implemented behavior lives in Step 4; verified in Step 7.
 
 ## References
@@ -138,4 +140,4 @@ Trivial. The script writes nothing to production databases — it's read-only on
 - Audit doc: `docs/migration-data-legacy-audit.md` §6 #N1
 - Issue: [#16](https://github.com/amaw-sas/rentacar-dashboard/issues/16)
 - Blocking dependents: [#19](https://github.com/amaw-sas/rentacar-dashboard/issues/19), [#20](https://github.com/amaw-sas/rentacar-dashboard/issues/20), [#21](https://github.com/amaw-sas/rentacar-dashboard/issues/21)
-- Sibling dependent: [#17](https://github.com/amaw-sas/rentacar-dashboard/issues/17) (must land before SCEN-001 can be verified green)
+- Sibling dependent: [#17](https://github.com/amaw-sas/rentacar-dashboard/issues/17) — already applied to prod (verified 2026-05-15: `G/GR/LP/VP` present, `status='inactive'`, created 2026-03-30); prod is the SCEN-001 green reference

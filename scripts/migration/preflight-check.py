@@ -44,6 +44,22 @@ class DestinationConnectionLost(Exception):
     the exception body or DSN; only the originating exception's class name.
     """
 
+
+class LegacyConnectionLost(Exception):
+    """Fatal: the legacy MariaDB connection died mid-run (not a query error).
+
+    Symmetric to DestinationConnectionLost, for the legacy side. Raised from
+    run_check when a legacy-side failure is a dropped/dead connection (idle
+    wait_timeout between checks, network blip, server gone away -- pymysql
+    OperationalError errno 2006/2013 or InterfaceError) rather than a
+    query-level fault (missing table => pymysql ProgrammingError errno 1146,
+    syntax, permission). main() catches this around the per-check loop and
+    converts it to EXIT_CONNECTION, aborting the whole run before any report
+    is written -- consistent with SCEN-004 semantics. NEVER carries the
+    exception body or DSN; only the originating exception's class name
+    (pymysql exception bodies can echo host/user).
+    """
+
 REQUIRED_ENV = [
     "LEGACY_DB_HOST",
     "LEGACY_DB_USER",
@@ -261,17 +277,56 @@ def _is_fatal_dest_connection_loss(exc: Exception, dest_conn) -> bool:
     return False
 
 
-def run_check(check: Check, legacy_cur, dest_conn) -> CheckResult:
+def _is_fatal_legacy_connection_loss(exc: Exception, legacy_conn) -> bool:
+    """True if a legacy-side exception means the connection is dead.
+
+    Symmetric to _is_fatal_dest_connection_loss, for pymysql/MariaDB.
+    Fatal = a dropped/dead connection (idle wait_timeout between checks,
+    network blip, "MySQL server has gone away" errno 2006 / "Lost
+    connection" errno 2013), NOT a query-level fault. The missing-table
+    fault (SCEN-006: legacy 'branches' query => errno 1146) is a
+    pymysql.err.ProgrammingError and MUST stay a per-check error so the
+    other checks still run and the run exits 3, not 2.
+
+    Signals:
+      - pymysql.err.ProgrammingError => checked FIRST => NOT fatal
+        (load-bearing: SCEN-006 missing-table isolation).
+      - pymysql.err.OperationalError / pymysql.err.InterfaceError
+        (connection-level: 2006/2013, broken socket) => fatal.
+      - the connection object reports itself closed (Connection.open is
+        False) => fatal.
+    """
+    if isinstance(exc, pymysql.err.ProgrammingError):
+        return False
+    if isinstance(exc, (pymysql.err.OperationalError, pymysql.err.InterfaceError)):
+        return True
+    try:
+        if getattr(legacy_conn, "open", True) is False:
+            return True
+    except Exception:
+        # A connection object that raises even on .open is itself dead.
+        return True
+    return False
+
+
+def run_check(check: Check, legacy_cur, legacy_conn, dest_conn) -> CheckResult:
     """Run both sides of a check in isolation. A query-level failure on
     either side populates result.error and does NOT abort the run. A FATAL
-    destination connection loss raises DestinationConnectionLost so main()
-    can abort with EXIT_CONNECTION (the connection is dead for every
-    remaining DB-backed check; per-check isolation no longer applies)."""
+    connection loss on EITHER side raises (LegacyConnectionLost /
+    DestinationConnectionLost) so main() can abort with EXIT_CONNECTION (the
+    connection is dead for every remaining DB-backed check; per-check
+    isolation no longer applies)."""
     result = CheckResult(name=check.name, description=check.description)
 
     try:
         legacy_values = sorted(set(_fetch_values(legacy_cur, check.legacy_query)))
     except Exception as exc:
+        if _is_fatal_legacy_connection_loss(exc, legacy_conn):
+            # Not this check's fault: the legacy DB is gone for every
+            # remaining check. Abort the whole run. Carry only the
+            # exception class name -- never the body or DSN (pymysql
+            # bodies can echo host/user).
+            raise LegacyConnectionLost(type(exc).__name__) from None
         result.error = f"legacy query failed for '{check.name}': {exc}"
         result.passed = False
         return result
@@ -479,7 +534,20 @@ def main() -> int:
     try:
         legacy_cur = legacy_conn.cursor()
         try:
-            results = [run_check(c, legacy_cur, dest_conn) for c in CHECKS]
+            results = [
+                run_check(c, legacy_cur, legacy_conn, dest_conn) for c in CHECKS
+            ]
+        except LegacyConnectionLost as exc:
+            # Legacy died mid-run (idle wait_timeout / network blip /
+            # server gone away): every remaining check would fail the
+            # same way. Abort with EXIT_CONNECTION BEFORE any report is
+            # written (SCEN-004 semantics: connection failure => no
+            # JSON). Sanitized: only the class name.
+            print(
+                f"legacy connection lost during checks: {exc}",
+                file=sys.stderr,
+            )
+            return EXIT_CONNECTION
         except DestinationConnectionLost as exc:
             # Destination died mid-run: every remaining DB-backed check
             # would fail the same way. Abort with EXIT_CONNECTION BEFORE

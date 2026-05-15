@@ -171,11 +171,19 @@ del cliente (no están en `reservationSchema`).
 ## Estrategia de verificación
 
 - **Unit (vitest):**
-  - `customerContactSchema`: rechaza email inválido / campos requeridos vacíos;
-    acepta payload de contacto válido; no incluye `notes`/`status`.
+  - `customerContactSchema`: rechaza email inválido, campos requeridos vacíos
+    (`first_name`/`last_name`/`identification_number`) e `identification_type`
+    fuera del enum; acepta `phone: ""` (único string no requerido); acepta
+    payload de contacto válido; no incluye `notes`/`status`.
   - `updateCustomerContact`: happy path actualiza solo las 6 columnas; `23505`
     → mensaje amigable; fallo de zod → primer issue; mock de Supabase verifica
-    que `.update` recibe solo campos de contacto.
+    que `.update` recibe solo campos de contacto (sin `notes`/`status`).
+- **Nota de timing (para planning/verificación):** `router.refresh()` es
+  asíncrono. El `customerSnapshot` local se actualiza antes de que el server
+  component re-provea `customers`; existe una ventana breve donde la etiqueta
+  del combobox sigue obsoleta. Escenario 1 ("sin recarga manual") se cumple
+  tras resolver el refresh — la verificación runtime no debe marcar esa
+  etiqueta transitoriamente obsoleta como bug.
 - **Runtime (agent-browser + dogfood):** flujo escenario 1 y 2 en el dashboard
   real — editar y guardar, verificar persistencia y combobox, cero errores de
   consola, cero requests fallidos.

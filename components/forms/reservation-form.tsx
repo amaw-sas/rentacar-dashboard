@@ -240,27 +240,35 @@ export function ReservationForm({
     }
 
     setSavingCustomer(true);
-    const fd = new FormData();
-    for (const [key, value] of Object.entries(parsed.data)) {
-      fd.append(key, value);
-    }
-    const result = await updateCustomerContact(customerId, fd);
-    setSavingCustomer(false);
+    try {
+      const fd = new FormData();
+      for (const [key, value] of Object.entries(parsed.data)) {
+        fd.append(key, value);
+      }
+      const result = await updateCustomerContact(customerId, fd);
 
-    if (result.error) {
-      setCustomerError(result.error);
-      return;
-    }
+      if (result.error) {
+        setCustomerError(result.error);
+        return;
+      }
 
-    // Snapshot AND draft = exactly-persisted (trimmed) values: dirty resets
-    // and the fields show the saved values immediately (SCEN-001). The
-    // contact inputs and the combobox are disabled while saving, so the
-    // selected customer cannot change mid-flight. router.refresh() syncs the
-    // combobox label from the refreshed `customers` prop; the re-seed effect
-    // does NOT refire (customerId unchanged) — no dual-writer race.
-    setCustomerDraft(parsed.data);
-    setCustomerSnapshot(parsed.data);
-    router.refresh();
+      // Snapshot AND draft = exactly-persisted (trimmed) values: dirty resets
+      // and the fields show the saved values immediately (SCEN-001). The
+      // contact inputs and the combobox are disabled while saving, so the
+      // selected customer cannot change mid-flight. router.refresh() syncs the
+      // combobox label from the refreshed `customers` prop; the re-seed effect
+      // does NOT refire (customerId unchanged) — no dual-writer race.
+      setCustomerDraft(parsed.data);
+      setCustomerSnapshot(parsed.data);
+      router.refresh();
+    } catch {
+      // The action threw (transport/server failure) instead of returning
+      // {error}. Without this, savingCustomer would stay true forever and
+      // freeze the customer section with no error shown.
+      setCustomerError("No se pudo guardar el cliente. Intenta de nuevo.");
+    } finally {
+      setSavingCustomer(false);
+    }
   }
 
   const canSaveCustomer =

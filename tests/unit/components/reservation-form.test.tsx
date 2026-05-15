@@ -328,6 +328,33 @@ describe("ReservationForm layout", () => {
     expect(updateCustomerContactSpy).not.toHaveBeenCalled();
   });
 
+  // Regression (review-found, additive to the holdout): if the save action
+  // REJECTS (transport/server failure, not a returned {error}), the UI must
+  // not freeze. Given a dirty draft, when updateCustomerContact throws, then
+  // savingCustomer resets, an error is shown, and the button is usable again.
+  it("recovers if the save action throws — no permanent 'Guardando...' freeze", async () => {
+    updateCustomerContactSpy.mockRejectedValueOnce(new Error("network down"));
+    renderForm({
+      id: "55555555-5555-5555-5555-555555555555",
+      defaultValues: {
+        customer_id: customers[0].id,
+        status: "reservado",
+      } as Parameters<typeof ReservationForm>[0]["defaultValues"],
+    });
+    const email = screen.getByLabelText("Email") as HTMLInputElement;
+    fireEvent.change(email, { target: { value: "nuevo@mail.com" } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar cliente" }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("No se pudo guardar el cliente. Intenta de nuevo."),
+      ).toBeInTheDocument();
+    });
+    // Not frozen: dirty draft + not saving → button enabled again, label reset.
+    const button = screen.getByRole("button", { name: "Guardar cliente" });
+    expect(button).toBeEnabled();
+  });
+
   it("renders Categoría as a Select (not a free-text input)", () => {
     renderForm();
     const trigger = screen.getByLabelText("Categoría");

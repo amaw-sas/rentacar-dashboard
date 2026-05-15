@@ -75,6 +75,19 @@ Per-check values are trimmed and any blank value (empty after trim) is
 skipped, on BOTH the legacy and destination side — this avoids phantom
 or whitespace-variant false gaps from dirty legacy data.
 
+### Comparison contract
+
+After trimming and blank/NULL skipping, the gap comparison
+(`legacy_set − destination_set`) is **exact and case-sensitive** — by
+design. Codes and identifiers are compared byte-for-byte: no
+case-folding, no accent normalization, no fuzzy matching. A casing
+variant (legacy `gr` vs destination `GR`) or an accent variant
+(`Cédula` vs `Cedula`) is reported as a **real gap**, not silently
+folded away. A migration gate must *surface* identifier drift, not hide
+it: if legacy and destination disagree on the exact spelling of a code,
+the ETL would mismatch on it, so the operator must see and resolve it
+before any data is written. This is intended semantics, not a bug.
+
 The `SUPABASE_DB_URL` never appears unmasked anywhere — report and
 error messages show `postgresql://***@host:port/db`, and a malformed
 URL is fully redacted to `postgresql://***@***/***`.
@@ -93,13 +106,25 @@ URL is fully redacted to `postgresql://***@***/***`.
 
 Precedence when several conditions hold: env-missing (4) is checked
 before any connection; a connection failure (2) aborts before any check
-runs; after checks run, **report-write failure (5) dominates** — if the
-JSON could not be persisted to ANY path the operator has no durable
-gating evidence, so 5 outranks both a query error (3) and a plain
-gap (1). A successful `/tmp` fallback is NOT code 5 (report was written;
-stderr carries a warning). Among the rest, a query error (3) dominates a
-plain gap (1). Code 6 only fires for an otherwise-uncaught crash and is
-sanitized so no connection string leaks.
+runs — including a destination connection that dies *mid-run* (pooler
+idle drop / network blip), which aborts with code 2 and writes NO JSON
+(distinct from a query-level error on one check); after checks run,
+**report-write failure (5) dominates** — if the JSON could not be
+persisted to ANY path the operator has no durable gating evidence, so 5
+outranks both a query error (3) and a plain gap (1). A successful `/tmp`
+fallback is NOT code 5 (report was written; stderr carries a warning).
+Among the rest, a query error (3) dominates a plain gap (1). Code 6 only
+fires for an otherwise-uncaught crash and is sanitized so no connection
+string leaks.
+
+> **A non-zero exit other than 1 does NOT mean "no gaps".** The exit
+> code reflects the *dominant* condition only (precedence: report-lost 5
+> > query-error 3 > gaps 1 > ok 0, plus 2 env-or-connection, 6
+> unexpected). In particular **exit 3 (query error) says nothing about
+> gaps** — checks that ran fine may still have gaps recorded in the JSON.
+> A caller that branches solely on the exit code will miss them. For the
+> gap decision, parse the JSON report: the top-level `passed` and each
+> check's `gaps` array are the source of truth, not the exit code.
 
 ## What each scenario means
 

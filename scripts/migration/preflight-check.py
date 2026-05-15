@@ -31,6 +31,19 @@ EXIT_ENV_MISSING = 4
 EXIT_REPORT_FAILED = 5
 EXIT_UNEXPECTED = 6
 
+
+class DestinationConnectionLost(Exception):
+    """Fatal: the destination connection died mid-run (not a query error).
+
+    Raised from run_check when a destination-side failure is a dropped/dead
+    connection (Supabase pooler idle drop, network blip) rather than a
+    query-level fault (relation missing, syntax, permission). main() catches
+    this around the per-check loop and converts it to EXIT_CONNECTION,
+    aborting the whole run before any report is written -- consistent with
+    SCEN-004 semantics (connection failure => no JSON report). NEVER carries
+    the exception body or DSN; only the originating exception's class name.
+    """
+
 REQUIRED_ENV = [
     "LEGACY_DB_HOST",
     "LEGACY_DB_USER",
@@ -221,9 +234,39 @@ def _fetch_values(cursor, query: str) -> list[str]:
     return out
 
 
+def _is_fatal_dest_connection_loss(exc: Exception, dest_conn) -> bool:
+    """True if a destination-side exception means the connection is dead.
+
+    Fatal = a dropped/dead Postgres connection (pooler idle drop, network
+    blip), NOT a query-level fault. Query faults (UndefinedTable, syntax,
+    permission) are psycopg2.ProgrammingError subclasses and stay per-check
+    errors so SCEN-006-style isolation is preserved.
+
+    Signals:
+      - psycopg2.OperationalError / psycopg2.InterfaceError (connection-level)
+      - the connection object reports itself closed (conn.closed != 0)
+    psycopg2.ProgrammingError is explicitly NOT fatal even though it can be a
+    subclass relationship in some drivers -- check it first and bail out.
+    """
+    if isinstance(exc, psycopg2.ProgrammingError):
+        return False
+    if isinstance(exc, (psycopg2.OperationalError, psycopg2.InterfaceError)):
+        return True
+    try:
+        if getattr(dest_conn, "closed", 0):
+            return True
+    except Exception:
+        # A connection object that raises even on .closed is itself dead.
+        return True
+    return False
+
+
 def run_check(check: Check, legacy_cur, dest_conn) -> CheckResult:
-    """Run both sides of a check in isolation. A failure on either side
-    populates result.error and does NOT abort the run."""
+    """Run both sides of a check in isolation. A query-level failure on
+    either side populates result.error and does NOT abort the run. A FATAL
+    destination connection loss raises DestinationConnectionLost so main()
+    can abort with EXIT_CONNECTION (the connection is dead for every
+    remaining DB-backed check; per-check isolation no longer applies)."""
     result = CheckResult(name=check.name, description=check.description)
 
     try:
@@ -238,16 +281,25 @@ def run_check(check: Check, legacy_cur, dest_conn) -> CheckResult:
     else:
         try:
             # cursor() itself can raise on a dead connection; keep it
-            # inside the try so it is recorded as this check's error
-            # rather than propagating as an uncaught exception.
+            # inside the try so a query-level fault is recorded as this
+            # check's error rather than propagating as an uncaught
+            # exception. A FATAL connection loss is re-raised below.
             dest_cur = dest_conn.cursor()
             try:
                 dest_values = sorted(
                     set(_fetch_values(dest_cur, check.destination_query))
                 )
             finally:
-                dest_cur.close()
+                try:
+                    dest_cur.close()
+                except Exception:
+                    pass
         except Exception as exc:
+            if _is_fatal_dest_connection_loss(exc, dest_conn):
+                # Not this check's fault: the destination is gone for every
+                # remaining DB-backed check. Abort the whole run. Carry only
+                # the exception class name -- never the body or DSN.
+                raise DestinationConnectionLost(type(exc).__name__) from None
             result.error = f"destination query failed for '{check.name}': {exc}"
             result.passed = False
             return result
@@ -428,8 +480,21 @@ def main() -> int:
         legacy_cur = legacy_conn.cursor()
         try:
             results = [run_check(c, legacy_cur, dest_conn) for c in CHECKS]
+        except DestinationConnectionLost as exc:
+            # Destination died mid-run: every remaining DB-backed check
+            # would fail the same way. Abort with EXIT_CONNECTION BEFORE
+            # any report is written (SCEN-004 semantics: connection
+            # failure => no JSON). Sanitized: only the class name.
+            print(
+                f"destination connection lost during checks: {exc}",
+                file=sys.stderr,
+            )
+            return EXIT_CONNECTION
         finally:
-            legacy_cur.close()
+            try:
+                legacy_cur.close()
+            except Exception:
+                pass
     finally:
         _close(legacy_conn)
         _close(dest_conn)

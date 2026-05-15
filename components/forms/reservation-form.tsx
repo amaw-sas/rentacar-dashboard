@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Controller, useForm, type Resolver } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
@@ -17,6 +17,8 @@ import {
   createReservation,
   updateReservation,
 } from "@/lib/actions/reservations";
+import { updateCustomerContact } from "@/lib/actions/customers";
+import { customerContactSchema } from "@/lib/schemas/customer";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -75,6 +77,41 @@ const ID_TYPE_LABELS: Record<string, string> = {
   PP: "Pasaporte",
   TI: "Tarjeta Identidad",
 };
+
+// Inline customer contact editing (#36). These fields are not part of
+// reservationSchema — they live in local state and persist via their own
+// action. Module-scoped so the re-seed effect has a stable reference.
+type CustomerContactDraft = {
+  first_name: string;
+  last_name: string;
+  identification_type: string;
+  identification_number: string;
+  phone: string;
+  email: string;
+};
+
+const EMPTY_CONTACT: CustomerContactDraft = {
+  first_name: "",
+  last_name: "",
+  identification_type: "CC",
+  identification_number: "",
+  phone: "",
+  email: "",
+};
+
+function contactFromCustomer(
+  c: CustomerOption | undefined,
+): CustomerContactDraft {
+  if (!c) return EMPTY_CONTACT;
+  return {
+    first_name: c.first_name ?? "",
+    last_name: c.last_name ?? "",
+    identification_type: c.identification_type ?? "CC",
+    identification_number: c.identification_number ?? "",
+    phone: c.phone ?? "",
+    email: c.email ?? "",
+  };
+}
 
 export function ReservationForm({
   defaultValues,
@@ -153,10 +190,81 @@ export function ReservationForm({
   const washValue = watch("wash");
   const totalInsurance = watch("total_insurance");
 
-  const selectedCustomer = useMemo(
-    () => customers.find((c) => c.id === customerId),
-    [customers, customerId],
+  const [customerDraft, setCustomerDraft] =
+    useState<CustomerContactDraft>(EMPTY_CONTACT);
+  const [customerSnapshot, setCustomerSnapshot] =
+    useState<CustomerContactDraft>(EMPTY_CONTACT);
+  const [savingCustomer, setSavingCustomer] = useState(false);
+  const [customerError, setCustomerError] = useState<string | null>(null);
+
+  // Re-seed draft + snapshot ONLY when the selected customer changes
+  // (SCEN-006: switching customer discards unsaved edits). Intentionally NOT
+  // keyed on `customers`: a post-save router.refresh() hands down a fresh
+  // `customers` array, and re-seeding on that reference would clobber the
+  // just-saved draft (dual-writer race) and wipe unsaved edits on any
+  // unrelated revalidation. The combobox label still resyncs because it
+  // reads the refreshed `customers` prop directly.
+  useEffect(() => {
+    const seeded = contactFromCustomer(
+      customers.find((c) => c.id === customerId),
+    );
+    setCustomerDraft(seeded);
+    setCustomerSnapshot(seeded);
+    setCustomerError(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customerId]);
+
+  const isCustomerDirty = useMemo(
+    () =>
+      (Object.keys(EMPTY_CONTACT) as (keyof CustomerContactDraft)[]).some(
+        (k) => customerDraft[k] !== customerSnapshot[k],
+      ),
+    [customerDraft, customerSnapshot],
   );
+
+  const setContactField = (
+    field: keyof CustomerContactDraft,
+    value: string,
+  ) => {
+    setCustomerDraft((prev) => ({ ...prev, [field]: value }));
+  };
+
+  async function handleSaveCustomer() {
+    if (!customerId) return;
+    setCustomerError(null);
+
+    const parsed = customerContactSchema.safeParse(customerDraft);
+    if (!parsed.success) {
+      setCustomerError(parsed.error.issues[0].message);
+      return;
+    }
+
+    setSavingCustomer(true);
+    const fd = new FormData();
+    for (const [key, value] of Object.entries(parsed.data)) {
+      fd.append(key, value);
+    }
+    const result = await updateCustomerContact(customerId, fd);
+    setSavingCustomer(false);
+
+    if (result.error) {
+      setCustomerError(result.error);
+      return;
+    }
+
+    // Snapshot AND draft = exactly-persisted (trimmed) values: dirty resets
+    // and the fields show the saved values immediately (SCEN-001). The
+    // contact inputs and the combobox are disabled while saving, so the
+    // selected customer cannot change mid-flight. router.refresh() syncs the
+    // combobox label from the refreshed `customers` prop; the re-seed effect
+    // does NOT refire (customerId unchanged) — no dual-writer race.
+    setCustomerDraft(parsed.data);
+    setCustomerSnapshot(parsed.data);
+    router.refresh();
+  }
+
+  const canSaveCustomer =
+    customerId !== "" && isCustomerDirty && !savingCustomer;
 
   const availableCategories = useMemo(() => {
     if (!rentalCompanyId) return [];
@@ -207,10 +315,6 @@ export function ReservationForm({
     });
   }
 
-  const customerIdTypeLabel = selectedCustomer?.identification_type
-    ? ID_TYPE_LABELS[selectedCustomer.identification_type] ?? selectedCustomer.identification_type
-    : "";
-
   const persistedStatus = (defaultValues?.status ?? "nueva") as ReservationStatus;
 
   return (
@@ -241,6 +345,7 @@ export function ReservationForm({
               placeholder="Seleccionar cliente"
               searchPlaceholder="Buscar por nombre o identificación…"
               emptyMessage="Sin clientes que coincidan"
+              disabled={savingCustomer}
             />
             {errors.customer_id && (
               <p className="text-sm text-destructive">{errors.customer_id.message}</p>
@@ -249,39 +354,56 @@ export function ReservationForm({
 
           <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
             <div className="space-y-2">
-              <Label htmlFor="customer_name">Nombre</Label>
+              <Label htmlFor="customer_first_name">Nombre</Label>
               <Input
-                id="customer_name"
-                value={
-                  selectedCustomer
-                    ? `${selectedCustomer.first_name} ${selectedCustomer.last_name}`.trim()
-                    : ""
-                }
-                readOnly
-                tabIndex={-1}
-                className="bg-muted"
+                id="customer_first_name"
+                value={customerDraft.first_name}
+                onChange={(e) => setContactField("first_name", e.target.value)}
+                disabled={!customerId || savingCustomer}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="customer_last_name">Apellido</Label>
+              <Input
+                id="customer_last_name"
+                value={customerDraft.last_name}
+                onChange={(e) => setContactField("last_name", e.target.value)}
+                disabled={!customerId || savingCustomer}
               />
             </div>
 
             <div className="space-y-2">
               <Label htmlFor="customer_id_type">Tipo identificación</Label>
-              <Input
-                id="customer_id_type"
-                value={customerIdTypeLabel}
-                readOnly
-                tabIndex={-1}
-                className="bg-muted"
-              />
+              <Select
+                value={customerDraft.identification_type}
+                onValueChange={(value) =>
+                  setContactField("identification_type", value)
+                }
+                disabled={!customerId || savingCustomer}
+              >
+                <SelectTrigger id="customer_id_type" className="w-full min-w-0">
+                  <SelectValue placeholder="Seleccionar tipo" />
+                </SelectTrigger>
+                <SelectContent>
+                  {Object.entries(ID_TYPE_LABELS).map(([code, label]) => (
+                    <SelectItem key={code} value={code}>
+                      {code} — {label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
 
             <div className="space-y-2">
               <Label htmlFor="customer_identification">Identificación</Label>
               <Input
                 id="customer_identification"
-                value={selectedCustomer?.identification_number ?? ""}
-                readOnly
-                tabIndex={-1}
-                className="bg-muted"
+                value={customerDraft.identification_number}
+                onChange={(e) =>
+                  setContactField("identification_number", e.target.value)
+                }
+                disabled={!customerId || savingCustomer}
               />
             </div>
 
@@ -289,24 +411,40 @@ export function ReservationForm({
               <Label htmlFor="customer_phone">Teléfono</Label>
               <Input
                 id="customer_phone"
-                value={selectedCustomer?.phone ?? ""}
-                readOnly
-                tabIndex={-1}
-                className="bg-muted"
+                value={customerDraft.phone}
+                onChange={(e) => setContactField("phone", e.target.value)}
+                disabled={!customerId || savingCustomer}
               />
             </div>
 
-            <div className="space-y-2 sm:col-span-1 lg:col-span-2">
+            <div className="space-y-2">
               <Label htmlFor="customer_email">Email</Label>
               <Input
                 id="customer_email"
-                value={selectedCustomer?.email ?? ""}
-                readOnly
-                tabIndex={-1}
-                className="bg-muted"
+                type="email"
+                value={customerDraft.email}
+                onChange={(e) => setContactField("email", e.target.value)}
+                disabled={!customerId || savingCustomer}
               />
             </div>
           </div>
+
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-sm text-muted-foreground">
+              Editar afecta los datos del cliente en todas sus reservas.
+            </p>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={handleSaveCustomer}
+              disabled={!canSaveCustomer}
+            >
+              {savingCustomer ? "Guardando..." : "Guardar cliente"}
+            </Button>
+          </div>
+          {customerError && (
+            <p className="text-sm text-destructive">{customerError}</p>
+          )}
         </CardContent>
       </Card>
 

@@ -62,6 +62,8 @@ operador escribe/filtra → `setFilter` → (debounce 250ms solo para `search`) 
 ### Invariantes preservados
 
 - **Cambio externo (Back / nav sidebar):** Next dispara navegación real → `useSearchParams` cambia → la lógica `justWroteRef`/`lastParamsKey` cancela el debounce pendiente igual que hoy (depende de `paramsKey`, que sigue cambiando).
+- **Clasificación interno vs externo — suposición de mayor riesgo del cambio:** el guard render-body (`use-reservations-table-url-state.ts:204-217`) es idempotente y depende de que una escritura interna produzca una transición de `paramsKey` con `justWroteRef.current === true`. `router.replace` y `replaceState` ambos sincronizan `useSearchParams` (docs Next.js), pero no se asume self-evident que `replaceState` surface esa actualización en la **misma cadencia de render** sin partir la transición de `paramsKey`. Si la partiera, una escritura interna podría misclasificarse como externa (cancelando un debounce legítimo) o viceversa. Se valida explícitamente: runtime (escenario 7) + unit del **path interno** (escritura interna NO cancela debounce pendiente), complementando el path externo del escenario 4.
+- **Page-clamp effect (in-scope por transitividad):** `reservations-table.tsx:121-125` (`useEffect` que llama `url.onPaginationChange`) enruta por `writeUrl` → cubierto por el mismo fix; lo ejercita la QA de paginación.
 - **Botón Atrás:** `replaceState` no apila historial = idéntico a `router.replace`. Sin regresión.
 - **Links compartidos / bookmarks:** una URL con query params sigue siendo carga server normal (no afectada; solo cambian las *actualizaciones in-page*).
 - **Early-return `qs === paramsKey`:** intacto.
@@ -78,8 +80,8 @@ Sin cambios en: queries (`lib/queries/`), contrato de datos, modelo de TanStack,
 
 ## Testing
 
-- **Unit (vitest, `tests/unit/hooks/`):** mock `window.history.replaceState`; assert que `setFilter` (search y un filtro enum), `clearAll`, `onSortingChange`, `onPaginationChange` invocan `replaceState` con el href esperado y que NO se invoca navegación de router.
-- **Runtime (`/agent-browser` + `/dogfood`):** en `/reservations`, escribir un término en el buscador y verificar vía Network/Server Timing que NO se dispara request al RSC del segmento, que la tabla filtra correctamente, y cero errores de consola / requests fallidos. Repetir con un filtro enum y con paginación.
+- **Unit (vitest, `tests/unit/hooks/`):** mock `window.history.replaceState`; assert que (a) `setFilter` (search y un filtro enum), `clearAll`, `onSortingChange`, `onPaginationChange` invocan `replaceState` con el href esperado y NO invocan navegación de router; (b) **path interno**: tras una escritura interna vía `setFilter`, un debounce de búsqueda pendiente NO se cancela (complementa el path externo del escenario 4); (c) gate de verificación: `useRouter`/`router` queda sin referencias en el archivo tras el cambio.
+- **Runtime (`/agent-browser` + `/dogfood`):** en `/reservations` — (1) escribir término en buscador, verificar vía Network/Server Timing que NO hay request RSC al segmento y que filtra correcto; (2) repetir con filtro enum y con paginación; (3) abrir una URL con `?q=foo` en pestaña nueva y confirmar carga server-side normal con filtro aplicado (no-regresión, escenario 3); cero errores de consola / requests fallidos en todos.
 
 ## Observable scenarios
 
@@ -89,6 +91,7 @@ Sin cambios en: queries (`lib/queries/`), contrato de datos, modelo de TanStack,
 4. **Given** un término escrito y debounce pendiente, **when** el operador navega Atrás o por el sidebar, **then** el debounce se cancela y no clobberea el nuevo estado de URL (invariante actual preservado).
 5. **Given** el operador aplicó varios filtros, **when** presiona el botón Atrás, **then** el comportamiento es idéntico al actual (replaceState no apila historial — sin regresión).
 6. **Given** `clearAll` invocado, **when** se limpian los filtros, **then** la URL queda sin params gestionados y la tabla muestra todo, sin fetch RSC.
+7. **Given** un término escrito y debounce pendiente, **when** ocurre otra escritura **interna** (otro `setFilter`/cambio de filtro), **then** el debounce NO se cancela espuriamente — la escritura interna se clasifica como interna (no externa) tras el `replaceState` (cubre la suposición de mayor riesgo: cadencia de render de `replaceState` vs `router.replace`).
 
 ---
 *Evidencia: lectura de código + query read-only a Supabase prod + Context7 docs Next.js. Sin cambios de código aplicados en esta fase.*

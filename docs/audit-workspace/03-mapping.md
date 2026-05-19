@@ -6,6 +6,8 @@
 - `dest.customers.Y` = columna `Y` en Supabase `public.customers`.
 - **Riesgo**: A (alto, requiere decisión humana o pre-validación), M (medio, mitigable), B (bajo, mapeo directo).
 
+> **⚠️ Corrección 2026-05-19 (post-cierre #13).** El mapeo original asumió que `legacy.reservations.user` era nombre de operador descartable y que el legacy no rastreaba referidos. Ambas asunciones eran falsas — confirmadas erróneas por el dueño del dato (Pablo). `legacy.reservations.user` ES la columna de referidos del legacy. Las celdas afectadas están corregidas in-line con la marca `[corregido 2026-05-19]`. Ver comentario de corrección en #13 y issues derivadas: #46 (seed referrals reales), #47 (backfill `public.reservations` actuales), #48 (UX anti-fraude), #20 (scope ETL corregido).
+
 ---
 
 ## D1 — customers (no existe tabla en legacy)
@@ -43,8 +45,8 @@ Al agrupar por `(identification_type, identification)`, las filas legacy pueden 
 | id | (generado) | `gen_random_uuid()` | B |
 | customer_id | (resuelto) | lookup en customers por `(identification_type→CC/CE/PP, identification)` | M |
 | rental_company_id | (n/a en legacy) | lookup en rental_companies por franchise (`alquilatucarro` → Localiza, etc.) — política E3 | A |
-| referral_id | (n/a) | NULL | B |
-| referral_raw | (n/a) | NULL | B |
+| referral_id | `reservations.user` | lookup canónico `LOWER(TRIM(user)) = referrals.code → referrals.id`; NULL/'' → NULL **[corregido 2026-05-19]** | A |
+| referral_raw | `reservations.user` | TRIM del string original; preservar siempre, aun cuando `referral_id` resuelva; NULL/'' → NULL **[corregido 2026-05-19]** | B |
 | pickup_location_id | `reservations.pickup_location` | lookup branches.id → locations vía `branches.code` o `branches.name` → `locations.code` | A |
 | return_location_id | `reservations.return_location` | mismo lookup | A |
 | franchise | `reservations.franchise` (BIGINT FK) | lookup franchises.id → franchises.name → mapeo a enum `alquilatucarro\|alquilame\|alquicarros` | M |
@@ -115,7 +117,7 @@ Regla SQL canónica: `lower(replace(status, ' ', '_'))` resuelve los 13 valores 
 
 | legacy.reservations.X | razón |
 |---|---|
-| `user` (operador) | no hay equivalente; opcional volcarlo a `nota` con prefijo `[OP: <user>]` (política E3) |
+| ~~`user` (operador)~~ | **[CORREGIDO 2026-05-19]** NO se descarta — es la columna de referidos del legacy. Mapeo real en D2 (`referral_id` + `referral_raw`). |
 | `flight` (boolean) | destino no tiene; si TRUE, opcional volcar a `nota` |
 
 ---
@@ -195,8 +197,8 @@ Solo migrar registros donde el JSON `request_parameters` contenga **todos los ca
 | `customers.notes` | `''` | sin equivalente legacy |
 | `customers.status` | `'active'` | sin equivalente |
 | `reservations.rental_company_id` | lookup por franchise (decisión E3) | hipótesis: 1 franchise → 1 rental_company; validar con producto |
-| `reservations.referral_id` | NULL | legacy no rastreaba; cumple FK nullable |
-| `reservations.referral_raw` | NULL | |
+| `reservations.referral_id` | resolución vía lookup desde `legacy.user` | **[corregido 2026-05-19]** ver D2; legacy SÍ rastreaba referidos en columna `user` |
+| `reservations.referral_raw` | string original desde `legacy.user` | **[corregido 2026-05-19]** ver D2 |
 | `reservations.reference_token` | NULL | |
 | `reservations.rate_qualifier` | NULL | |
 | `reservations.booking_type` | derivado por reglas | ver D2 |
@@ -204,7 +206,7 @@ Solo migrar registros donde el JSON `request_parameters` contenga **todos los ca
 | `reservations.notification_sent` | `false` | conservador |
 | `reservations.notification_sent_at` | NULL | |
 | `reservations.notification_sent_by` | NULL | |
-| `reservations.created_by` | NULL | sin operador trazable |
+| `reservations.created_by` | NULL | filas históricas no tienen `profiles.id` asociable; el operador legacy se preserva en `referral_id`/`referral_raw` (D2), no en `created_by` **[corregido 2026-05-19]** |
 
 ---
 

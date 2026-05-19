@@ -226,18 +226,20 @@ Si E1 reporta valores > 9.999.999,99 (raro en COP para reservas), abrir issue pa
 
 ---
 
-## P12 — Campo `user` (operador legado)
+## ~~P12 — Campo `user` (operador legado)~~ **[CORREGIDO 2026-05-19]**
+
+> **⚠️ Esta política completa está obsoleta.** El campo `legacy.reservations.user` NO es operador legado — es la columna de referidos del legacy. Confirmado por el dueño del dato (Pablo, 2026-05-19). Mapeo real: lookup canónico `LOWER(TRIM(user)) = referrals.code → referral_id` con `referral_raw` preservado. Ver corrección en #13 y `03-mapping.md` §D2. Las opciones A/B/C abajo **no aplicar** — se preservan como registro histórico del análisis original. Issues derivadas: #46 (seed real referrals), #47 (backfill `public.reservations` actuales), #48 (UI anti-fraude), #20 (ETL scope corregido).
 
 Legacy guarda nombre del operador como string libre en `reservations.user`. Destino tiene `created_by uuid → profiles(id)` que requiere un profile real con auth.
 
-### Opciones
+### ~~Opciones~~
 | # | regla |
 |---|---|
-| A | descartar el dato | información histórica perdida |
-| B | volcar a `nota` con prefijo `[OP: <user>]` | preserva auditoría sin requerir profile real |
-| C | crear profile sintético "legacy-operator" y enlazarlo en `created_by` | preserva enlace, requiere user auth dummy |
+| ~~A~~ | ~~descartar el dato~~ | información histórica perdida |
+| ~~B~~ | ~~volcar a `nota` con prefijo `[OP: <user>]`~~ | preserva auditoría sin requerir profile real |
+| ~~C~~ | ~~crear profile sintético "legacy-operator" y enlazarlo en `created_by`~~ | preserva enlace, requiere user auth dummy |
 
-### Recomendación: **B** si producto valora la auditoría; **A** si no se usa.
+### ~~Recomendación: **B** si producto valora la auditoría; **A** si no se usa.~~
 
 ---
 
@@ -272,5 +274,5 @@ Destino no tiene columna `flight`. Si `flight = true`, indica que el cliente via
 | P10 | search_logs JSON | descartar incompleto | no |
 | P10b | converted_to_reservation | FALSE | sí (si producto pide) |
 | P11 | tipos numéricos | ROUND(value, 2) | no |
-| P12 | `user` operador | volcar a nota o descartar | sí |
+| P12 | `user` operador | **[corregido 2026-05-19]** lookup canónico → `referral_id` (ver D2/03-mapping) | RESUELTA — ver #13 |
 | P13 | `flight` boolean | descartar | no |

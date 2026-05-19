@@ -34,7 +34,7 @@ Generated via Explore subagent reading all 49 migrations in `/home/pabloandi/pro
 | ghl_contact_id | string | YES | NULL | 2026_01_15_000000, indexed |
 | ghl_opportunity_id | string | YES | NULL | 2026_01_15_000000, indexed |
 | ghl_last_sync | timestamp | YES | NULL | 2026_01_15_000000 |
-| user | string | YES | NULL | operator name field |
+| user | string | YES | NULL | ~~operator name field~~ **[corregido 2026-05-19]** columna de referidos — IDs de operadores Daniela/Diana/Valeria + referidos sueltos; ver #13 y `03-mapping.md` §D2 |
 | reserve_code | string | YES | NULL | |
 | status | enum | NO | 'Pendiente' | see "status enum evolution" below — final 13 values |
 | monthly_mileage | enum | YES | NULL | `'1k_kms', '2k_kms', '3k_kms'` — 2024_07_26_154649 |

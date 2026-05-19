@@ -1,15 +1,31 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import {
+  describe,
+  it,
+  expect,
+  beforeEach,
+  afterEach,
+  afterAll,
+  vi,
+} from "vitest";
 import { act, renderHook } from "@testing-library/react";
 
-const replaceMock = vi.fn();
 let currentParams: URLSearchParams = new URLSearchParams();
 const pathnameMock = vi.fn(() => "/customers");
+
+// Hook now writes via window.history.replaceState (issue #41, port of #40).
+// Spy is a deliberate noop: jsdom replaceState mutates window.location, which
+// would fight the useSearchParams mock that the test uses as the URL source of
+// truth. The retained useRouter stub is harmless — the hook no longer consumes
+// it; it just keeps the next/navigation mock shape intact.
+const replaceStateSpy = vi
+  .spyOn(window.history, "replaceState")
+  .mockImplementation(() => {});
 
 vi.mock("next/navigation", () => ({
   useSearchParams: () => currentParams,
   usePathname: () => pathnameMock(),
   useRouter: () => ({
-    replace: replaceMock,
+    replace: vi.fn(),
     push: vi.fn(),
     back: vi.fn(),
     forward: vi.fn(),
@@ -25,10 +41,16 @@ function setUrl(query: string) {
 }
 
 beforeEach(() => {
-  replaceMock.mockClear();
+  replaceStateSpy.mockClear();
   pathnameMock.mockClear();
   pathnameMock.mockReturnValue("/customers");
   setUrl("");
+});
+
+// #40 lesson: an unrestored module-level window.history spy leaks cross-file
+// and flaked customers.test.ts under CPU contention. Restore proactively.
+afterAll(() => {
+  replaceStateSpy.mockRestore();
 });
 
 describe("useDataTableUrlState — URL parsing (Step 3 scenarios)", () => {
@@ -163,9 +185,9 @@ describe("useDataTableUrlState — URL parsing (Step 3 scenarios)", () => {
 });
 
 function lastReplaceUrl(): string {
-  expect(replaceMock).toHaveBeenCalled();
-  const args = replaceMock.mock.calls.at(-1);
-  return args?.[0] as string;
+  expect(replaceStateSpy).toHaveBeenCalled();
+  const args = replaceStateSpy.mock.calls.at(-1);
+  return args?.[2] as string;
 }
 
 describe("useDataTableUrlState — sort + pagination setters", () => {
@@ -293,7 +315,7 @@ describe("useDataTableUrlState — input buffer (SCEN-011)", () => {
     expect(result.current.searchInput).toBe("lop");
 
     // URL has not been written yet — only the buffer is updated synchronously.
-    expect(replaceMock).not.toHaveBeenCalled();
+    expect(replaceStateSpy).not.toHaveBeenCalled();
 
     rerender();
     expect(result.current.searchInput).toBe("lop");
@@ -459,7 +481,7 @@ describe("useDataTableUrlState — debounced search setter", () => {
     vi.useRealTimers();
   });
 
-  it("SCEN-017: onPaginationChange that yields the current URL does NOT call router.replace", () => {
+  it("SCEN-017: onPaginationChange that yields the current URL does NOT call replaceState", () => {
     vi.useRealTimers();
     setUrl("q=ana");
     const { result } = renderHook(() =>
@@ -470,10 +492,10 @@ describe("useDataTableUrlState — debounced search setter", () => {
       result.current.onPaginationChange({ pageIndex: 0, pageSize: 20 });
     });
 
-    expect(replaceMock).not.toHaveBeenCalled();
+    expect(replaceStateSpy).not.toHaveBeenCalled();
   });
 
-  it("SCEN-017: onSortingChange that yields the current URL does NOT call router.replace", () => {
+  it("SCEN-017: onSortingChange that yields the current URL does NOT call replaceState", () => {
     vi.useRealTimers();
     setUrl("");
     const { result } = renderHook(() => useDataTableUrlState());
@@ -482,7 +504,7 @@ describe("useDataTableUrlState — debounced search setter", () => {
       result.current.onSortingChange([]);
     });
 
-    expect(replaceMock).not.toHaveBeenCalled();
+    expect(replaceStateSpy).not.toHaveBeenCalled();
   });
 
   it("SCEN-019: full filter cycle followed by autoReset-style pagination call produces exactly ONE replace", () => {
@@ -498,7 +520,7 @@ describe("useDataTableUrlState — debounced search setter", () => {
       vi.advanceTimersByTime(250);
     });
 
-    expect(replaceMock).toHaveBeenCalledTimes(1);
+    expect(replaceStateSpy).toHaveBeenCalledTimes(1);
 
     // Simulate Next.js soft-navigation re-render with the new URL.
     setUrl("q=ana");
@@ -510,7 +532,7 @@ describe("useDataTableUrlState — debounced search setter", () => {
       result.current.onPaginationChange({ pageIndex: 0, pageSize: 20 });
     });
 
-    expect(replaceMock).toHaveBeenCalledTimes(1);
+    expect(replaceStateSpy).toHaveBeenCalledTimes(1);
   });
 
   it("SCEN-016: badge click during pending debounce preserves freshly-clicked filter", () => {
@@ -532,8 +554,8 @@ describe("useDataTableUrlState — debounced search setter", () => {
       vi.advanceTimersByTime(250);
     });
 
-    expect(replaceMock).toHaveBeenCalledTimes(1);
-    const url = replaceMock.mock.calls[0]?.[0] as string;
+    expect(replaceStateSpy).toHaveBeenCalledTimes(1);
+    const url = replaceStateSpy.mock.calls[0]?.[2] as string;
     const qs = new URLSearchParams(url.split("?")[1] ?? "");
     expect(qs.get("match_status")).toBe("unmatched");
     expect(qs.get("payment_status")).toBe("pending");
@@ -584,14 +606,14 @@ describe("useDataTableUrlState — debounced search setter", () => {
       ]);
     });
 
-    expect(replaceMock).not.toHaveBeenCalled();
+    expect(replaceStateSpy).not.toHaveBeenCalled();
 
     act(() => {
       vi.advanceTimersByTime(250);
     });
 
-    expect(replaceMock).toHaveBeenCalledTimes(1);
-    const url = replaceMock.mock.calls[0]?.[0] as string;
+    expect(replaceStateSpy).toHaveBeenCalledTimes(1);
+    const url = replaceStateSpy.mock.calls[0]?.[2] as string;
     const qs = new URLSearchParams(url.split("?")[1] ?? "");
     expect(qs.get("q")).toBe("lopez");
   });
@@ -614,7 +636,7 @@ describe("useDataTableUrlState — debounced search setter", () => {
       vi.advanceTimersByTime(1000);
     });
 
-    expect(replaceMock).not.toHaveBeenCalled();
+    expect(replaceStateSpy).not.toHaveBeenCalled();
   });
 
   it("SCEN-006 (filter variant): debounced search resets page to 1 when flushed", () => {
@@ -632,8 +654,8 @@ describe("useDataTableUrlState — debounced search setter", () => {
       vi.advanceTimersByTime(250);
     });
 
-    expect(replaceMock).toHaveBeenCalledTimes(1);
-    const url = replaceMock.mock.calls[0]?.[0] as string;
+    expect(replaceStateSpy).toHaveBeenCalledTimes(1);
+    const url = replaceStateSpy.mock.calls[0]?.[2] as string;
     const qs = new URLSearchParams(url.split("?")[1] ?? "");
     expect(qs.get("q")).toBe("x");
     expect(qs.has("page")).toBe(false);
@@ -654,8 +676,8 @@ describe("useDataTableUrlState — debounced search setter", () => {
       vi.advanceTimersByTime(250);
     });
 
-    expect(replaceMock).toHaveBeenCalledTimes(1);
-    const url = replaceMock.mock.calls[0]?.[0] as string;
+    expect(replaceStateSpy).toHaveBeenCalledTimes(1);
+    const url = replaceStateSpy.mock.calls[0]?.[2] as string;
     const qs = new URLSearchParams(url.split("?")[1] ?? "");
     expect(qs.get("match_status")).toBe("unmatched");
     expect(qs.get("q")).toBe("abc");
@@ -674,8 +696,8 @@ describe("useDataTableUrlState — debounced search setter", () => {
       vi.advanceTimersByTime(250);
     });
 
-    expect(replaceMock).toHaveBeenCalledTimes(1);
-    const url = replaceMock.mock.calls[0]?.[0] as string;
+    expect(replaceStateSpy).toHaveBeenCalledTimes(1);
+    const url = replaceStateSpy.mock.calls[0]?.[2] as string;
     const qs = new URLSearchParams(url.split("?")[1] ?? "");
     expect(qs.has("q")).toBe(false);
     expect(qs.has("page")).toBe(false);

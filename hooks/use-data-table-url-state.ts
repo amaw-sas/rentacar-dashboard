@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import type {
   ColumnFiltersState,
   OnChangeFn,
@@ -70,7 +70,6 @@ export function useDataTableUrlState(options?: UseDataTableUrlStateOptions) {
 
   const searchParams = useSearchParams();
   const pathname = usePathname();
-  const router = useRouter();
   const paramsKey = searchParams?.toString() ?? "";
 
   const { columnFilters, sorting, pagination, urlSearchValue } = useMemo(() => {
@@ -109,13 +108,19 @@ export function useDataTableUrlState(options?: UseDataTableUrlStateOptions) {
       else next.delete(key);
       if (resetPage) next.delete("page");
       const qs = next.toString();
-      // Skip when target equals current — router.replace with the same href
-      // still triggers an RSC payload fetch in App Router, which combined with
-      // react-table's autoResetPageIndex produces a feedback loop.
+      // Skip when target equals current — avoids a redundant history write and
+      // the no-op churn that, combined with react-table's autoResetPageIndex,
+      // produced a feedback loop under the former router.replace path.
       if (qs === paramsKey) return;
-      router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+      if (typeof window !== "undefined") {
+        window.history.replaceState(
+          null,
+          "",
+          qs ? `${pathname}?${qs}` : pathname,
+        );
+      }
     },
-    [paramsKey, pathname, router],
+    [paramsKey, pathname],
   );
   const writeUrlRef = useRef(writeUrl);
   useEffect(() => {

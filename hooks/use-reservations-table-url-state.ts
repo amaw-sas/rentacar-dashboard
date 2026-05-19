@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import type {
   OnChangeFn,
   PaginationState,
@@ -157,7 +157,6 @@ export function useReservationsTableUrlState(
 
   const searchParams = useSearchParams();
   const pathname = usePathname();
-  const router = useRouter();
   const paramsKey = searchParams?.toString() ?? "";
 
   const { filters, sorting, pagination, urlSearchValue } = useMemo(() => {
@@ -235,9 +234,15 @@ export function useReservationsTableUrlState(
       const qs = next.toString();
       if (qs === paramsKey) return;
       justWroteRef.current = true;
-      router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+      if (typeof window !== "undefined") {
+        window.history.replaceState(
+          null,
+          "",
+          qs ? `${pathname}?${qs}` : pathname,
+        );
+      }
     },
-    [paramsKey, pathname, router],
+    [paramsKey, pathname],
   );
   const writeUrlRef = useRef(writeUrl);
   useEffect(() => {

@@ -481,7 +481,7 @@ describe("useDataTableUrlState — debounced search setter", () => {
     vi.useRealTimers();
   });
 
-  it("SCEN-017: onPaginationChange that yields the current URL does NOT call router.replace", () => {
+  it("SCEN-017: onPaginationChange that yields the current URL does NOT call replaceState", () => {
     vi.useRealTimers();
     setUrl("q=ana");
     const { result } = renderHook(() =>
@@ -495,7 +495,7 @@ describe("useDataTableUrlState — debounced search setter", () => {
     expect(replaceStateSpy).not.toHaveBeenCalled();
   });
 
-  it("SCEN-017: onSortingChange that yields the current URL does NOT call router.replace", () => {
+  it("SCEN-017: onSortingChange that yields the current URL does NOT call replaceState", () => {
     vi.useRealTimers();
     setUrl("");
     const { result } = renderHook(() => useDataTableUrlState());

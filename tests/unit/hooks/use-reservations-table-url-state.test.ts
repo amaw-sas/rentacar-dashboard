@@ -1,15 +1,23 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act, renderHook } from "@testing-library/react";
 
-const replaceMock = vi.fn();
 let currentParams: URLSearchParams = new URLSearchParams();
 const pathnameMock = vi.fn(() => "/reservations");
+
+// Hook now writes via window.history.replaceState (issue #40). Spy is a
+// deliberate noop: jsdom replaceState mutates window.location, which would
+// fight the useSearchParams mock that the test uses as the URL source of
+// truth. The retained useRouter stub is harmless — the hook no longer
+// consumes it; it just keeps the next/navigation mock shape intact.
+const replaceStateSpy = vi
+  .spyOn(window.history, "replaceState")
+  .mockImplementation(() => {});
 
 vi.mock("next/navigation", () => ({
   useSearchParams: () => currentParams,
   usePathname: () => pathnameMock(),
   useRouter: () => ({
-    replace: replaceMock,
+    replace: vi.fn(),
     push: vi.fn(),
     back: vi.fn(),
     forward: vi.fn(),
@@ -31,7 +39,7 @@ function setUrl(query: string) {
 }
 
 beforeEach(() => {
-  replaceMock.mockClear();
+  replaceStateSpy.mockClear();
   pathnameMock.mockClear();
   pathnameMock.mockReturnValue("/reservations");
   setUrl("");
@@ -42,9 +50,9 @@ afterEach(() => {
 });
 
 function lastReplaceUrl(): string {
-  expect(replaceMock).toHaveBeenCalled();
-  const args = replaceMock.mock.calls.at(-1);
-  return args?.[0] as string;
+  expect(replaceStateSpy).toHaveBeenCalled();
+  const args = replaceStateSpy.mock.calls.at(-1);
+  return args?.[2] as string;
 }
 
 describe("useReservationsTableUrlState — URL parsing (Steps 3+4)", () => {
@@ -364,7 +372,7 @@ describe("useReservationsTableUrlState — setters", () => {
       result.current.setFilter("franchise", ALL);
     });
 
-    expect(replaceMock).not.toHaveBeenCalled();
+    expect(replaceStateSpy).not.toHaveBeenCalled();
   });
 
   it("SCEN-013 clearAll writes /reservations clean", () => {
@@ -379,8 +387,8 @@ describe("useReservationsTableUrlState — setters", () => {
       result.current.clearAll();
     });
 
-    expect(replaceMock).toHaveBeenCalledTimes(1);
-    const url = replaceMock.mock.calls[0]?.[0] as string;
+    expect(replaceStateSpy).toHaveBeenCalledTimes(1);
+    const url = replaceStateSpy.mock.calls[0]?.[2] as string;
     expect(url).toBe("/reservations");
 
     // After URL settles, hook reflects default state.
@@ -413,7 +421,7 @@ describe("useReservationsTableUrlState — search debounce + buffer", () => {
     });
 
     expect(result.current.searchInput).toBe("ana");
-    expect(replaceMock).not.toHaveBeenCalled();
+    expect(replaceStateSpy).not.toHaveBeenCalled();
   });
 
   it("SCEN-001 searchInput hydrates from URL on mount", () => {
@@ -423,7 +431,7 @@ describe("useReservationsTableUrlState — search debounce + buffer", () => {
     expect(result.current.searchInput).toBe("lopez");
   });
 
-  it("SCEN-009 debounce coalesces rapid typing into one router.replace", () => {
+  it("SCEN-009 debounce coalesces rapid typing into one replaceState", () => {
     setUrl("");
     const { result } = renderHook(() => useReservationsTableUrlState());
 
@@ -436,14 +444,14 @@ describe("useReservationsTableUrlState — search debounce + buffer", () => {
       });
     }
 
-    expect(replaceMock).not.toHaveBeenCalled();
+    expect(replaceStateSpy).not.toHaveBeenCalled();
 
     act(() => {
       vi.advanceTimersByTime(250);
     });
 
-    expect(replaceMock).toHaveBeenCalledTimes(1);
-    const url = replaceMock.mock.calls[0]?.[0] as string;
+    expect(replaceStateSpy).toHaveBeenCalledTimes(1);
+    const url = replaceStateSpy.mock.calls[0]?.[2] as string;
     const qs = new URLSearchParams(url.split("?")[1] ?? "");
     expect(qs.get("q")).toBe("lopez");
   });
@@ -464,7 +472,7 @@ describe("useReservationsTableUrlState — search debounce + buffer", () => {
       vi.advanceTimersByTime(1000);
     });
 
-    expect(replaceMock).not.toHaveBeenCalled();
+    expect(replaceStateSpy).not.toHaveBeenCalled();
   });
 
   it("SCEN-019 external URL change cancels pending search debounce", () => {
@@ -486,7 +494,7 @@ describe("useReservationsTableUrlState — search debounce + buffer", () => {
       vi.advanceTimersByTime(1000);
     });
 
-    expect(replaceMock).not.toHaveBeenCalled();
+    expect(replaceStateSpy).not.toHaveBeenCalled();
   });
 
   it("SCEN-020 search input is truncated to SEARCH_MAX_LEN characters", () => {
@@ -506,8 +514,8 @@ describe("useReservationsTableUrlState — search debounce + buffer", () => {
       vi.advanceTimersByTime(250);
     });
 
-    expect(replaceMock).toHaveBeenCalledTimes(1);
-    const url = replaceMock.mock.calls[0]?.[0] as string;
+    expect(replaceStateSpy).toHaveBeenCalledTimes(1);
+    const url = replaceStateSpy.mock.calls[0]?.[2] as string;
     const qs = new URLSearchParams(url.split("?")[1] ?? "");
     expect(qs.get("q")?.length).toBe(200);
   });
@@ -522,7 +530,7 @@ describe("useReservationsTableUrlState — search debounce + buffer", () => {
       result.current.setFilter("search", "abc");
     });
 
-    expect(replaceMock).not.toHaveBeenCalled();
+    expect(replaceStateSpy).not.toHaveBeenCalled();
 
     // Synchronous filter change (non-debounced) writes URL immediately.
     act(() => {
@@ -539,10 +547,50 @@ describe("useReservationsTableUrlState — search debounce + buffer", () => {
     });
 
     // Two replace calls total: status change + search flush.
-    expect(replaceMock).toHaveBeenCalledTimes(2);
-    const finalUrl = replaceMock.mock.calls.at(-1)?.[0] as string;
+    expect(replaceStateSpy).toHaveBeenCalledTimes(2);
+    const finalUrl = replaceStateSpy.mock.calls.at(-1)?.[2] as string;
     const qs = new URLSearchParams(finalUrl.split("?")[1] ?? "");
     expect(qs.get("status")).toBe("nueva");
     expect(qs.get("q")).toBe("abc");
+  });
+
+  it("SCEN-021 internal write after replaceState does not spuriously cancel pending search debounce", () => {
+    // Highest-risk assumption (R1): replaceState render cadence vs
+    // router.replace must not split the paramsKey transition and
+    // misclassify an internal write as external. An internal setFilter
+    // (enum) while a search debounce is pending must NOT cancel that
+    // debounce — both q and the enum filter must reach the URL.
+    // Complements SCEN-019 (external path).
+    setUrl("");
+    const { result, rerender } = renderHook(() =>
+      useReservationsTableUrlState(),
+    );
+
+    // Search typed → 250ms debounce armed.
+    act(() => {
+      result.current.setFilter("search", "abc");
+    });
+
+    expect(replaceStateSpy).not.toHaveBeenCalled();
+
+    // Internal write: synchronous enum filter change while debounce pending.
+    act(() => {
+      result.current.setFilter("status", "pendiente");
+    });
+
+    // Soft-nav lands — URL reflects the internal write.
+    setUrl("status=pendiente");
+    rerender();
+
+    // Debounce window elapses.
+    act(() => {
+      vi.advanceTimersByTime(250);
+    });
+
+    // Debounce was NOT spuriously cancelled: enum write + search flush.
+    expect(replaceStateSpy).toHaveBeenCalledTimes(2);
+    const params = new URLSearchParams(lastReplaceUrl().split("?")[1] ?? "");
+    expect(params.get("q")).toBe("abc");
+    expect(params.get("status")).toBe("pendiente");
   });
 });

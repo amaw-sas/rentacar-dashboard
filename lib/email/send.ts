@@ -18,6 +18,17 @@ export function deriveReplyTo<T extends string | null | undefined>(
   return `${local}@${stripped}` as T;
 }
 
+export interface SendAttachment {
+  filename: string;
+  content: Buffer;
+  // Resend Node.js SDK uses `cid` (not `contentId`) for inline-CID images
+  // when the attachment is supplied as `content: Buffer`. Verified via
+  // Context7 (/websites/resend, 2026-05-19). See
+  // docs/specs/2026-05-19-issue-9-email-spam-fix/context7-finding.md
+  cid: string;
+  contentType?: string;
+}
+
 interface SendEmailOptions {
   franchise: string;
   to: string;
@@ -27,6 +38,7 @@ interface SendEmailOptions {
   bcc?: string;
   reservationId?: string;
   notificationType?: string;
+  attachments?: SendAttachment[];
 }
 
 interface ResendApiError {
@@ -85,6 +97,7 @@ export async function sendEmail(options: SendEmailOptions): Promise<void> {
     bcc,
     reservationId,
     notificationType,
+    attachments,
   } = options;
 
   const supabase = createAdminClient();
@@ -114,6 +127,7 @@ export async function sendEmail(options: SendEmailOptions): Promise<void> {
     html,
     ...(text ? { text } : {}),
     ...(bcc ? { bcc: [bcc] } : {}),
+    ...(attachments && attachments.length > 0 ? { attachments } : {}),
     headers: {
       "List-Unsubscribe": `<mailto:${replyToAddress}?subject=Unsubscribe>`,
       "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",

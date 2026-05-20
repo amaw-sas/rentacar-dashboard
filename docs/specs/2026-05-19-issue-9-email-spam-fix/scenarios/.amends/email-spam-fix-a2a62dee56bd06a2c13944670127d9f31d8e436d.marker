@@ -1,0 +1,40 @@
+# Amend Marker — email-spam-fix scenarios
+
+**Base HEAD SHA**: a2a62dee56bd06a2c13944670127d9f31d8e436d
+**Evidence**: docs/specs/2026-05-19-issue-9-email-spam-fix/context7-finding.md
+
+## Pre-mortem
+
+The scenarios file (committed at c44805e) was authored using `contentId`
+as the literal field name in SCEN-01 and SCEN-07 assertions. This name
+was a placeholder — the spec explicitly marked SDK shape as needing
+Context7 verification (Step 1 of the implementation plan).
+
+Step 1 has now been executed (commit a2a62de). The Context7 verdict
+from /websites/resend is:
+
+- Resend Node.js SDK accepts TWO attachment patterns:
+  1. `path` (URL) + `contentId` — SDK fetches the URL
+  2. `content` (Buffer) + `cid` — SDK uses provided bytes
+
+Our design fetches the logo server-side (for SSRF allowlist control)
+and produces a Buffer. We are in pattern 2. The correct field is `cid`,
+not `contentId`.
+
+## What worries me most
+
+That the Resend docs are stale and the SDK actually accepts both
+fields. If so, the test using `cid` would still pass (because the SDK
+ignores unknown fields gracefully or normalizes them). The revert path
+is `git revert <amend commit>` and falls back to the original literal,
+which would only re-introduce the original guess without breaking
+runtime behavior. The risk of being wrong is bounded.
+
+## Scope of change
+
+- SCEN-01 Evidence block: rename `contentId` → `cid` in the toEqual matcher.
+- SCEN-07 reference to "el mismo objeto `attachments`": no change needed (object identity is the assertion, not field names).
+- All other SCEN blocks: no change. The user-observable behavior (inline CID image in email, fallback on failure, SSRF allowlist, MAX_LOGO_BYTES guard, 1-fetch-per-invocation, etc.) is preserved exactly.
+
+The semantic content of the contract is preserved. The literal field
+name is updated to match the verified SDK shape.

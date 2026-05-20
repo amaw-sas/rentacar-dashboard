@@ -24,7 +24,7 @@ Observable único: estado de la tabla `public.referrals` post-apply, leído por 
 ## SCEN-002: cinco referrals reales presentes con atributos exactos
 
 **Given**: migración 043 aplicada.
-**When**: se ejecuta `SELECT code, name, type, status FROM public.referrals ORDER BY code`.
+**When**: se ejecuta `SELECT code, name, type, status FROM public.referrals WHERE code IN ('carolain_hotel_bondo','daniela','diana','santiago_premium','valeria') ORDER BY code`.
 **Then**: el resultado contiene exactamente las siguientes 5 filas, en ese orden:
 
 | code                   | name                  | type        | status   |
@@ -35,9 +35,9 @@ Observable único: estado de la tabla `public.referrals` post-apply, leído por 
 | `santiago_premium`     | `SantiagoPremium`     | `other`     | `active` |
 | `valeria`              | `Valeria`             | `salesperson` | `inactive` |
 
-Ningún otro `code` aparece en el resultado (las filas test fueron borradas en SCEN-001, no había más filas legítimas).
+La aserción cubre presencia y atributos exactos de los 5 codes anteriores. Verificación ejecutada inmediatamente post-apply, antes de cualquier inserción legítima de operadores (window TOCTOU acotado al momento de la migración).
 
-**Evidence**: salida tabular de `mcp__supabase__execute_sql` con las 5 filas, comparada literal contra la tabla anterior.
+**Evidence**: salida tabular de `mcp__supabase__execute_sql` filtrada por los 5 codes esperados, comparada literal contra la tabla anterior.
 
 ## SCEN-003: Valeria conserva atribución histórica sin contaminar selects activos
 
@@ -59,13 +59,23 @@ Razón observable: cuando #48 corrija el selector de referido en edición de res
 
 ## SCEN-005: RLS y policies no se ven alteradas
 
-**Given**: política existente sobre `public.referrals` — authenticated puede leer, solo admins pueden INSERT/UPDATE (definida en `006_referrals.sql`).
+**Given**: policies existentes sobre `public.referrals` — 3 definidas en `006_referrals.sql` (authenticated read, admin insert, admin update) + 1 agregada en `016_anon_read_policies.sql` (anon read) = **4 policies** pre-existentes antes de aplicar 043.
 **When**: migración 043 aplicada.
-**Then**: `SELECT policyname, cmd FROM pg_policies WHERE schemaname='public' AND tablename='referrals' ORDER BY policyname` retorna exactamente las 3 policies originales — sin agregados, sin remociones, sin renames.
+**Then**: `SELECT policyname, cmd FROM pg_policies WHERE schemaname='public' AND tablename='referrals' ORDER BY policyname` retorna exactamente las 4 policies pre-existentes — sin agregados, sin remociones, sin renames.
 
 Esto es un guardrail: la migración solo toca DATA, no DDL. Si en algún momento del cycle alguien sugiere apagar RLS para insertar y reactivarla, este escenario lo bloquea.
 
-**Evidence**: salida de `pg_policies` query, comparada contra la lista esperada (`Admins can insert referrals`, `Admins can update referrals`, `Authenticated users can read referrals`).
+**Evidence**: salida de `pg_policies` query, comparada contra la lista esperada (`Admins can insert referrals`, `Admins can update referrals`, `Anon can read referrals`, `Authenticated users can read referrals`).
+
+---
+
+## Rollback
+
+Plan de reversa si post-apply se descubre un error en attributes (e.g., `type` incorrecto, nombre mal escrito):
+
+1. **Antes de que #47 ejecute backfill**: forward-only migration `044_revert_seed_referrals.sql` con `DELETE FROM public.referrals WHERE code IN (<5 codes>)` + re-INSERT de los 2 test rows preservados en el commit `4ec206c` (UUIDs: `e7731383-793a-4fa4-9a7f-b6182e809700` test, `60f1e3cd-797d-4ee4-8f21-de7b00365d5e` referidotest). Recapturar UUIDs en archivo si la reversa real se ejecuta.
+2. **Después de que #47 backfilea**: NO DELETE — el FK `reservations.referral_id` (ON DELETE NO ACTION en `008_reservations.sql:6`) bloqueará la operación de todos modos. Reversa correcta = forward-only `UPDATE` de los atributos incorrectos sobre la fila existente. Mantiene el `referral_id` intacto y preserva atribuciones históricas.
+3. **Reversa de filas test**: pre-state snapshot disponible en el commit body de `4ec206c` (resultado del SELECT pre-apply). El re-INSERT de las 2 test rows requiere los UUIDs originales arriba para no romper hipotéticas referencias externas (no había ninguna, pero defensiva).
 
 ---
 

@@ -538,7 +538,7 @@ describe("sendReservationNotifications", () => {
             {
               filename: "logo.png",
               content: logoBuffer,
-              cid: "franchise-logo",
+              contentId: "franchise-logo",
               contentType: "image/png",
             },
           ],

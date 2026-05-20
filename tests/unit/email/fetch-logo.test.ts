@@ -149,7 +149,44 @@ describe("fetchLogoAttachment", () => {
     const result = await fetchLogoAttachment(VALID_BLOB_URL);
     expect(result).toBeNull();
     expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining("logo too large (150000 bytes")
+      expect.stringContaining("logo size out of range (150000 bytes")
+    );
+  });
+
+  // Issue #9 pre-merge review additions
+  it("SCEN-11: zero-byte body returns null + console.warn (silent-failure guard)", async () => {
+    fetchSpy.mockResolvedValueOnce(
+      mockResponse({ contentType: "image/png", bodyBytes: 0 })
+    );
+    const result = await fetchLogoAttachment(VALID_BLOB_URL);
+    expect(result).toBeNull();
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("logo size out of range (0 bytes")
+    );
+  });
+
+  it("SCEN-12: 3xx redirect response is rejected (SSRF defense)", async () => {
+    fetchSpy.mockResolvedValueOnce(
+      new Response(null, {
+        status: 302,
+        headers: { location: "http://169.254.169.254/" },
+      })
+    );
+    const result = await fetchLogoAttachment(VALID_BLOB_URL);
+    expect(result).toBeNull();
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("logo fetch redirect 302")
+    );
+  });
+
+  it("passes redirect: 'manual' to fetch so undici does not follow", async () => {
+    fetchSpy.mockResolvedValueOnce(
+      mockResponse({ contentType: "image/png", bodyBytes: 5000 })
+    );
+    await fetchLogoAttachment(VALID_BLOB_URL);
+    expect(fetchSpy).toHaveBeenCalledWith(
+      VALID_BLOB_URL,
+      expect.objectContaining({ redirect: "manual" })
     );
   });
 

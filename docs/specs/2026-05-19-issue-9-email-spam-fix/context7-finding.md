@@ -4,7 +4,46 @@
 **Library**: `/websites/resend`
 **Query**: TypeScript interface for `CreateEmailOptions` Attachment type
 
-## Verdict
+## ⚠️ RETRACTED 2026-05-19 (post-PR review)
+
+The original verdict below (`cid` for Buffer content) was **wrong for the
+installed SDK (resend v6.12.2)**. The pre-PR performance-engineer review
+read the SDK source directly at
+`node_modules/resend/dist/index.cjs:208` and confirmed:
+
+```js
+function parseAttachments(attachments) {
+  return attachments?.map((attachment) => ({
+    content: attachment.content,
+    filename: attachment.filename,
+    path: attachment.path,
+    content_type: attachment.contentType,
+    content_id: attachment.contentId   // ← reads contentId, NOT cid
+  }));
+}
+```
+
+The TypeScript declaration (`resend/dist/index.d.cts:597-611`) also only
+exposes `contentId?: string`. There is no `cid` field in the SDK type or
+in `parseAttachments`. The public docs at `resend.com/docs/examples`
+showed both patterns from different SDK versions; the installed SDK
+source is the authoritative reference.
+
+**Correct shape for our case** (`content: Buffer`):
+
+```ts
+{
+  filename: "logo.png",
+  content: <Buffer>,
+  contentId: "franchise-logo",   // NOT `cid`
+  contentType: "image/png",      // optional
+}
+```
+
+The scenarios file was amended a second time (revert) to restore
+`contentId` as the literal field name in SCEN-01.
+
+## Original verdict (RETRACTED — kept as historical record below)
 
 The Resend Node.js SDK accepts **two distinct field names** depending on the source of the image bytes:
 

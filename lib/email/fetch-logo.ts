@@ -6,6 +6,10 @@
 
 const FETCH_TIMEOUT_MS = 5000;
 const MAX_LOGO_BYTES = 100_000;
+// 100 bytes is below any plausible PNG/JPEG/GIF/WebP header+payload. Catches
+// empty bodies (CDN cache miss, mid-delete) and truncated downloads — both
+// would ship a broken-image attachment, defeating the spam fix.
+const MIN_LOGO_BYTES = 100;
 const ALLOWED_PREFIXES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
 
 // Exact match OR dot-boundary suffix. Plain endsWith would let
@@ -53,7 +57,17 @@ export async function fetchLogoAttachment(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
-    const res = await fetch(logoUrl, { signal: controller.signal });
+    // `redirect: "manual"` blocks SSRF-via-redirect: the allowlist only
+    // validates the initial URL. Without this, an allowlisted host serving
+    // a 3xx to an internal target would bypass the allowlist.
+    const res = await fetch(logoUrl, {
+      signal: controller.signal,
+      redirect: "manual",
+    });
+    if (res.status >= 300 && res.status < 400) {
+      console.warn(`[email] logo fetch redirect ${res.status}: ${logoUrl}`);
+      return null;
+    }
     if (!res.ok) {
       console.warn(`[email] logo fetch ${res.status}: ${logoUrl}`);
       return null;
@@ -66,9 +80,9 @@ export async function fetchLogoAttachment(
       return null;
     }
     const buf = Buffer.from(await res.arrayBuffer());
-    if (buf.byteLength > MAX_LOGO_BYTES) {
+    if (buf.byteLength < MIN_LOGO_BYTES || buf.byteLength > MAX_LOGO_BYTES) {
       console.warn(
-        `[email] logo too large (${buf.byteLength} bytes > ${MAX_LOGO_BYTES}): ${logoUrl}`
+        `[email] logo size out of range (${buf.byteLength} bytes; allowed ${MIN_LOGO_BYTES}-${MAX_LOGO_BYTES}): ${logoUrl}`
       );
       return null;
     }

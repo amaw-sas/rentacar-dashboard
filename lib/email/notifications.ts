@@ -185,7 +185,7 @@ async function prepareLogoForEmail(branding: FranchiseBranding): Promise<{
       {
         filename: logo.filename,
         content: logo.content,
-        cid: LOGO_CONTENT_ID,
+        contentId: LOGO_CONTENT_ID,
         contentType: logo.contentType,
       },
     ],

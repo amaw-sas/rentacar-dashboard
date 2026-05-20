@@ -450,7 +450,7 @@ describe("sendEmail — error handling", () => {
         {
           filename: "logo.png",
           content: logoBuffer,
-          cid: "franchise-logo",
+          contentId: "franchise-logo",
         },
       ],
     });
@@ -461,7 +461,7 @@ describe("sendEmail — error handling", () => {
           {
             filename: "logo.png",
             content: logoBuffer,
-            cid: "franchise-logo",
+            contentId: "franchise-logo",
           },
         ],
       })

@@ -1,0 +1,49 @@
+# Amend Marker — email-spam-fix scenarios (SECOND amend — revert of first)
+
+**Base HEAD SHA**: c1d3c3a836d6ec7cf571c17da0f98e886f513f43
+**Evidence**: docs/specs/2026-05-19-issue-9-email-spam-fix/context7-finding.md (now retracted),
+              node_modules/resend/dist/index.cjs:208 (authoritative SDK source)
+
+## Pre-mortem
+
+The first amend (HEAD a2a62de, marker `email-spam-fix-a2a62de...`)
+renamed `contentId` → `cid` in SCEN-01 based on the Context7 docs
+result. That amend was **wrong** for the installed SDK version.
+
+The pre-PR performance-engineer review read the actual SDK source at
+`node_modules/.pnpm/resend@6.12.2_.../resend/dist/index.cjs:208`:
+
+```js
+content_id: attachment.contentId   // SDK reads .contentId, NOT .cid
+```
+
+The TypeScript declaration `resend/dist/index.d.cts:597-611` also only
+exposes `contentId?: string`. There is no `cid` field in the SDK.
+
+**Authoritative source**: installed SDK code beats public docs when
+they disagree. The first amend's premortem accepted Context7 as
+authoritative — that was a mistake. The current revert restores
+`contentId` as the literal field name in SCEN-01.
+
+## What worries me most
+
+That this is a different SDK version risk later. If the team upgrades
+Resend SDK to v7+ and the field rename happens, this test will fail
+loudly (test asserts shape exactly) — which is the correct behavior.
+No silent regression possible.
+
+## Scope of change
+
+- SCEN-01 Evidence block: `cid: "franchise-logo"` → `contentId: "franchise-logo"`
+- Both the prose Then-clause AND the toEqual matcher in Evidence.
+- All other SCEN blocks: no change.
+- The amended note from the FIRST amend is preserved (historical) but
+  superseded by this marker's note pointing to the retracted context7-finding.
+
+## Verification before commit
+
+- `pnpm test tests/unit/email/` → 106/106 passing (post-fix).
+- Production code (`send.ts`, `notifications.ts`) uses `contentId`.
+- Tests assert `contentId`.
+- SDK reads `attachment.contentId` → emits `content_id` in API call →
+  Resend renders `<img src="cid:franchise-logo">` correctly.

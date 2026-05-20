@@ -25,10 +25,10 @@ this codebase.
 
 **Given**: franquicia con `logo_url = https://9grznib0czdjtk77.public.blob.vercel-storage.com/rentacar/logo.png` (PNG, content-type `image/png`, ~10 KB).
 **When**: `sendReservationNotifications` se invoca para una reserva en estado `reservado`.
-**Then**: el HTML rendered contiene `src="cid:franchise-logo"` Y el payload pasado a `resend.emails.send` incluye `attachments: [{ filename: "logo.png", content: <Buffer>, cid: "franchise-logo" }]`.
-**Evidence**: Vitest test con mock de `fetch` que devuelve el PNG y spy del SDK Resend que captura el `payload.attachments`. Assertion: `expect(payload.attachments).toEqual([{ filename: "logo.png", content: expect.any(Buffer), cid: "franchise-logo" }])` Y `expect(html).toContain('src="cid:franchise-logo"')`.
+**Then**: el HTML rendered contiene `src="cid:franchise-logo"` Y el payload pasado a `resend.emails.send` incluye `attachments: [{ filename: "logo.png", content: <Buffer>, contentId: "franchise-logo" }]`.
+**Evidence**: Vitest test con mock de `fetch` que devuelve el PNG y spy del SDK Resend que captura el `payload.attachments`. Assertion: `expect(payload.attachments).toEqual([{ filename: "logo.png", content: expect.any(Buffer), contentId: "franchise-logo" }])` Y `expect(html).toContain('src="cid:franchise-logo"')`.
 
-> **Amended 2026-05-19 (HEAD a2a62de)** — `contentId` → `cid` per Context7 finding (`docs/specs/2026-05-19-issue-9-email-spam-fix/context7-finding.md`). See marker `.amends/email-spam-fix-a2a62dee56bd06a2c13944670127d9f31d8e436d.marker`. The Resend SDK uses `cid` (not `contentId`) when attachments are supplied as `content: Buffer` rather than `path: URL`. User-observable behavior (inline CID image in email) is unchanged.
+> **Amended twice 2026-05-19** — first amend (HEAD a2a62de) renamed `contentId` → `cid` based on Context7 docs; that was wrong for SDK v6.12.2. Second amend (HEAD c1d3c3a, this commit) REVERTS to `contentId`. Authoritative source is the installed SDK at `node_modules/resend/dist/index.cjs:208` which reads `attachment.contentId`. See markers `.amends/email-spam-fix-a2a62de...marker` (original) and `.amends/email-spam-fix-c1d3c3a...marker` (revert). The context7-finding.md is now retracted with full record.
 
 ---
 

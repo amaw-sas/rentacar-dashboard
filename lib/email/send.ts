@@ -21,11 +21,12 @@ export function deriveReplyTo<T extends string | null | undefined>(
 export interface SendAttachment {
   filename: string;
   content: Buffer;
-  // Resend Node.js SDK uses `cid` (not `contentId`) for inline-CID images
-  // when the attachment is supplied as `content: Buffer`. Verified via
-  // Context7 (/websites/resend, 2026-05-19). See
+  // Resend Node.js SDK v6.12.2 maps `contentId` → `content_id` in the API
+  // request (verified at node_modules/resend/dist/index.cjs:208). The
+  // public docs show both `cid` and `contentId` patterns; the installed
+  // SDK source is authoritative. See
   // docs/specs/2026-05-19-issue-9-email-spam-fix/context7-finding.md
-  cid: string;
+  contentId: string;
   contentType?: string;
 }
 

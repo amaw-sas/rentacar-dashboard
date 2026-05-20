@@ -187,3 +187,107 @@ describe("findOrCreateCustomer", () => {
     await expect(findOrCreateCustomer(INPUT)).rejects.toThrow(/Error al crear cliente/);
   });
 });
+
+type ReferralRow = { id: string };
+
+function createMockReferralSupabase(
+  result: { data: ReferralRow | null; error: { code: string } | null },
+): {
+  client: unknown;
+  spies: { from: ReturnType<typeof vi.fn>; codeEq: ReturnType<typeof vi.fn>; statusEq: ReturnType<typeof vi.fn> };
+} {
+  const single = vi.fn().mockResolvedValue(result);
+  const limit = vi.fn().mockReturnValue({ single });
+  const statusEq = vi.fn().mockReturnValue({ limit });
+  const codeEq = vi.fn().mockReturnValue({ eq: statusEq });
+  const select = vi.fn().mockReturnValue({ eq: codeEq });
+  const from = vi.fn().mockReturnValue({ select });
+  return { client: { from }, spies: { from, codeEq, statusEq } };
+}
+
+describe("resolveReferral", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns referral id for capitalized active code ('Diana')", async () => {
+    const { client, spies } = createMockReferralSupabase({
+      data: { id: "diana-id" },
+      error: null,
+    });
+
+    const { createAdminClient } = await import("@/lib/supabase/admin");
+    vi.mocked(createAdminClient).mockReturnValue(client as unknown as ReturnType<typeof createAdminClient>);
+
+    const { resolveReferral } = await import("@/lib/api/resolve-references");
+    const id = await resolveReferral("Diana");
+
+    expect(id).toBe("diana-id");
+    expect(spies.codeEq).toHaveBeenCalledWith("code", "diana");
+    expect(spies.statusEq).toHaveBeenCalledWith("status", "active");
+  });
+
+  it("returns referral id for already-lowercase code ('diana')", async () => {
+    const { client, spies } = createMockReferralSupabase({
+      data: { id: "diana-id" },
+      error: null,
+    });
+
+    const { createAdminClient } = await import("@/lib/supabase/admin");
+    vi.mocked(createAdminClient).mockReturnValue(client as unknown as ReturnType<typeof createAdminClient>);
+
+    const { resolveReferral } = await import("@/lib/api/resolve-references");
+    const id = await resolveReferral("diana");
+
+    expect(id).toBe("diana-id");
+    expect(spies.codeEq).toHaveBeenCalledWith("code", "diana");
+  });
+
+  it("trims whitespace and lowercases (' DIANA ')", async () => {
+    const { client, spies } = createMockReferralSupabase({
+      data: { id: "diana-id" },
+      error: null,
+    });
+
+    const { createAdminClient } = await import("@/lib/supabase/admin");
+    vi.mocked(createAdminClient).mockReturnValue(client as unknown as ReturnType<typeof createAdminClient>);
+
+    const { resolveReferral } = await import("@/lib/api/resolve-references");
+    const id = await resolveReferral(" DIANA ");
+
+    expect(id).toBe("diana-id");
+    expect(spies.codeEq).toHaveBeenCalledWith("code", "diana");
+  });
+
+  it("returns null for inactive referral ('Valeria' filtered by status)", async () => {
+    const { client, spies } = createMockReferralSupabase({
+      data: null,
+      error: { code: "PGRST116" },
+    });
+
+    const { createAdminClient } = await import("@/lib/supabase/admin");
+    vi.mocked(createAdminClient).mockReturnValue(client as unknown as ReturnType<typeof createAdminClient>);
+
+    const { resolveReferral } = await import("@/lib/api/resolve-references");
+    const id = await resolveReferral("Valeria");
+
+    expect(id).toBeNull();
+    expect(spies.codeEq).toHaveBeenCalledWith("code", "valeria");
+    expect(spies.statusEq).toHaveBeenCalledWith("status", "active");
+  });
+
+  it("returns null for nonexistent code", async () => {
+    const { client } = createMockReferralSupabase({
+      data: null,
+      error: { code: "PGRST116" },
+    });
+
+    const { createAdminClient } = await import("@/lib/supabase/admin");
+    vi.mocked(createAdminClient).mockReturnValue(client as unknown as ReturnType<typeof createAdminClient>);
+
+    const { resolveReferral } = await import("@/lib/api/resolve-references");
+    const id = await resolveReferral("nonexistent");
+
+    expect(id).toBeNull();
+  });
+});

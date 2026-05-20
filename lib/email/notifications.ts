@@ -1,6 +1,7 @@
 import { createAdminClient } from "@/lib/supabase/admin";
-import { sendEmail } from "./send";
+import { sendEmail, type SendAttachment } from "./send";
 import { renderEmail } from "./render";
+import { fetchLogoAttachment } from "./fetch-logo";
 import { ReservedClientEmail } from "./templates/reserved-confirmation";
 import { PendingClientEmail } from "./templates/pending-client";
 import { FailedClientEmail } from "./templates/failed-client";
@@ -159,6 +160,38 @@ function resolveLocalizaBcc(perFranchise: string | null): string | undefined {
   return perFranchise || fallback || undefined;
 }
 
+// Issue #9: embed the franchise logo as inline CID attachment so emails
+// stop landing in Hotmail/Outlook spam. Fetches once per notification
+// invocation; the same Buffer is propagated to every sendEmail() call
+// that the invocation dispatches (1-4 emails), avoiding redundant fetches.
+// On fetch failure, franchiseLogo becomes undefined and the layout
+// renders the franchise name as text — graceful fallback.
+const LOGO_CONTENT_ID = "franchise-logo";
+
+async function prepareLogoForEmail(branding: FranchiseBranding): Promise<{
+  branding: FranchiseBranding;
+  attachments: SendAttachment[] | undefined;
+}> {
+  const logo = await fetchLogoAttachment(branding.franchiseLogo);
+  if (!logo) {
+    return {
+      branding: { ...branding, franchiseLogo: undefined },
+      attachments: undefined,
+    };
+  }
+  return {
+    branding: { ...branding, franchiseLogo: `cid:${LOGO_CONTENT_ID}` },
+    attachments: [
+      {
+        filename: logo.filename,
+        content: logo.content,
+        cid: LOGO_CONTENT_ID,
+        contentType: logo.contentType,
+      },
+    ],
+  };
+}
+
 function formatDate(dateStr: string): string {
   return format(new Date(dateStr + "T12:00:00"), "d 'de' MMMM yyyy", { locale: es });
 }
@@ -179,7 +212,9 @@ export async function sendReservationNotifications(
 ): Promise<void> {
   try {
     const reservation = await fetchReservationContext(reservationId);
-    const { branding, localizaBccEmail } = await getFranchiseContext(franchiseCode);
+    const ctx = await getFranchiseContext(franchiseCode);
+    const { branding, attachments } = await prepareLogoForEmail(ctx.branding);
+    const localizaBccEmail = ctx.localizaBccEmail;
 
     const customer = reservation.customers as {
       first_name: string;
@@ -265,6 +300,7 @@ export async function sendReservationNotifications(
         html,
         reservationId,
         notificationType: "reservado_cliente",
+        attachments,
       });
     }
 
@@ -291,6 +327,7 @@ export async function sendReservationNotifications(
         html: clientHtml,
         reservationId,
         notificationType: "pendiente_cliente",
+        attachments,
       });
 
       if (localizaEmail) {
@@ -322,6 +359,7 @@ export async function sendReservationNotifications(
           bcc: localizaBcc,
           reservationId,
           notificationType: "pendiente_localiza",
+          attachments,
         });
       }
     }
@@ -345,6 +383,7 @@ export async function sendReservationNotifications(
         html,
         reservationId,
         notificationType: "sin_disponibilidad_cliente",
+        attachments,
       });
     }
 
@@ -377,6 +416,7 @@ export async function sendReservationNotifications(
         bcc: localizaBcc,
         reservationId,
         notificationType: "seguro_total_localiza",
+        attachments,
       });
     }
 
@@ -410,6 +450,7 @@ export async function sendReservationNotifications(
         bcc: localizaBcc,
         reservationId,
         notificationType: "extras_localiza",
+        attachments,
       });
     }
 
@@ -438,6 +479,7 @@ export async function sendReservationNotifications(
         html: clientHtml,
         reservationId,
         notificationType: "mensualidad_cliente",
+        attachments,
       });
     }
 
@@ -471,6 +513,7 @@ export async function sendReservationNotifications(
         bcc: localizaBcc,
         reservationId,
         notificationType: "mensualidad_localiza",
+        attachments,
       });
     }
   } catch (error) {
@@ -487,7 +530,8 @@ export async function sendReservationRequestEmail(
 ): Promise<void> {
   try {
     const reservation = await fetchReservationContext(reservationId);
-    const { branding } = await getFranchiseContext(franchiseCode);
+    const ctx = await getFranchiseContext(franchiseCode);
+    const { branding, attachments } = await prepareLogoForEmail(ctx.branding);
 
     const customer = reservation.customers as {
       first_name: string;
@@ -524,6 +568,7 @@ export async function sendReservationRequestEmail(
       html,
       reservationId,
       notificationType: "solicitud_reserva",
+      attachments,
     });
   } catch (error) {
     console.error(

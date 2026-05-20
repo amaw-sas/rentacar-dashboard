@@ -55,6 +55,10 @@ vi.mock("@/lib/email/send", () => ({
   sendEmail: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock("@/lib/email/fetch-logo", () => ({
+  fetchLogoAttachment: vi.fn(),
+}));
+
 vi.mock("@/lib/email/render", () => ({
   renderEmail: vi.fn().mockResolvedValue("<html>test</html>"),
 }));
@@ -496,6 +500,120 @@ describe("sendReservationNotifications", () => {
       expect(warnPayload).toContain("javascript:alert(1)");
 
       warnSpy.mockRestore();
+    });
+  });
+
+  // Issue #9 — CID logo embed
+  describe("logo attachment (issue #9)", () => {
+    it("SCEN-01: passes attachments + cid:franchise-logo branding when logo fetch succeeds", async () => {
+      const { fetchLogoAttachment } = await import("@/lib/email/fetch-logo");
+      const logoBuffer = Buffer.from("fake-png-bytes");
+      vi.mocked(fetchLogoAttachment).mockResolvedValue({
+        filename: "logo.png",
+        content: logoBuffer,
+        contentType: "image/png",
+      });
+      setupMock({
+        franchiseRow: {
+          display_name: "Alquila tu Carro",
+          phone: "+57 301 672 9250",
+          whatsapp: "573016729250",
+          logo_url:
+            "https://9grznib0czdjtk77.public.blob.vercel-storage.com/rentacar/logo.png",
+          website: "https://alquilatucarro.com",
+          localiza_bcc_email: "info@alquilatucarro.com",
+        },
+      });
+
+      await sendReservationNotifications("res-123", "reservado", "alquilatucarro");
+
+      expect(fetchLogoAttachment).toHaveBeenCalledTimes(1);
+      const reservedCalls = vi.mocked(ReservedClientEmail).mock.calls;
+      const props = reservedCalls.at(-1)?.[0] as { franchiseLogo?: string };
+      expect(props.franchiseLogo).toBe("cid:franchise-logo");
+
+      expect(sendEmail).toHaveBeenCalledWith(
+        expect.objectContaining({
+          attachments: [
+            {
+              filename: "logo.png",
+              content: logoBuffer,
+              cid: "franchise-logo",
+              contentType: "image/png",
+            },
+          ],
+        })
+      );
+    });
+
+    it("SCEN-02: graceful fallback when logo fetch returns null", async () => {
+      const { fetchLogoAttachment } = await import("@/lib/email/fetch-logo");
+      vi.mocked(fetchLogoAttachment).mockResolvedValue(null);
+      setupMock({
+        franchiseRow: {
+          display_name: "Alquila tu Carro",
+          phone: "+57 301 672 9250",
+          whatsapp: "573016729250",
+          logo_url: "https://public.blob.vercel-storage.com/missing.png",
+          website: "https://alquilatucarro.com",
+          localiza_bcc_email: "info@alquilatucarro.com",
+        },
+      });
+
+      await sendReservationNotifications("res-123", "reservado", "alquilatucarro");
+
+      expect(fetchLogoAttachment).toHaveBeenCalledTimes(1);
+      const reservedCalls = vi.mocked(ReservedClientEmail).mock.calls;
+      const props = reservedCalls.at(-1)?.[0] as { franchiseLogo?: string };
+      expect(props.franchiseLogo).toBeUndefined();
+
+      expect(sendEmail).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          attachments: undefined,
+        })
+      );
+    });
+
+    it("SCEN-07: 1 fetch per invocation; same attachments object propagates to all sendEmail calls", async () => {
+      const { fetchLogoAttachment } = await import("@/lib/email/fetch-logo");
+      const logoBuffer = Buffer.from("logo-bytes-for-multi-send");
+      vi.mocked(fetchLogoAttachment).mockResolvedValue({
+        filename: "logo.png",
+        content: logoBuffer,
+        contentType: "image/png",
+      });
+      setupMock({
+        reservation: {
+          ...mockReservation,
+          total_insurance: true,
+        },
+        franchiseRow: {
+          display_name: "Alquila tu Carro",
+          phone: "+57 301 672 9250",
+          whatsapp: "573016729250",
+          logo_url:
+            "https://9grznib0czdjtk77.public.blob.vercel-storage.com/rentacar/logo.png",
+          website: "https://alquilatucarro.com",
+          localiza_bcc_email: "info@alquilatucarro.com",
+        },
+      });
+
+      // status=pendiente + total_insurance=true dispatches:
+      //  - pendiente_cliente, pendiente_localiza, seguro_total_localiza
+      await sendReservationNotifications("res-123", "pendiente", "alquilatucarro");
+
+      expect(fetchLogoAttachment).toHaveBeenCalledTimes(1);
+
+      const sendCalls = vi.mocked(sendEmail).mock.calls;
+      expect(sendCalls.length).toBeGreaterThanOrEqual(3);
+
+      const attachmentsRef = sendCalls[0][0].attachments;
+      expect(attachmentsRef).toBeDefined();
+      for (const call of sendCalls) {
+        // Object identity, not just deep-equal: the SAME array reference flows
+        // to every sendEmail call, proving 1 fetch amortized over N sends.
+        expect(call[0].attachments).toBe(attachmentsRef);
+      }
     });
   });
 });

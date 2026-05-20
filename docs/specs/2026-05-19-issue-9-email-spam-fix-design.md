@@ -258,7 +258,7 @@ Sin cambios. `<Img src={franchiseLogo}>` acepta tanto URLs como strings `cid:`.
 
 | Archivo | Cambio |
 |---|---|
-| `tests/unit/email/fetch-logo.test.ts` | **Nuevo** — SCEN-01..06 |
+| `tests/unit/email/fetch-logo.test.ts` | **Nuevo** — SCEN-01..06, SCEN-08, SCEN-09, SCEN-10 |
 | `tests/unit/email/send.test.ts` | Modificar — agregar caso "passes attachments to Resend SDK" |
 | `tests/unit/email/notifications.test.ts` | Modificar — verificar `franchiseLogo: "cid:..."` cuando hay attachment, `undefined` cuando falla; SCEN-07 (1 fetch por invocación, N envíos) |
 
@@ -380,11 +380,11 @@ Defense-in-depth porque el atacante ya necesitaría acceso al dashboard como adm
 |---|---|---|
 | **SCEN-M1** | Crear reserva de prueba que dispare email a `@hotmail.com` (5x consecutivos) | 5/5 aterrizan en Inbox, ninguno en Junk |
 | **SCEN-M2** | Crear reserva de prueba que dispare email a `@outlook.com` (5x consecutivos) | 5/5 aterrizan en Inbox |
-
-> **Variable de confusión para SCEN-M1/M2**: la entrega a Microsoft también depende de la reputación del sender que se calienta gradualmente. Si los primeros sends post-deploy caen a Junk, no atribuir automáticamente al CID; revisar Resend Insights primero — si el warning desapareció (SCEN-M3 ✅) pero Junk persiste, esperar 48–72h de warm-up antes de declarar regresión.
 | **SCEN-M3** | Inspeccionar email en Resend Insights | 0 warnings ("Host images on the sending domain" desaparece) |
 | **SCEN-M4** | Enviar a `mail-tester.com` | score ≥ 9/10 |
 | **SCEN-M5** | Abrir email en Gmail web, Outlook desktop, Outlook web, Apple Mail | logo se renderiza correctamente (no broken-image icon) en los 4 clientes |
+
+> **Variable de confusión para SCEN-M1/M2**: la entrega a Microsoft también depende de la reputación del sender que se calienta gradualmente. Si los primeros sends post-deploy caen a Junk, no atribuir automáticamente al CID; revisar Resend Insights primero — si el warning desapareció (SCEN-M3 ✅) pero Junk persiste, esperar 48–72h de warm-up antes de declarar regresión.
 
 ### Verificación pre-PR (`/verification-before-completion`)
 
@@ -404,8 +404,8 @@ Defense-in-depth porque el atacante ya necesitaría acceso al dashboard como adm
 - `lib/email/notifications.ts` (mismo archivo) — helper privado nuevo `prepareLogoForEmail`
 
 **Archivos nuevos** (2):
-- `lib/email/fetch-logo.ts` — fetcher con allowlist + content-type + timeout (~70 líneas)
-- `tests/unit/email/fetch-logo.test.ts` — SCEN-01..06
+- `lib/email/fetch-logo.ts` — fetcher con allowlist + content-type + timeout + size guard (~70 líneas)
+- `tests/unit/email/fetch-logo.test.ts` — SCEN-01..06, SCEN-08, SCEN-09, SCEN-10
 
 **Tests modificados** (2):
 - `tests/unit/email/send.test.ts` — caso de `attachments` en payload

@@ -18,6 +18,18 @@ export function deriveReplyTo<T extends string | null | undefined>(
   return `${local}@${stripped}` as T;
 }
 
+export interface SendAttachment {
+  filename: string;
+  content: Buffer;
+  // Resend Node.js SDK v6.12.2 maps `contentId` → `content_id` in the API
+  // request (verified at node_modules/resend/dist/index.cjs:208). The
+  // public docs show both `cid` and `contentId` patterns; the installed
+  // SDK source is authoritative. See
+  // docs/specs/2026-05-19-issue-9-email-spam-fix/context7-finding.md
+  contentId: string;
+  contentType?: string;
+}
+
 interface SendEmailOptions {
   franchise: string;
   to: string;
@@ -27,6 +39,7 @@ interface SendEmailOptions {
   bcc?: string;
   reservationId?: string;
   notificationType?: string;
+  attachments?: SendAttachment[];
 }
 
 interface ResendApiError {
@@ -85,6 +98,7 @@ export async function sendEmail(options: SendEmailOptions): Promise<void> {
     bcc,
     reservationId,
     notificationType,
+    attachments,
   } = options;
 
   const supabase = createAdminClient();
@@ -114,6 +128,7 @@ export async function sendEmail(options: SendEmailOptions): Promise<void> {
     html,
     ...(text ? { text } : {}),
     ...(bcc ? { bcc: [bcc] } : {}),
+    ...(attachments && attachments.length > 0 ? { attachments } : {}),
     headers: {
       "List-Unsubscribe": `<mailto:${replyToAddress}?subject=Unsubscribe>`,
       "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",

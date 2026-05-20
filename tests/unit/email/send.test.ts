@@ -434,4 +434,67 @@ describe("sendEmail — error handling", () => {
 
     expect(mockSend).toHaveBeenCalledTimes(1);
   });
+
+  // Issue #9 — attachments propagation (drives SCEN-01 + SCEN-07 end-to-end)
+  it("passes attachments to Resend SDK when provided", async () => {
+    setupFranchise("info@mail.alquilatucarro.com");
+    mockSend.mockResolvedValue({ data: { id: "abc" }, error: null });
+
+    const logoBuffer = Buffer.from("fake-png-bytes");
+    await sendEmail({
+      franchise: "alquilatucarro",
+      to: "customer@example.com",
+      subject: "Test with attachment",
+      html: '<p>See <img src="cid:franchise-logo"/> our logo</p>',
+      attachments: [
+        {
+          filename: "logo.png",
+          content: logoBuffer,
+          contentId: "franchise-logo",
+        },
+      ],
+    });
+
+    expect(mockSend).toHaveBeenCalledWith(
+      expect.objectContaining({
+        attachments: [
+          {
+            filename: "logo.png",
+            content: logoBuffer,
+            contentId: "franchise-logo",
+          },
+        ],
+      })
+    );
+  });
+
+  it("omits the attachments key when undefined or empty array", async () => {
+    setupFranchise("info@mail.alquilatucarro.com");
+    mockSend.mockResolvedValue({ data: { id: "abc1" }, error: null });
+
+    await sendEmail({
+      franchise: "alquilatucarro",
+      to: "customer@example.com",
+      subject: "No attachment",
+      html: "<p>plain</p>",
+    });
+
+    expect(mockSend).toHaveBeenCalledWith(
+      expect.not.objectContaining({ attachments: expect.anything() })
+    );
+
+    mockSend.mockResolvedValue({ data: { id: "abc2" }, error: null });
+
+    await sendEmail({
+      franchise: "alquilatucarro",
+      to: "customer@example.com",
+      subject: "Empty array",
+      html: "<p>plain</p>",
+      attachments: [],
+    });
+
+    expect(mockSend).toHaveBeenLastCalledWith(
+      expect.not.objectContaining({ attachments: expect.anything() })
+    );
+  });
 });

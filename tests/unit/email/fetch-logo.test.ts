@@ -73,9 +73,9 @@ describe("fetchLogoAttachment", () => {
     vi.useFakeTimers();
     let capturedSignal: AbortSignal | undefined;
     fetchSpy.mockImplementationOnce(
-      (_url, opts) =>
+      (_url: RequestInfo | URL, opts?: RequestInit) =>
         new Promise<Response>((_resolve, reject) => {
-          capturedSignal = (opts as RequestInit | undefined)?.signal ?? undefined;
+          capturedSignal = opts?.signal ?? undefined;
           if (capturedSignal) {
             capturedSignal.addEventListener("abort", () => {
               reject(new DOMException("aborted", "AbortError"));

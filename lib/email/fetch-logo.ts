@@ -1,8 +1,12 @@
-// Context7-verified shape (2026-05-19, /websites/resend):
-// Resend Node.js SDK accepts attachments with EITHER `path: URL` + `contentId`,
-// OR `content: Buffer` + `cid`. We fetch server-side to control SSRF surface,
-// so we use the `content + cid` pattern. See
+// Resend Node.js SDK v6.12.2 attachment shape (verified at
+// node_modules/resend/dist/index.cjs:208): the SDK reads
+// `attachment.contentId` and emits `content_id` in the API request.
+// We fetch server-side to control SSRF surface, then pass the Buffer to
+// the SDK with `contentId`. The public Context7 docs showed both `cid`
+// and `contentId` patterns from different SDK versions; the installed
+// SDK source is authoritative. See
 // docs/specs/2026-05-19-issue-9-email-spam-fix/context7-finding.md
+// (retracted) for the full history.
 
 const FETCH_TIMEOUT_MS = 5000;
 const MAX_LOGO_BYTES = 100_000;

@@ -98,16 +98,19 @@ export async function findOrCreateCustomer(
 
 /**
  * Find a referral by its code.
+ * Normalizes input (trim + lowercase) because rentacar-web sends capitalized
+ * names like 'Diana' and referrals.code is stored lowercase by convention.
  * Returns the referral id, or null if not found.
  */
 export async function resolveReferral(
   code: string
 ): Promise<string | null> {
   const supabase = createAdminClient();
+  const normalized = code.trim().toLowerCase();
   const { data } = await supabase
     .from("referrals")
     .select("id")
-    .eq("code", code)
+    .eq("code", normalized)
     .eq("status", "active")
     .limit(1)
     .single();

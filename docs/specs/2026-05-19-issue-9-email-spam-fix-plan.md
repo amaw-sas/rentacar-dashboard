@@ -48,7 +48,7 @@ Eliminar el warning "Host images on the sending domain" de Resend Insights (caus
 1. Invocar `mcp__plugin_ai-framework_context7__resolve-library-id` con query `"resend"` para obtener el ID canónico.
 2. Invocar `query-docs` con focus en `attachments` para el endpoint `emails.send`.
 3. Confirmar:
-   - Casing del field: ¿`contentId` o `content_id` en cada attachment?
+   - ~~Casing del field: ¿`contentId` o `content_id` en cada attachment?~~ ✅ Resuelto: `cid` con `content: Buffer` (no `contentId` ni `content_id`).
    - Tipo del field `content`: ¿`Buffer`, `Uint8Array`, o `string` (base64)?
    - Si requiere `path` además de `content`.
    - Formato de referencia desde el HTML: `cid:<id>` (típico CID) vs `<id>@<host>` (Message-ID style).
@@ -98,7 +98,7 @@ Eliminar el warning "Host images on the sending domain" de Resend Insights (caus
 1. Extender `interface SendEmailOptions` con `attachments?: SendAttachment[]`. Importar `SendAttachment` desde `./fetch-logo` (o re-declarar localmente — decidir según resultado de Step 1).
 2. En `sendEmail`, agregar al payload: `...(attachments && attachments.length > 0 ? { attachments } : {})`.
 3. En `tests/unit/email/send.test.ts`:
-   - Test "passes attachments to Resend SDK": invocar `sendEmail({ ..., attachments: [{ filename, content, contentId }] })`, capturar arg de `resend.emails.send`, assert que `attachments` está en el call con el shape correcto.
+   - Test "passes attachments to Resend SDK": invocar `sendEmail({ ..., attachments: [{ filename, content, cid }] })`, capturar arg de `resend.emails.send`, assert que `attachments` está en el call con el shape correcto.
    - Test "omits attachments key when array is empty or undefined": assert que la key `attachments` NO está presente en el payload cuando no se pasa o se pasa `[]`.
 4. Verificar: `pnpm test tests/unit/email/send.test.ts` → todos los tests passing (incluyendo los preexistentes).
 
@@ -189,7 +189,7 @@ Eliminar el warning "Host images on the sending domain" de Resend Insights (caus
 - Warning "Host images on the sending domain" NO está en la lista.
 - (Si Resend muestra warnings adicionales no relacionados al fix, documentarlos en el PR como out-of-scope.)
 
-**Why sixth**: prueba de fuego sobre el SDK real, no mocks. Si el casing de `contentId` está mal (Step 1 no verificó bien), o si Resend no acepta el shape, este paso lo captura antes del merge.
+**Why sixth**: prueba de fuego sobre el SDK real, no mocks. Si el shape verificado en Step 1 (`cid` + `content: Buffer`) tiene algún edge no documentado, o si Resend rechaza el payload, este paso lo captura antes del merge.
 
 ---
 
@@ -264,7 +264,7 @@ Eliminar el warning "Host images on the sending domain" de Resend Insights (caus
 
 | Risk | Mitigation |
 |---|---|
-| **R1**: Resend SDK shape distinto al asumido (`contentId` vs `content_id`, `content: Buffer` vs base64) | Step 1 hace el lookup via Context7 antes de cualquier código. Step 6 smoke real captura mismatches. |
+| **R1**: ~~Resend SDK shape distinto al asumido~~ ✅ **Mitigado 2026-05-19** via Context7. Field correcto: `cid` con `content: Buffer`. Step 6 smoke real captura cualquier edge no documentado. |
 | **R2**: Vercel Blob latency mayor a 5s en cold-paths → `MAX_LOGO_BYTES` rechaza todos los logos en producción | El timeout es por request, no por size. SCEN-M3 verificará tamaño efectivo en payload Resend. Si bytes > 100k post-deploy, ajustar `MAX_LOGO_BYTES` en un follow-up rápido. |
 | **R3**: Sender reputation warm-up enmascarará SCEN-M1/M2 | Documentado en spec section 5; el SCEN-M3 (Insights warning desaparece) es la señal de éxito técnico, SCEN-M1/M2 dependen del provider externo. |
 | **R4**: Allowlist demasiado estricta — admin cambia provider de hosting y deja todos los emails sin logo | `console.warn` claro `"logo host not allowed: <host>"` en Vercel logs. Update de allowlist es 1 línea, fix en minutos. |

@@ -64,9 +64,13 @@ email-layout.tsx                               email-layout.tsx
 
 ```ts
 const FETCH_TIMEOUT_MS = 5000;
+const MAX_LOGO_BYTES = 100_000;
 const ALLOWED_PREFIXES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
-const ALLOWED_HOST_SUFFIXES = [
-  ".public.blob.vercel-storage.com",
+
+// Each entry is matched exactly (apex) OR with a dot-boundary suffix
+// (subdomain). Plain endsWith would let `evil-alquilatucarro.com` slip through.
+const ALLOWED_HOSTS = [
+  "public.blob.vercel-storage.com",
   "alquilatucarro.com",
   "alquilame.com",
   "alquicarros.com",
@@ -79,8 +83,8 @@ export interface LogoAttachment {
 }
 
 function isAllowedHost(hostname: string): boolean {
-  return ALLOWED_HOST_SUFFIXES.some(
-    (s) => hostname === s.replace(/^\./, "") || hostname.endsWith(s)
+  return ALLOWED_HOSTS.some(
+    (h) => hostname === h || hostname.endsWith("." + h)
   );
 }
 
@@ -119,6 +123,10 @@ export async function fetchLogoAttachment(
       return null;
     }
     const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.byteLength > MAX_LOGO_BYTES) {
+      console.warn(`[email] logo too large (${buf.byteLength} bytes > ${MAX_LOGO_BYTES}): ${logoUrl}`);
+      return null;
+    }
     const ext = contentType.split("/")[1].split(";")[0].trim();
     return { filename: `logo.${ext}`, content: buf, contentType };
   } catch (err) {
@@ -132,8 +140,10 @@ export async function fetchLogoAttachment(
 
 **Contrato**:
 - Input opcional → output `LogoAttachment | null`. Nunca throw.
-- 4 guard clauses fail-closed: URL unparseable, non-https, host fuera de allowlist, fetch/HTTP/content-type inválido.
+- 5 guard clauses fail-closed: URL unparseable, non-https, host fuera de allowlist, fetch/HTTP/content-type inválido, tamaño > 100 KB.
 - Timeout duro de 5s con `AbortController`.
+- Allowlist matching: exact-equal o dot-boundary suffix (`"alquilatucarro.com"` no matchea `evil-alquilatucarro.com`).
+- `MAX_LOGO_BYTES = 100_000`: cota conservadora que aplica el mismo principio "fail-closed → fallback" a la falla de tamaño que Resend rechazaría con `validation_error`. Los 3 logos actuales pesan <20 KB.
 
 ### `lib/email/notifications.ts` (modificado)
 
@@ -169,6 +179,8 @@ async function prepareLogoForEmail(branding: FranchiseBranding): Promise<{
   };
 }
 ```
+
+**Boundary**: `prepareLogoForEmail` se mantiene como helper **privado** de `notifications.ts` (no exportado). Las pruebas lo observan **indirectamente** via mock de `fetchLogoAttachment` — SCEN-07 asserta `fetchLogoAttachment.toHaveBeenCalledTimes(1)` para una invocación que dispara N envíos, y `sendEmail` mock recibe el mismo objeto `attachments` (object identity) en todas las llamadas.
 
 Modificar `sendReservationNotifications()`:
 
@@ -340,7 +352,7 @@ Defense-in-depth porque el atacante ya necesitaría acceso al dashboard como adm
 
 ### Casos no manejados (fuera de scope)
 
-- **Logo > 100KB rechazado por Resend**: producirá `validation_error` y email failed. Los 3 logos actuales pesan <20KB. Si en el futuro alguien sube un PNG grande, falla loud (no silenciosa). Mitigación futura opcional: validar tamaño en `fetchLogoAttachment`.
+- **Logo > 100KB**: cubierto por el guard `MAX_LOGO_BYTES = 100_000` en `fetchLogoAttachment` — falla silenciosa con fallback (consistente con el resto de fallas). Los 3 logos actuales pesan <20KB.
 - **MIME spoofing**: irrelevante — el Buffer se serializa base64 dentro del MIME del email; Resend valida server-side.
 
 ---
@@ -357,7 +369,10 @@ Defense-in-depth porque el atacante ya necesitaría acceso al dashboard como adm
 | **SCEN-04** | `logo_url` excede timeout 5s | se envía email | HTML renderiza fallback, `console.warn` llamado, email enviado sin attachment |
 | **SCEN-05** | `logo_url` es `null` | se envía email | `fetch` NO se invoca, HTML renderiza fallback, NO hay `console.warn` |
 | **SCEN-06** | `logo_url` devuelve content-type `text/html` | se envía email | HTML renderiza fallback, `console.warn` con content-type |
-| **SCEN-07** | reserva en `pendiente` + `total_insurance=true` (3 emails) | se procesa la notificación | `fetch` del logo se invoca exactamente **1 vez** Y los 3 payloads incluyen el mismo `attachments` |
+| **SCEN-07** | reserva en `pendiente` + `total_insurance=true` (3 emails) | se procesa la notificación | `fetchLogoAttachment.toHaveBeenCalledTimes(1)` Y las 3 invocaciones a `sendEmail` reciben el **mismo objeto `attachments`** (object identity, no deep-equal solamente — la misma referencia se propaga) |
+| **SCEN-08** | `logo_url` apunta al apex de una franquicia (`https://alquilatucarro.com/logo.png`, content-type `image/png`) | se envía email | HTML contiene `src="cid:franchise-logo"`, allowlist acepta el host, attachment presente en payload |
+| **SCEN-09** | `logo_url` apunta a `https://evil-alquilatucarro.com/logo.png` (suffix-bypass attempt) | se envía email | host RECHAZADO por la guarda de allowlist (no es match exact ni dot-boundary), `fetch` NO se invoca, fallback renderiza |
+| **SCEN-10** | `logo_url` devuelve content-type `image/png` pero el body pesa 150 KB | se envía email | guard `MAX_LOGO_BYTES` dispara fallback, `console.warn` con bytes, attachment NO en payload |
 
 ### Manual validation (post-deploy, criterio de éxito del issue)
 
@@ -365,6 +380,8 @@ Defense-in-depth porque el atacante ya necesitaría acceso al dashboard como adm
 |---|---|---|
 | **SCEN-M1** | Crear reserva de prueba que dispare email a `@hotmail.com` (5x consecutivos) | 5/5 aterrizan en Inbox, ninguno en Junk |
 | **SCEN-M2** | Crear reserva de prueba que dispare email a `@outlook.com` (5x consecutivos) | 5/5 aterrizan en Inbox |
+
+> **Variable de confusión para SCEN-M1/M2**: la entrega a Microsoft también depende de la reputación del sender que se calienta gradualmente. Si los primeros sends post-deploy caen a Junk, no atribuir automáticamente al CID; revisar Resend Insights primero — si el warning desapareció (SCEN-M3 ✅) pero Junk persiste, esperar 48–72h de warm-up antes de declarar regresión.
 | **SCEN-M3** | Inspeccionar email en Resend Insights | 0 warnings ("Host images on the sending domain" desaparece) |
 | **SCEN-M4** | Enviar a `mail-tester.com` | score ≥ 9/10 |
 | **SCEN-M5** | Abrir email en Gmail web, Outlook desktop, Outlook web, Apple Mail | logo se renderiza correctamente (no broken-image icon) en los 4 clientes |
@@ -437,9 +454,9 @@ Las scenarios listadas en sección 5 son el holdout set para `/scenario-driven-d
 
 Handoff a `/sop-planning` para producir el plan ordenado con acceptance criteria por paso. La estructura tentativa del plan:
 
-1. Crear `lib/email/fetch-logo.ts` con allowlist + tests `tests/unit/email/fetch-logo.test.ts` (SCEN-01..06).
-2. Extender `lib/email/send.ts` con `attachments` opcional + test que verifica payload.
-3. Verificar via Context7 la forma exacta del SDK Resend para `attachments[]` (casing, content type).
+1. **Context7 first** — verificar la forma exacta del SDK Resend para `attachments[]`: casing (`contentId` vs `content_id`), tipo del campo `content` (`Buffer` vs base64 string), formato de referencia desde el HTML (`cid:<id>` vs `<id>@<host>`). Bloqueante para los pasos siguientes — la firma de `SendAttachment` depende de esto.
+2. Crear `lib/email/fetch-logo.ts` con allowlist + guards + tests `tests/unit/email/fetch-logo.test.ts` (SCEN-01..06, SCEN-08, SCEN-09, SCEN-10).
+3. Extender `lib/email/send.ts` con `attachments` opcional usando la firma verificada en (1) + test que verifica payload.
 4. Modificar `lib/email/notifications.ts`: helper `prepareLogoForEmail`, llamarlo 1 vez, pasar `attachments` a cada `sendEmail`. Actualizar tests (SCEN-07).
 5. `pnpm type-check && lint && test && build` localmente.
 6. Smoke manual: envío a Hotmail/Outlook personal + revisión Resend Insights.

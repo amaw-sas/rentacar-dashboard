@@ -157,7 +157,8 @@ const LOGO_CONTENT_ID = "franchise-logo";
 interface SendAttachment {
   filename: string;
   content: Buffer;
-  contentId: string;
+  cid: string;            // Context7-verified: `cid` for Buffer content (not `contentId`)
+  contentType?: string;   // optional, e.g. "image/png"
 }
 
 async function prepareLogoForEmail(branding: FranchiseBranding): Promise<{
@@ -174,11 +175,13 @@ async function prepareLogoForEmail(branding: FranchiseBranding): Promise<{
   return {
     branding: { ...branding, franchiseLogo: `cid:${LOGO_CONTENT_ID}` },
     attachments: [
-      { filename: logo.filename, content: logo.content, contentId: LOGO_CONTENT_ID },
+      { filename: logo.filename, content: logo.content, cid: LOGO_CONTENT_ID },
     ],
   };
 }
 ```
+
+> **Note (post-Context7 verification, 2026-05-19)**: the field name is `cid`, not `contentId`. The Resend Node.js SDK uses `cid` when attachments are supplied as `content: Buffer` (our case — server-side fetch). The `contentId` field is for the alternate `path: URL` pattern. Reference: `docs/specs/2026-05-19-issue-9-email-spam-fix/context7-finding.md`.
 
 **Boundary**: `prepareLogoForEmail` se mantiene como helper **privado** de `notifications.ts` (no exportado). Las pruebas lo observan **indirectamente** via mock de `fetchLogoAttachment` — SCEN-07 asserta `fetchLogoAttachment.toHaveBeenCalledTimes(1)` para una invocación que dispara N envíos, y `sendEmail` mock recibe el mismo objeto `attachments` (object identity) en todas las llamadas.
 
@@ -213,7 +216,8 @@ Mismo patrón en `sendReservationRequestEmail`.
 interface SendAttachment {
   filename: string;
   content: Buffer;
-  contentId: string;
+  cid: string;            // matches Resend SDK shape for content-based attachments
+  contentType?: string;
 }
 
 interface SendEmailOptions {
@@ -246,7 +250,7 @@ const payload = {
 ```
 
 **Verificar via Context7 al implementar** (CLAUDE.md mandate, no asumir):
-- Casing del SDK Resend: ¿`contentId` o `content_id` en `attachments[]`?
+- ~~Casing del SDK Resend: ¿`contentId` o `content_id` en `attachments[]`?~~ **Resuelto via Context7 (2026-05-19)**: `cid` (no `contentId` ni `content_id`) cuando el attachment usa `content: Buffer`. Ver `docs/specs/2026-05-19-issue-9-email-spam-fix/context7-finding.md`.
 - ¿`content: Buffer` está soportado o requiere `content: string` (base64)?
 - ¿El HTML referencia el attachment con `cid:<id>` o `<id>@<host>`?
 
@@ -285,7 +289,7 @@ lib/email/notifications.ts :: sendReservationNotifications()
   │     │   ├─ content-type starts with image/*?
   │     │   └─ Buffer.from(arrayBuffer)
   │     ├─ success → { branding.franchiseLogo: "cid:franchise-logo",
-  │     │              attachments: [{ filename, content: Buffer, contentId }] }
+  │     │              attachments: [{ filename, content: Buffer, cid }] }
   │     └─ fail/null → { branding.franchiseLogo: undefined, attachments: undefined }
   ├─ switch(status):
   │     ├─ "reservado"     → renderEmail(<ReservedClient .../>) → sendEmail({ ..., attachments })
@@ -307,7 +311,7 @@ lib/email/send.ts :: sendEmail({ ..., attachments })
 
 ### Invariants
 
-1. **1 fetch del logo por invocación de `sendReservationNotifications()`**, no por email. Una reserva con `status=pendiente` y `total_insurance=true` puede disparar 3 emails — todos reusan el mismo Buffer y mismo `contentId`.
+1. **1 fetch del logo por invocación de `sendReservationNotifications()`**, no por email. Una reserva con `status=pendiente` y `total_insurance=true` puede disparar 3 emails — todos reusan el mismo Buffer y mismo `cid`.
 2. **Falla del fetch nunca aborta el email**. Layout ya tiene fallback (`{franchiseLogo ? <Img/> : <Text>{franchiseName}</Text>}`).
 3. **CID es local al email**: `"franchise-logo"` como string fijo es seguro porque cada email Resend es un envío independiente.
 4. **`franchises.logo_url` permanece intacto**. Admin sigue editando libremente.
@@ -363,7 +367,7 @@ Defense-in-depth porque el atacante ya necesitaría acceso al dashboard como adm
 
 | # | Given | When | Then |
 |---|---|---|---|
-| **SCEN-01** | franquicia con `logo_url` válido (Vercel Blob, PNG 10KB) | se envía email transaccional | HTML contiene `src="cid:franchise-logo"` Y payload de `resend.emails.send` incluye `attachments: [{ filename, content: Buffer, contentId: "franchise-logo" }]` |
+| **SCEN-01** | franquicia con `logo_url` válido (Vercel Blob, PNG 10KB) | se envía email transaccional | HTML contiene `src="cid:franchise-logo"` Y payload de `resend.emails.send` incluye `attachments: [{ filename, content: Buffer, cid: "franchise-logo" }]` |
 | **SCEN-02** | `logo_url` devuelve HTTP 404 | se envía email | HTML renderiza fallback (texto con `franchiseName`), `attachments` NO en payload, `console.warn` llamado con `"logo fetch 404"` |
 | **SCEN-03** | `logo_url` apunta a host fuera de allowlist (ej. `http://169.254.169.254/`) | se envía email | `fetch` NO se invoca, HTML renderiza fallback, `console.warn` con `"logo host not allowed"` |
 | **SCEN-04** | `logo_url` excede timeout 5s | se envía email | HTML renderiza fallback, `console.warn` llamado, email enviado sin attachment |
@@ -454,7 +458,7 @@ Las scenarios listadas en sección 5 son el holdout set para `/scenario-driven-d
 
 Handoff a `/sop-planning` para producir el plan ordenado con acceptance criteria por paso. La estructura tentativa del plan:
 
-1. **Context7 first** — verificar la forma exacta del SDK Resend para `attachments[]`: casing (`contentId` vs `content_id`), tipo del campo `content` (`Buffer` vs base64 string), formato de referencia desde el HTML (`cid:<id>` vs `<id>@<host>`). Bloqueante para los pasos siguientes — la firma de `SendAttachment` depende de esto.
+1. **Context7 first** — ~~verificar la forma exacta del SDK Resend para `attachments[]`~~ ✅ **Hecho 2026-05-19** (`docs/specs/2026-05-19-issue-9-email-spam-fix/context7-finding.md`). Resultado: `cid` (no `contentId` ni `content_id`) + `content: Buffer` + HTML reference `cid:<id>`.
 2. Crear `lib/email/fetch-logo.ts` con allowlist + guards + tests `tests/unit/email/fetch-logo.test.ts` (SCEN-01..06, SCEN-08, SCEN-09, SCEN-10).
 3. Extender `lib/email/send.ts` con `attachments` opcional usando la firma verificada en (1) + test que verifica payload.
 4. Modificar `lib/email/notifications.ts`: helper `prepareLogoForEmail`, llamarlo 1 vez, pasar `attachments` a cada `sendEmail`. Actualizar tests (SCEN-07).

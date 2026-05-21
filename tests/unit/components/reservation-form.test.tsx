@@ -422,6 +422,43 @@ describe("ReservationForm layout", () => {
     expect(trigger.textContent).toContain("LEGACY-INACTIVE");
   });
 
+  describe("referral attribution is read-only on edit (issue #48)", () => {
+    it("disables the referral_id Select trigger when editing", () => {
+      renderForm({
+        id: "88888888-8888-8888-8888-888888888888",
+        defaultValues: {
+          referral_id: "44444444-4444-4444-4444-444444444444",
+          status: "reservado",
+        } as Parameters<typeof ReservationForm>[0]["defaultValues"],
+      });
+      const trigger = screen.getByLabelText("Referido");
+      expect(trigger).toBeDisabled();
+      // Value remains visible to the operator.
+      expect(trigger.textContent).toContain("Daniela");
+    });
+
+    it("disables the referral_raw input when editing", () => {
+      renderForm({
+        id: "88888888-8888-8888-8888-888888888888",
+        defaultValues: {
+          referral_raw: "feria-2026",
+          status: "reservado",
+        } as Parameters<typeof ReservationForm>[0]["defaultValues"],
+      });
+      const input = screen.getByLabelText("Referido (texto libre)");
+      expect(input).toBeDisabled();
+      expect(input).toHaveValue("feria-2026");
+    });
+
+    it("keeps referral controls editable when creating a new reservation", () => {
+      renderForm();
+      const trigger = screen.getByLabelText("Referido");
+      const input = screen.getByLabelText("Referido (texto libre)");
+      expect(trigger).not.toBeDisabled();
+      expect(input).not.toBeDisabled();
+    });
+  });
+
   it("pairs small cards in a 2-column grid on large viewports", () => {
     renderForm();
     const pairedGroups = Array.from(

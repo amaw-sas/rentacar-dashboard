@@ -105,7 +105,15 @@ export async function updateReservation(
   // Status is owned exclusively by updateReservationStatus (state-machine validation
   // + notifications). Strip it here so a stale form payload cannot revert a status
   // change made via ReservationStatusActions. See issue #10.
-  const { status: _ignored, ...updatePayload } = parsed.data;
+  // Referral attribution is fixed at creation (rentacar-web query param or
+  // internal new-reservation form). Strip it on update so an operator cannot
+  // reassign a referral to themselves and capture commission. See issue #48.
+  const {
+    status: _ignoredStatus,
+    referral_id: _ignoredReferralId,
+    referral_raw: _ignoredReferralRaw,
+    ...updatePayload
+  } = parsed.data;
 
   const supabase = await createClient();
   const { error } = await supabase

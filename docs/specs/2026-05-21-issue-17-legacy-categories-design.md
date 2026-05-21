@@ -56,7 +56,12 @@ Consecuencia: **cero cambios de código frontend**. El INSERT con `status='inact
 
 ## Boundaries
 
-Sin cambios en queries, server actions, contratos, schema DDL, ni `lib/types/database.ts` (la migración es solo data; `db:types` no debería producir diff). Contenido a 1 archivo SQL nuevo + 4 filas de data.
+Sin cambios en queries, server actions, contratos, schema DDL, ni `lib/types/database.ts` (la migración es solo data; `db:types` produce **cero diff** — cualquier diff es blocker). Contenido a 1 archivo SQL nuevo + 4 filas de data.
+
+## Supuestos explícitos
+
+- **S1 — Localiza es la única dueña de estos codes.** Las 390 reservas legacy en GR/VP/G/LP provienen de Localiza (`rental_companies.code='localiza'`). El ETL de #20 resuelve categoría por `(rental_company_id, code) = (localiza_id, <code>)`. Si alguna reserva legacy perteneciera a otra compañía, E5 pasaría pero el ETL la rechazaría — fuera del set validado por este spec. Sostenido por pre-flight #16 (lookup `categories.id → category_code` sobre data Localiza).
+- **S2 — Ningún otro `rental_company_id` tiene codes GR/VP/G/LP.** Si lo tuviera, E1 sin qualifier de compañía sobrecontaría. Por eso E1 y E5 califican por `rental_company_id` de Localiza explícitamente.
 
 ## Error handling
 
@@ -78,17 +83,17 @@ SQL puro — no hay unit tests vitest aplicables. Validación:
 
 ## Observable scenarios
 
-1. **E1 — Aplicación limpia.** **Dado** un branch con migraciones 001–046 y `rental_companies` con `code='localiza'`, **cuando** se aplica 047, **entonces** `SELECT COUNT(*) FROM vehicle_categories WHERE code IN ('GR','VP','G','LP') AND status='inactive'` = **4**.
-2. **E2 — Idempotencia.** **Dado** 047 ya aplicada (4 filas), **cuando** se re-ejecuta el SQL, **entonces** termina sin error y COUNT sigue **4** (no duplica).
-3. **E3 — UI nueva reserva no ofrece legacy.** **Dado** las 4 filas `inactive`, **cuando** un admin abre `/reservations/new` y despliega el selector de categoría, **entonces** las opciones NO incluyen GR/VP/G/LP (snapshot agent-browser).
-4. **E4 — Admin /categories sí las lista.** **Dado** las 4 filas, **cuando** un admin abre `/categories`, **entonces** las 4 aparecen con estado `inactive` (snapshot agent-browser).
-5. **E5 — Lookup FK del ETL futuro resuelve.** **Dado** las 4 filas con `rental_company_id` de Localiza, **cuando** se hace `SELECT code FROM vehicle_categories WHERE rental_company_id = <localiza_id> AND code IN ('GR','VP','G','LP')`, **entonces** los 4 codes resuelven (las 390 reservas legacy no se rechazarían por categoría inexistente).
+1. **E1 — Aplicación limpia.** **Dado** un branch con migraciones 001–046 y `rental_companies` con `code='localiza'`, **cuando** se aplica 047, **entonces** `SELECT COUNT(*) FROM vehicle_categories WHERE rental_company_id = (SELECT id FROM rental_companies WHERE code='localiza') AND code IN ('GR','VP','G','LP') AND status='inactive'` = **4**. (Calificado por `rental_company_id` para no contar codes homónimos de otra compañía — ver S2.)
+2. **E2 — Idempotencia.** **Dado** las 4 filas ya insertadas, **cuando** se re-ejecuta el **statement INSERT crudo** (no el re-apply de la migración, que `schema_migrations` saltaría), **entonces** termina sin error gracias a `ON CONFLICT DO NOTHING` y el COUNT de E1 sigue **4** (no duplica).
+3. **E3 — UI nueva reserva no ofrece legacy.** Prueba primaria por código (ya auditada): `getActiveVehicleCategories()` filtra `status='active'`, y `/reservations/new` + `/edit` la consumen — las inactivas nunca llegan al form. **Corroboración runtime** (agent-browser, no es la prueba primaria): **dado** las 4 filas `inactive`, **cuando** un admin abre `/reservations/new`, **abre el combobox de categoría y escribe "GR"**, **entonces** la lista de opciones queda vacía (interacción explícita, no snapshot estático — el combobox shadcn puede estar colapsado/virtualizado, ver memoria `agent_browser_form_submit_gotcha`).
+4. **E4 — Admin /categories sí las lista.** **Dado** las 4 filas, **cuando** un admin abre `/categories`, **entonces** las 4 aparecen con estado `inactive` (verificado por interacción agent-browser: localizar las 4 filas en la tabla).
+5. **E5 — Lookup FK del ETL futuro resuelve.** **Dado** las 4 filas con `rental_company_id` de Localiza, **cuando** se hace `SELECT code FROM vehicle_categories WHERE rental_company_id = (SELECT id FROM rental_companies WHERE code='localiza') AND code IN ('GR','VP','G','LP')`, **entonces** los 4 codes resuelven (las 390 reservas legacy no se rechazarían por categoría inexistente — sujeto a S1).
 
 ## Criterios de satisfacción
 
 - [ ] E1–E5 verificados con evidencia (queries + snapshots agent-browser).
 - [ ] Archivo sigue convención `<timestamp>_047_<name>.sql`, alineado con `schema_migrations` remoto.
-- [ ] `pnpm db:types` ejecutado; `lib/types/database.ts` sin diff inesperado.
+- [ ] `pnpm db:types` ejecutado; `lib/types/database.ts` con **cero diff** (cualquier diff = blocker).
 - [ ] CI verde (type-check + lint + test + build).
 - [ ] PR abierta linkeando #17 con sección "Verificación" listando E1–E5.
 

@@ -775,6 +775,7 @@ export function ReservationForm({
               onValueChange={(value) =>
                 setValue("referral_id", value === "none" ? null : value)
               }
+              disabled={isEditing}
             >
               <SelectTrigger id="referral_id">
                 <SelectValue placeholder="Sin referido" />
@@ -933,6 +934,7 @@ export function ReservationForm({
               id="referral_raw"
               {...register("referral_raw")}
               placeholder="Referido manual"
+              disabled={isEditing}
             />
           </div>
 

@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import {
   reservationSchema,
@@ -171,23 +172,29 @@ export async function updateReservationStatus(
     return { error: error.message };
   }
 
-  // Non-blocking: send email + WhatsApp notifications
+  // Non-blocking: send email + WhatsApp + CRM notifications after the response.
+  // WhatsApp sends for `reservado` are spaced (~3s); `after()` keeps the function
+  // alive so they aren't truncated, without delaying the dashboard response.
+  // Mirrors the dispatch pattern in app/api/reservations/route.ts.
   if (reservationData?.franchise) {
-    sendReservationNotifications(
-      id,
-      newStatus as ReservationStatus,
-      reservationData.franchise
-    ).catch((err) =>
-      console.error("[email] Status notification failed:", err)
-    );
-
-    sendStatusWhatsApp(id, newStatus as ReservationStatus).catch((err) =>
-      console.error("[wati] Status notification failed:", err)
-    );
-
-    syncReservationToGhl(id).catch((err) =>
-      console.error("[ghl] Reservation sync failed:", err)
-    );
+    const franchise = reservationData.franchise;
+    after(async () => {
+      await Promise.allSettled([
+        sendReservationNotifications(
+          id,
+          newStatus as ReservationStatus,
+          franchise
+        ).catch((err) =>
+          console.error("[email] Status notification failed:", err)
+        ),
+        sendStatusWhatsApp(id, newStatus as ReservationStatus).catch((err) =>
+          console.error("[wati] Status notification failed:", err)
+        ),
+        syncReservationToGhl(id).catch((err) =>
+          console.error("[ghl] Reservation sync failed:", err)
+        ),
+      ]);
+    });
   }
 
   revalidatePath("/reservations");

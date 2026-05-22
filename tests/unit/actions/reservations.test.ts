@@ -26,6 +26,11 @@ vi.mock("@/lib/wati/notifications", () => ({
 vi.mock("@/lib/ghl/sync", () => ({
   syncReservationToGhl: vi.fn().mockResolvedValue(undefined),
 }));
+// `after` keeps the function alive for post-response dispatch; invoke the callback
+// synchronously so the test can observe the fan-out it schedules.
+vi.mock("next/server", () => ({
+  after: vi.fn((cb: () => unknown) => cb()),
+}));
 
 type DbError = { code?: string; message: string } | null;
 
@@ -160,5 +165,73 @@ describe("createReservation", () => {
     const payload = sb.insert.mock.calls[0][0];
     expect(payload.referral_id).toBe(REFERRAL_ID);
     expect(payload.referral_raw).toBe("rentacar-web-attribution");
+  });
+});
+
+/**
+ * Chainable Supabase stub for updateReservationStatus:
+ *   select("status").eq(id).single()    → current status
+ *   select("franchise").eq(id).single() → franchise
+ *   update({status}).eq(id)             → write
+ */
+function makeStatusUpdateClient() {
+  const single = vi
+    .fn()
+    .mockResolvedValueOnce({ data: { status: "pendiente" }, error: null })
+    .mockResolvedValueOnce({ data: { franchise: "alquilatucarro" }, error: null });
+  const selectEq = vi.fn().mockReturnValue({ single });
+  const select = vi.fn().mockReturnValue({ eq: selectEq });
+  const updateEq = vi.fn().mockResolvedValue({ error: null });
+  const update = vi.fn().mockReturnValue({ eq: updateEq });
+  const from = vi.fn().mockReturnValue({ select, update });
+  return { client: { from } as unknown, from };
+}
+
+describe("updateReservationStatus", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  // SCEN-005: dispatch runs via after() so the spaced WhatsApp sends aren't truncated.
+  it("dispatches notifications via after() on a reservado transition (issue #60)", async () => {
+    const { createClient } = await import("@/lib/supabase/server");
+    const sb = makeStatusUpdateClient();
+    vi.mocked(createClient).mockResolvedValue(
+      sb.client as Awaited<ReturnType<typeof createClient>>,
+    );
+
+    const { after } = await import("next/server");
+    const { sendStatusWhatsApp } = await import("@/lib/wati/notifications");
+    const { updateReservationStatus } = await import("@/lib/actions/reservations");
+
+    const result = await updateReservationStatus("res-9", "reservado");
+
+    expect(result).toEqual({});
+    expect(after).toHaveBeenCalledOnce();
+    expect(sendStatusWhatsApp).toHaveBeenCalledWith("res-9", "reservado");
+  });
+
+  it("rejects an invalid transition without dispatching", async () => {
+    const { createClient } = await import("@/lib/supabase/server");
+    // current status === target → not in VALID_TRANSITIONS (filtered out)
+    const single = vi
+      .fn()
+      .mockResolvedValueOnce({ data: { status: "reservado" }, error: null });
+    const selectEq = vi.fn().mockReturnValue({ single });
+    const select = vi.fn().mockReturnValue({ eq: selectEq });
+    const from = vi.fn().mockReturnValue({ select });
+    vi.mocked(createClient).mockResolvedValue(
+      { from } as unknown as Awaited<ReturnType<typeof createClient>>,
+    );
+
+    const { after } = await import("next/server");
+    const { sendStatusWhatsApp } = await import("@/lib/wati/notifications");
+    const { updateReservationStatus } = await import("@/lib/actions/reservations");
+
+    const result = await updateReservationStatus("res-9", "reservado");
+
+    expect(result.error).toContain("Transición no válida");
+    expect(after).not.toHaveBeenCalled();
+    expect(sendStatusWhatsApp).not.toHaveBeenCalled();
   });
 });

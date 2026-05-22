@@ -28,6 +28,19 @@ const ADDITIONAL_TEMPLATES: Record<string, string[]> = {
   ],
 };
 
+// Meta does NOT guarantee WhatsApp delivery order matches API request order; the
+// only official guarantee is waiting for each message's `delivered` status webhook
+// before sending the next. We don't have that webhook wired, so we space sends as a
+// mitigation: 1.5s separates Meta's async pipeline per message (heavy templates stop
+// overtaking light ones) and stays under WATI's tightest rate ceiling (Growth ~3 req/s).
+// Spacing reduces reordering; it does not eliminate it.
+// https://developers.facebook.com/documentation/business-messaging/whatsapp/messages/send-messages
+export const MESSAGE_SPACING_MS = 1500;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function formatDate(dateStr: string): string {
   return format(new Date(dateStr + "T12:00:00"), "d 'de' MMMM 'de' yyyy", {
     locale: es,
@@ -140,10 +153,12 @@ export async function sendStatusWhatsApp(
 
     await sendTemplateMessage(phone, templateName, broadcastName, params);
 
-    // Send additional templates (instructions for reserved)
+    // Send additional templates (instructions for reserved). Space each send so
+    // WhatsApp delivers them after the main message instead of overtaking it.
     const extras = ADDITIONAL_TEMPLATES[status];
     if (extras) {
       for (const extra of extras) {
+        await sleep(MESSAGE_SPACING_MS);
         await sendTemplateMessage(phone, extra, `${extra} ${today}`, params);
       }
     }

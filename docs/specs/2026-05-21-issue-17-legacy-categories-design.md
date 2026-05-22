@@ -1,45 +1,57 @@
-# Design — Issue #17: agregar categorías legacy GR/VP/G/LP como `inactive`
+# Design — Issue #17: asegurar que las gamas legacy GR/VP/G/LP estén `inactive`
 
 - **Fecha:** 2026-05-21
-- **Issue:** #17 (sigue al audit #13, decisión Q9 = opción A)
+- **Issue:** #17 (sigue al audit #13)
 - **Bloquea:** #20 (ETL reservations), #22 (dry-run)
-- **Estado:** aprobado para spec → SDD
+- **Estado:** reframed tras verificación empírica → SDD
+
+## Reframe (2026-05-21) — premisa del audit corregida con evidencia
+
+El audit #13 (Q9) asumió que GR/VP/G/LP **no existen** en el destino y había que insertarlas. La verificación empírica lo desmiente:
+
+- **Prod ya las tiene** (SQL contra `ilhdholjrnbycyvejsub`): las 4 existen `inactive` bajo Localiza, creadas **2026-03-30** (~6 semanas antes del audit), con nombres ricos ("Gama GR Camioneta Automática 7 puestos"). Prod además tiene GX/LY inactivas (fuera del set de #17).
+- **`seed.sql` ya las define** (líneas 194/224/230/236) — pero con status divergente: G `inactive`, GR/LP/VP `active`.
+
+La divergencia real no es "faltan", es **status drift**: seed dice `active` para GR/LP/VP, prod dice `inactive` para las 4. La tarea correcta es **garantizar `inactive` de forma idempotente**, no insertar a ciegas.
 
 ## Problema
 
-El legacy `rentacar-admin` tiene 390 reservas (3.0% de 12.967) en 4 gamas que no existen en el set destino de `public.vehicle_categories`: GR (312), VP (62), G (14), LP (2). El ETL de #20 valida `category_code` contra `vehicle_categories`; sin estas filas, las 390 reservas se rechazarían. El audit #13 resolvió Q9 = opción A: agregarlas como `status='inactive'` para que migren sin rechazo **pero no aparezcan como opción en los selectores de nueva reserva**.
+Las 390 reservas legacy (3.0% de 12.967) en GR (312), VP (62), G (14), LP (2) deben resolver su `category_code` en el ETL #20, y las gamas no deben aparecer en los selectores de nueva reserva (que filtran `status='active'`). Como las categorías ya existen en prod/seed, el riesgo es que en entornos seed-based (local `db reset`, posible branch dry-run #22) nazcan `active` y se cuelen en el selector.
 
 ## Decisión
 
-Una migración SQL `INSERT … SELECT … ON CONFLICT DO NOTHING` (enfoque A — declarativo, idempotente, portable). Sin código aplicativo, sin cambios de schema.
+**Dos cambios coordinados:**
+
+1. **Migración upsert ensure-inactive** (`INSERT … ON CONFLICT DO UPDATE SET status='inactive' WHERE status IS DISTINCT FROM 'inactive'`), usando los nombres reales de prod:
 
 ```sql
 insert into public.vehicle_categories
   (rental_company_id, code, name, description, status)
-select rc.id, v.code, v.name,
-       'Categoría legacy archivada — solo para histórico migrado',
-       'inactive'
+select rc.id, v.code, v.name, v.description, 'inactive'
 from public.rental_companies rc
 cross join (values
-  ('GR','Gama GR'),
-  ('VP','Gama VP'),
-  ('G','Gama G'),
-  ('LP','Gama LP')
-) as v(code, name)
+  ('G',  'Gama G Camioneta Mecánica',              'Camioneta mecánica'),
+  ('GR', 'Gama GR Camioneta Automática 7 puestos', 'Camioneta automática 7 puestos'),
+  ('LP', 'Gama LP Sedán Automático Híbrido',       'Sedán automático híbrido'),
+  ('VP', 'Gama VP Camioneta Mecánica de Platón',   'Camioneta mecánica de platón')
+) as v(code, name, description)
 where rc.code = 'localiza'
-on conflict (rental_company_id, code) do nothing;
+on conflict (rental_company_id, code)
+do update set status = 'inactive', updated_at = now()
+where public.vehicle_categories.status is distinct from 'inactive';
 ```
 
-Las columnas NOT NULL no listadas toman defaults del schema (`004_vehicle_categories.sql`): `image_url=''`, `passenger_count=0`, `luggage_count=0`, `has_ac=true`, `transmission='manual'`.
+2. **Fix de `seed.sql`**: GR/LP/VP `active` → `inactive` (G ya lo estaba). Necesario porque en `db reset` las migraciones corren **antes** del seed — la migración 047 sobre DB vacía es no-op y el seed recrearía GR/LP/VP `active`. Solo el fix de seed hace que los entornos frescos nazcan inactive.
 
-### Por qué enfoque A
+Las columnas NOT NULL no listadas toman defaults del schema en INSERT.
 
-- **Una sola sentencia declarativa**, sin variables ni control de flujo.
-- **Portable entre branches**: resuelve `rental_company_id` por `code='localiza'`, no por UUID hard-coded (los branches Supabase tienen UUIDs distintos).
-- **Idempotente**: `ON CONFLICT (rental_company_id, code) DO NOTHING` — la unique key existe en `004_vehicle_categories.sql:15`.
-- **Falla segura**: sin `localiza`, el cross join sobre conjunto vacío inserta 0 filas (no UUID NULL). Detectado por E1.
+### Por qué upsert (no INSERT…DO NOTHING)
 
-Alternativas B (DO block con `SELECT INTO STRICT`) y C (UUID hard-coded) descartadas: B aporta verbosidad procedural innecesaria porque pre-flight #16 ya validó que `localiza` existe; C rompe portabilidad entre branches.
+- **Cubre los 3 entornos**: prod (ya inactive → no-op real por la guard `is distinct from`), seed-based (flip active→inactive), branch vacío sin seed (INSERT crea inactive con nombres reales → ETL #20 resuelve).
+- **`INSERT…DO NOTHING` fallaría**: donde el seed ya creó GR/LP/VP `active`, un DO NOTHING las dejaría `active` → visibles en selector → viola la intención de #17 (descubierto empíricamente; el branch testing inicial lo enmascaró por carecer de seed).
+- **Preserva nombres ricos**: el `DO UPDATE SET status` no toca `name`/`description`.
+- **No-op real en prod**: la guard `WHERE status is distinct from 'inactive'` evita writes y bumps de `updated_at` redundantes.
+- **Portable**: resuelve `rental_company_id` por `code='localiza'`, no UUID hard-coded.
 
 ## Por qué `status='inactive'` basta — UI audit
 
@@ -52,11 +64,11 @@ Verificado en código (no asumido):
 - Consumidor sin filtro:
   - `app/(dashboard)/categories/page.tsx:8` → `getVehicleCategories()` (todas). Admin SÍ debe verlas para gestión histórica — comportamiento correcto, no bug.
 
-Consecuencia: **cero cambios de código frontend**. El INSERT con `status='inactive'` es suficiente para que ningún form de reserva las ofrezca.
+Consecuencia: **cero cambios de código frontend**. Con `status='inactive'` garantizado por la migración, ningún form de reserva las ofrece.
 
 ## Boundaries
 
-Sin cambios en queries, server actions, contratos, schema DDL, ni `lib/types/database.ts` (la migración es solo data; `db:types` produce **cero diff** — cualquier diff es blocker). Contenido a 1 archivo SQL nuevo + 4 filas de data.
+Sin cambios en queries, server actions, contratos, schema DDL, ni `lib/types/database.ts` (solo data; `db:types` produce **cero diff** — cualquier diff es blocker). Contenido a: 1 migración SQL (`047_legacy_categories_ensure_inactive`) + fix de 3 líneas en `supabase/seed.sql`.
 
 ## Supuestos explícitos
 
@@ -65,43 +77,45 @@ Sin cambios en queries, server actions, contratos, schema DDL, ni `lib/types/dat
 
 ## Error handling
 
-- Sin `localiza` en `rental_companies`: 0 filas insertadas (cross join vacío). E1 lo detecta al asertar COUNT = 4.
-- Re-aplicación: `ON CONFLICT DO NOTHING` → sin error, sin duplicado (E2).
-- RLS heredada de `004_vehicle_categories.sql` (admin-only insert/update, read autenticado). La migración corre como service-role vía CLI, no sujeta a RLS.
+- En `db reset` la migración corre sobre DB vacía (no hay `localiza` aún → 0 filas); el fix de `seed.sql` cubre ese path. En prod/branch ya seedeado, la migración resuelve `localiza` y normaliza.
+- Re-aplicación / re-run: `ON CONFLICT DO UPDATE … WHERE status IS DISTINCT FROM 'inactive'` → sin error, sin write si ya inactive (SCEN-002/008).
+- RLS heredada de `004_vehicle_categories.sql`. La migración corre como service-role, no sujeta a RLS.
 
 ## Naming
 
-Convención reciente (043–046): `<timestamp>_NNN_<name>.sql`. Archivo: `supabase/migrations/<timestamp>_047_legacy_categories_for_audit.sql`. Tras `apply_migration` vía MCP, renombrar el archivo local al timestamp remoto real (memoria `feedback_supabase_migration_naming`).
+Convención reciente (043–046): `<timestamp>_NNN_<name>.sql`. Archivo: `supabase/migrations/<timestamp>_047_legacy_categories_ensure_inactive.sql`. Tras apply remoto, alinear el nombre local con `schema_migrations` (memoria `feedback_supabase_migration_naming`).
 
 ## Testing
 
-SQL puro — no hay unit tests vitest aplicables. Validación:
-
-1. **Aplicación**: `apply_migration` en branch Supabase de pruebas (MCP), no prod.
-2. **Queries de verificación** contra el branch (E1, E2, E5).
-3. **Runtime (`/agent-browser`)**: smoke test de `/reservations/new` (E3, selector NO muestra GR/VP/G/LP) y `/categories` (E4, las lista como inactivas). Cero errores consola, cero requests fallidos.
+SQL — no hay unit tests vitest aplicables. Escenarios canónicos en `scenarios/legacy-categories.scenarios.md` (SCEN-001..008). Validación: `apply_migration` + queries SQL contra el branch Supabase `testing` (no prod); corroboración agent-browser de `/categories`.
 
 ## Observable scenarios
 
-1. **E1 — Aplicación limpia.** **Dado** un branch con migraciones 001–046 y `rental_companies` con `code='localiza'`, **cuando** se aplica 047, **entonces** `SELECT COUNT(*) FROM vehicle_categories WHERE rental_company_id = (SELECT id FROM rental_companies WHERE code='localiza') AND code IN ('GR','VP','G','LP') AND status='inactive'` = **4**. (Calificado por `rental_company_id` para no contar codes homónimos de otra compañía — ver S2.)
-2. **E2 — Idempotencia.** **Dado** las 4 filas ya insertadas, **cuando** se re-ejecuta el **statement INSERT crudo** (no el re-apply de la migración, que `schema_migrations` saltaría), **entonces** termina sin error gracias a `ON CONFLICT DO NOTHING` y el COUNT de E1 sigue **4** (no duplica).
-3. **E3 — UI nueva reserva no ofrece legacy.** Prueba primaria por código (ya auditada): `getActiveVehicleCategories()` filtra `status='active'`, y `/reservations/new` + `/edit` la consumen — las inactivas nunca llegan al form. **Corroboración runtime** (agent-browser, no es la prueba primaria): **dado** las 4 filas `inactive`, **cuando** un admin abre `/reservations/new`, **abre el combobox de categoría y escribe "GR"**, **entonces** la lista de opciones queda vacía (interacción explícita, no snapshot estático — el combobox shadcn puede estar colapsado/virtualizado, ver memoria `agent_browser_form_submit_gotcha`).
-4. **E4 — Admin /categories sí las lista.** **Dado** las 4 filas, **cuando** un admin abre `/categories`, **entonces** las 4 aparecen con estado `inactive` (verificado por interacción agent-browser: localizar las 4 filas en la tabla).
-5. **E5 — Lookup FK del ETL futuro resuelve.** **Dado** las 4 filas con `rental_company_id` de Localiza, **cuando** se hace `SELECT code FROM vehicle_categories WHERE rental_company_id = (SELECT id FROM rental_companies WHERE code='localiza') AND code IN ('GR','VP','G','LP')`, **entonces** los 4 codes resuelven (las 390 reservas legacy no se rechazarían por categoría inexistente — sujeto a S1).
+Contrato canónico (write-once, amendado): **`docs/specs/2026-05-21-issue-17-legacy-categories/scenarios/legacy-categories.scenarios.md`**. Resumen:
+
+- **SCEN-001** 4 inactive bajo Localiza tras apply (qualified por `rental_company_id`, S2).
+- **SCEN-002** idempotente: re-run sin error, sin bump de `updated_at`.
+- **SCEN-003** selector nueva reserva no ofrece legacy (prueba por código; runtime completo → #22).
+- **SCEN-004** `/categories` las lista `Inactiva` (agent-browser).
+- **SCEN-005** lookup FK del ETL #20 resuelve los 4 codes (S1).
+- **SCEN-006** `apply_migration` sin violación de constraints.
+- **SCEN-007** flip `active→inactive` preservando nombre rico (no degrada a placeholder).
+- **SCEN-008** en prod (ya inactive) no-op real: la guard `is distinct from` no bumpea `updated_at`.
 
 ## Criterios de satisfacción
 
-- [ ] E1–E5 verificados con evidencia (queries + snapshots agent-browser).
-- [ ] Archivo sigue convención `<timestamp>_047_<name>.sql`, alineado con `schema_migrations` remoto.
-- [ ] `pnpm db:types` ejecutado; `lib/types/database.ts` con **cero diff** (cualquier diff = blocker).
+- [x] SCEN-001/002/005/006/007/008 verificados en branch `testing` (SQL via MCP).
+- [x] SCEN-004 corroborado con agent-browser (`/categories` muestra las 4 `Inactiva`).
+- [x] SCEN-003 probado por código (cadena query→page→form); runtime completo diferido a #22.
+- [ ] `pnpm db:types` ejecutado; `lib/types/database.ts` con **cero diff**.
 - [ ] CI verde (type-check + lint + test + build).
-- [ ] PR abierta linkeando #17 con sección "Verificación" listando E1–E5.
+- [ ] PR linkeando #17 con sección Verificación.
 
 ## Fuera de alcance
 
 - Modificar `getActiveVehicleCategories` (ya filtra correcto).
-- Añadir FK constraint en `reservations.category_code` (issue independiente si se decide).
-- Cargar imágenes/datos reales para GR/VP/G/LP — son archivo histórico, no se reactivan.
+- FK constraint en `reservations.category_code` (issue independiente si se decide).
+- GX/LY (prod las tiene inactive; fuera del set Q9 de #17).
 - ETL de #20 — issue separada.
 
 ## Referencias

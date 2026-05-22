@@ -221,19 +221,19 @@ BEGIN
 
   -- GR: automatic, 7 pax
   INSERT INTO public.vehicle_categories (rental_company_id, code, name, description, passenger_count, luggage_count, has_ac, transmission, status, visibility_mode)
-  VALUES (localiza_id, 'GR', 'Gama GR Camioneta Automática 7 puestos', 'Camioneta automática 7 puestos', 7, 3, true, 'automatic', 'active', 'all')
+  VALUES (localiza_id, 'GR', 'Gama GR Camioneta Automática 7 puestos', 'Camioneta automática 7 puestos', 7, 3, true, 'automatic', 'inactive', 'all')
   ON CONFLICT (rental_company_id, code) DO NOTHING RETURNING id INTO cat_gr;
   IF cat_gr IS NULL THEN SELECT id INTO cat_gr FROM public.vehicle_categories WHERE rental_company_id = localiza_id AND code = 'GR'; END IF;
 
   -- LP: automatic, 5 pax, hybrid, RESTRICTED
   INSERT INTO public.vehicle_categories (rental_company_id, code, name, description, passenger_count, luggage_count, has_ac, transmission, status, visibility_mode)
-  VALUES (localiza_id, 'LP', 'Gama LP Sedán Automático Híbrido', 'Sedán automático híbrido', 5, 2, true, 'automatic', 'active', 'restricted')
+  VALUES (localiza_id, 'LP', 'Gama LP Sedán Automático Híbrido', 'Sedán automático híbrido', 5, 2, true, 'automatic', 'inactive', 'restricted')
   ON CONFLICT (rental_company_id, code) DO NOTHING RETURNING id INTO cat_lp;
   IF cat_lp IS NULL THEN SELECT id INTO cat_lp FROM public.vehicle_categories WHERE rental_company_id = localiza_id AND code = 'LP'; END IF;
 
   -- VP: manual, 5 pax, RESTRICTED
   INSERT INTO public.vehicle_categories (rental_company_id, code, name, description, passenger_count, luggage_count, has_ac, transmission, status, visibility_mode)
-  VALUES (localiza_id, 'VP', 'Gama VP Camioneta Mecánica de Platón', 'Camioneta mecánica de platón', 5, 2, true, 'manual', 'active', 'restricted')
+  VALUES (localiza_id, 'VP', 'Gama VP Camioneta Mecánica de Platón', 'Camioneta mecánica de platón', 5, 2, true, 'manual', 'inactive', 'restricted')
   ON CONFLICT (rental_company_id, code) DO NOTHING RETURNING id INTO cat_vp;
   IF cat_vp IS NULL THEN SELECT id INTO cat_vp FROM public.vehicle_categories WHERE rental_company_id = localiza_id AND code = 'VP'; END IF;
 

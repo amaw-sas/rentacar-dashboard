@@ -1,0 +1,22 @@
+Amend attestation for legacy-categories.scenarios.md @ HEAD 4b867d3.
+
+Reason (premortem): the committed holdout assumed GR/VP/G/LP do NOT exist in the
+destination and must be INSERTed (audit #13 Q9 premise). Empirical verification
+on 2026-05-21 disproved this: the 4 codes already exist — defined in
+supabase/seed.sql (lines 194/224/230/236) and present in prod since 2026-03-30.
+The real divergence is STATUS drift: seed ships GR/LP/VP as 'active', prod has all
+4 'inactive'. The migration must therefore ENSURE-INACTIVE (idempotent upsert),
+not blindly INSERT. Observable outcomes (4 inactive under Localiza, hidden from
+selectors, listed in /categories, ETL lookup resolves, idempotent) are preserved;
+SCEN-001/002 preconditions and the SQL header are corrected and SCEN-007 (flip
+active→inactive preserving rich name) is added.
+
+What worries me most: that GR/LP/VP might be CURRENT fleet that ops still wants
+active — mitigated by the fact prod already deactivated all 4 (updated_at early
+April), so normalizing-to-inactive matches the production source of truth rather
+than imposing a new policy. Revert path: `git revert` the amend commit and restore
+the INSERT-premise scenarios if prod is later found to intend these active.
+
+Evidence: prod SQL (vehicle_categories where rc.code='localiza' and code in
+('GR','VP','G','LP')) → all status='inactive', created_at 2026-03-30; seed.sql
+git-tracked at HEAD shows the same 4 codes defined with GR/LP/VP 'active'.

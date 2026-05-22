@@ -139,3 +139,140 @@ string leaks.
   `timestamp` field and the filename.
 - **SCEN-006** — per-check isolation: one broken query yields exit 3 with
   that check's `error` populated, the other three still complete.
+
+---
+
+# ETL: customers (issue #19)
+
+`etl-customers.py` extracts unique customers from the legacy MariaDB
+`rentacar_audit.reservations` (read-only), dedups them by `TRIM(identification)`
+— the destination's single-column `UNIQUE(identification_number)` — transforms
+them to the destination shape, and inserts them into Supabase
+`public.customers` transactionally (`ON CONFLICT (identification_number) DO
+NOTHING`). Run the migration pre-flight (above) first — it must pass before
+this ETL runs.
+
+## Setup
+
+Same venv and `.env` as the pre-flight (above): the five vars
+`LEGACY_DB_HOST` / `LEGACY_DB_USER` / `LEGACY_DB_PASSWORD` / `LEGACY_DB_NAME` /
+`SUPABASE_DB_URL`. No extra dependencies — same `pymysql`, `psycopg2-binary`,
+`python-dotenv`.
+
+The destination MUST have migrations through **048**
+(`20260522000048_048_customers_legacy_migrated_marker.sql`) applied, so the
+`customers._legacy_migrated_at` marker column exists.
+
+## Transform decisions (encoded in the code + unit tests)
+
+- **Identification normalization** (`normalize_identification`): strips spaces,
+  dots, and dashes only — never alphanumerics. `12.345.678` / `12 345 678` /
+  `12345678` collapse to `12345678`; a passport `AB-12345` becomes `AB12345`
+  (letters kept). The normalized value is BOTH the dedup key AND the persisted
+  `identification_number`.
+- **Dedup key** = the normalized identification alone (never the legacy
+  composite `(type, identification)` — that would violate the single-column
+  UNIQUE). Latest-wins by `updated_at DESC`, stable tiebreak `created_at DESC`
+  then legacy row id DESC (deterministic → idempotent). `created_at =
+  MIN(group)`, `updated_at = MAX(group)`.
+- **Type mapping**: `Cedula Ciudadania → CC`, `Cedula Extranjeria → CE`,
+  `Pasaporte → PP`. Anything else → row rejected
+  (`reason="invalid_identification_type"`), never guessed.
+- **Fullname split**: 1 token → `(token, '.')` + `needs_review=true`;
+  2/3/4+ tokens per the documented rule; stopwords `{de, del, la, las, los}`
+  glue to the following token (compound surname). Empty name → rejected.
+- **Placeholder discard (Q11)**: `is_placeholder` matches `^0+$` and
+  `^123\d{4,}$` (`PLACEHOLDER_PATTERNS`) against the NORMALIZED id. Discarded
+  BEFORE dedup, logged `action="skipped", reason="placeholder"`. **The
+  `^123\d{4,}$` pattern is PROVISIONAL** — it can match a real cédula starting
+  with `123`. The gitignored JSONL report enumerates EVERY discarded
+  identification in full; the stdout summary keeps only the count and
+  `within_expected_range`. **Commit-mode gate (Decision A):** if the unique
+  discarded-placeholder count is outside `[50, 200]` (a signal the regex
+  over-/under-matched), the gate FAILS, the whole transaction rolls back, and
+  the run exits 7. `--dry-run` never blocks on the range — it completes and
+  enumerates the full list so the operator can re-tune. Always run the dry-run
+  first and eyeball that list.
+- **Control chars + bad rows**: free-text fields are stripped of NUL and other
+  control characters during extraction (Postgres text rejects them). If a row
+  still raises a DB error inside a batch, the batch retries row-by-row so one
+  bad row is isolated as `rejected` while the rest insert — one bad row never
+  rolls back up to 500 good rows.
+- **Full accounting**: every scanned legacy row has exactly one disposition.
+  Blank/NULL-identification rows are counted in `dropped_no_identification`;
+  zero-date / unparseable timestamps fall back to a synthetic value and are
+  counted in `timestamp_fallback`. The summary's `reconciliation` block proves
+  `legacy_rows_total == inserted + skipped + rejected + placeholder_reservations
+  + dropped_no_identification` at the row level.
+
+## Running
+
+From the repo root with the venv active:
+
+```bash
+# Dry-run: read + compute + ROLLBACK. Writes NOTHING to the destination.
+python scripts/migration/etl-customers.py --dry-run
+echo $?
+
+# Commit: COMMITs only if the gate passes
+# (0 unexpected rejects
+#  AND unique placeholder count within [50, 200]
+#  AND inserted == computed_unique_non_placeholder, or every non-inserted
+#      record is an explained idempotent skip).
+# Else the whole transaction is ROLLED BACK (exit 7).
+python scripts/migration/etl-customers.py
+echo $?
+```
+
+`--dry-run` is also enabled by the env var `ETL_DRY_RUN=1`. Always run a
+dry-run against a disposable Supabase branch first (validate the placeholder
+list and the conflict counts), then commit.
+
+`--help` prints usage and the exit-code table.
+
+## Reports
+
+- **Per-row JSONL** at
+  `docs/migration-runs/etl-customers-<UTC-timestamp>.jsonl` (atomic write,
+  `/tmp` fallback). One object per logged event: `inserted` / `skipped`
+  (`placeholder` / `already_migrated` / `conflict_existing`) / `rejected` /
+  `resolved` (`cross_type_id`, with the legacy types seen and the winner).
+  The **full discarded-placeholder id list and the cross-type ids live here
+  only**. **Gitignored — it carries identification numbers (PII).**
+- **Aggregate summary** printed to stdout as a JSON object: counts, elapsed,
+  mode, gate decision, conflict tallies, the placeholder COUNT +
+  `within_expected_range`, and the `reconciliation` block. **No PII** — no
+  identification lists, no cross-type ids. This is the evidence to transcribe
+  into `docs/data-ops/2026-05-22-issue-19-etl-customers/run-summary.md`.
+
+## Idempotency
+
+A re-run inserts 0: `ON CONFLICT DO NOTHING` plus the `_legacy_migrated_at`
+marker. Skips are classified by the existing row's marker —
+`already_migrated` (a prior ETL run) vs `conflict_existing` (dashboard-owned,
+marker NULL, never overwritten).
+
+## Exit codes
+
+| Code | Meaning | Operator action |
+|---|---|---|
+| `0` | Run completed (dry-run, or commit that committed) | Review report/summary |
+| `2` | Connection failure (legacy or destination, URL masked) | Fix host/creds |
+| `3` | Query / insert failure (sanitized) | Check stderr exception type |
+| `4` | A required env var is missing or empty | Fill `.env` (stderr lists which) |
+| `5` | Report not persisted to ANY path (canonical AND `/tmp`) | Fix filesystem permissions; rerun |
+| `6` | Unexpected/uncaught error (sanitized — never the body) | Read stderr exception type |
+| `7` | Commit mode: gate FAILED (unexpected rejects, placeholder count outside `[50,200]`, or unexplained insert mismatch) → whole transaction ROLLED BACK, nothing written | Read the stderr reason + stdout summary; fix the cause; rerun |
+
+(Code `1` is reserved for the pre-flight's "gaps" and is not used by the ETL.)
+
+## Rollback
+
+`docs/data-ops/2026-05-22-issue-19-etl-customers/rollback.sql` deletes ONLY
+rows with `_legacy_migrated_at IS NOT NULL` (the ETL-inserted ones);
+dashboard-created customers (marker NULL) are never touched. It opens with an
+executable FK guard (`DO $$ ... RAISE EXCEPTION ... $$`) that aborts the whole
+transaction if any reservation references an ETL-inserted customer, so the
+rollback can never partially run. After sign-off, migration **049**
+(`20260522000049_049_drop_customers_legacy_migrated_marker.sql`) drops the
+marker column.

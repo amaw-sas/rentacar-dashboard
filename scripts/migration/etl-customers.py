@@ -71,26 +71,50 @@ STOPWORDS: frozenset[str] = frozenset({"de", "del", "la", "las", "los"})
 
 # Q11 placeholder identifications. Discarded BEFORE dedup. Matched against the
 # NORMALIZED identification (see normalize_identification) so formatting variants
-# of a junk id are caught too.
-#   ^0+$        all-zeros junk.
-#   ^123\d{4,}$ documented sequential-junk pattern from the issue.
-# PROVISIONAL — MUST be validated against the real discarded-id list in the
-# dry-run. The ^123\d{4,}$ pattern CAN match a legitimate 10-digit cedula that
-# happens to start with 123 (e.g. a real "1234567890"); that is why the JSONL
-# report enumerates EVERY discarded identification in full. Audit expectation is
-# ~90 unique ids / ~215 reservations.
-PLACEHOLDER_PATTERNS: tuple[re.Pattern[str], ...] = (
-    re.compile(r"^0+$"),
-    re.compile(r"^123\d{4,}$"),
+# of a junk id are caught too. Junk = three closed families:
+#   1. ^0+$ — all-zeros.
+#   2. keyboard ramps — prefixes of "1234567890" with len>=6 (e.g. 123456,
+#      1234567, 12345678, 123456789, 1234567890).
+#   3. PLACEHOLDER_DENYLIST — a small, eyeballed set of operator/test ids that
+#      are not clean ramp prefixes.
+#
+# HISTORY (why a closed enumeration, not a regex): the original provisional rule
+# was `^123\d{4,}$`. The 2026-05-25 branch dry-run PROVED it discarded ~66 REAL
+# 10-digit cedulas starting with 123 (matched personal emails + birth-year, and
+# several had 3-4 bookings — real repeat customers). Discarding them would lose
+# real customers AND cascade-reject their reservations in the downstream
+# reservations ETL. A closed enumeration CANNOT over-match a real cedula: no
+# real cedula is a prefix of the digit ramp, and the denylist is an explicit,
+# verified set.
+PLACEHOLDER_ZERO_RE = re.compile(r"^0+$")
+_RAMP_SEQUENCE = "1234567890"
+_RAMP_MIN_LEN = 6
+# Operator/test identifications confirmed junk in the 2026-05-25 dry-run — all
+# dc005241@gmail.com / "prueba" reservations — that are NOT clean ramp prefixes.
+# Provenance + full eyeball of all 14 discarded ids:
+# docs/migration-runs/etl-customers-verification-2026-05-25.md. The sequential
+# ramps caught by the rule above were verified as fake ids shared across
+# multiple distinct people (123456 = 2 people, 123456789 = 6 distinct emails),
+# which is exactly why a ramp can never be a usable per-customer key.
+PLACEHOLDER_DENYLIST = frozenset(
+    {
+        "12345677",  # fat-finger of the ramp
+        "1234454",
+        "1234558",
+        "1234564",
+        "1234566",
+    }
 )
 
 # Decision A: in COMMIT mode the gate FAILS (whole tx rollback, exit 7) if the
-# unique discarded-placeholder count falls OUTSIDE this range — a signal the
-# provisional ^123\d{4,}$ regex over-/under-matched this data. In --dry-run the
-# range never blocks: the run completes and enumerates the full discarded list
-# so the operator can re-tune. Inclusive bounds.
-PLACEHOLDER_RANGE_MIN = 50
-PLACEHOLDER_RANGE_MAX = 200
+# unique discarded-placeholder count falls OUTSIDE this range — a coarse
+# anomaly tripwire (the closed rule above cannot over-match, so this is a
+# sanity bound, not the primary defense). The corrected rule discards 14 ids
+# on the real dump (2026-05-25 dry-run); was [50, 200], calibrated to the
+# over-matching ^123\d{4,}$ premise. In --dry-run the range never blocks: the
+# run completes and enumerates the full discarded list. Inclusive bounds.
+PLACEHOLDER_RANGE_MIN = 1
+PLACEHOLDER_RANGE_MAX = 30
 
 # Characters stripped from identifications (Decision B). ONLY formatting
 # punctuation — spaces, dots, dashes — so alphanumeric content is preserved
@@ -237,16 +261,22 @@ def normalize_identification(identification: str) -> str:
 
 
 def is_placeholder(identification: str) -> bool:
-    """True if the NORMALIZED identification matches a documented junk pattern (Q11).
+    """True if the NORMALIZED identification is junk (Q11).
 
-    Normalizes first (so '0.0.0' is caught the same as '000'), then matches.
-    See PLACEHOLDER_PATTERNS — the ^123\\d{4,}$ rule is provisional and may match
-    a real cedula, hence the full discarded-id enumeration in the JSONL report.
+    Normalizes first (so '0.0.0' is caught the same as '000'), then tests the
+    three closed junk families: all-zeros, keyboard-ramp prefixes of
+    "1234567890" (len>=6), and the verified operator/test denylist. A closed
+    enumeration — it cannot misclassify a real cedula (see the constants above
+    and the 2026-05-25 dry-run that replaced the provisional ^123\\d{4,}$ rule).
     """
     value = normalize_identification(identification)
     if not value:
         return False
-    return any(pat.match(value) for pat in PLACEHOLDER_PATTERNS)
+    if PLACEHOLDER_ZERO_RE.match(value):
+        return True
+    if len(value) >= _RAMP_MIN_LEN and _RAMP_SEQUENCE.startswith(value):
+        return True
+    return value in PLACEHOLDER_DENYLIST
 
 
 def map_identification_type(legacy_value: str) -> str | None:
@@ -1014,7 +1044,11 @@ def build_summary(
             "unique_ids": len(placeholder_unique),
             "reservations": placeholder_reservations,
             # NO discarded_identifications list here (PII): see the JSONL report.
-            "audit_expectation": {"unique_ids": 90, "reservations": 215},
+            # Corrected expectation (2026-05-25 dry-run): zeros+ramps+denylist
+            # discard 14 ids / 121 reservations (incl. the 6-digit ramp 123456,
+            # a fake id shared by 2 people). Was {90, 215}, the over-matching
+            # ^123\d{4,}$ premise that swept up real cedulas.
+            "audit_expectation": {"unique_ids": 14, "reservations": 121},
             "expected_range": [PLACEHOLDER_RANGE_MIN, PLACEHOLDER_RANGE_MAX],
             "within_expected_range": within_range,
         },

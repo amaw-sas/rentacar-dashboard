@@ -87,6 +87,46 @@ class TestIsPlaceholder(unittest.TestCase):
         # Empty is rejected downstream as invalid, not skipped as placeholder.
         self.assertFalse(etl.is_placeholder(""))
 
+    # Corrected rule (2026-05-25 dry-run): keyboard ramps — prefixes of
+    # "1234567890" (len>=6) — are junk.
+    def test_ramp_prefix_6_digits_boundary(self):
+        # 123456 (len==_RAMP_MIN_LEN) is the shortest ramp; in the real dump
+        # it was a fake id shared by 2 different people -> unusable -> junk.
+        self.assertTrue(etl.is_placeholder("123456"))
+
+    def test_ramp_5_digits_too_short_kept(self):
+        # len 5 < 6 -> not a ramp; kept (conservative: short ids may be real).
+        self.assertFalse(etl.is_placeholder("12345"))
+
+    def test_ramp_prefix_8_digits(self):
+        self.assertTrue(etl.is_placeholder("12345678"))
+
+    def test_ramp_prefix_9_digits(self):
+        self.assertTrue(etl.is_placeholder("123456789"))
+
+    def test_ramp_full_10_digits(self):
+        self.assertTrue(etl.is_placeholder("1234567890"))
+
+    def test_fat_finger_ramp_denylist(self):
+        self.assertTrue(etl.is_placeholder("12345677"))
+
+    def test_operator_test_ids_denylist(self):
+        # dc005241@gmail.com / "prueba" reservations confirmed in the dry-run.
+        self.assertTrue(etl.is_placeholder("1234454"))
+        self.assertTrue(etl.is_placeholder("1234564"))
+
+    # Regression guard: real 10-digit cedulas starting with 123 are REAL
+    # customers (personal emails + birth-year match) — never discarded. The
+    # provisional ^123\\d{4,}$ rule wrongly discarded ~66 of these.
+    def test_real_123_cedula_not_placeholder(self):
+        self.assertFalse(etl.is_placeholder("1233497720"))
+        self.assertFalse(etl.is_placeholder("1235540187"))
+
+    def test_real_123_zero_tail_not_placeholder(self):
+        # 1230000000 is not all-zeros and not a ramp prefix -> a real cedula
+        # shape, kept (the provisional regex would have discarded it).
+        self.assertFalse(etl.is_placeholder("1230000000"))
+
 
 class TestMapIdentificationType(unittest.TestCase):
     def test_cedula_ciudadania(self):
@@ -265,9 +305,13 @@ class TestPartitionPlaceholders(unittest.TestCase):
             _legacy(1, "JUAN PEREZ", "1032456789"),
             _legacy(2, "FAKE ONE", "0000"),
             _legacy(3, "FAKE TWO", "1234567"),
+            _legacy(4, "REAL PERSON", "1233497720"),  # real 123 cedula -> KEPT
         ]
         kept, placeholders = etl.partition_placeholders(rows)
-        self.assertEqual([r.identification for r in kept], ["1032456789"])
+        self.assertEqual(
+            sorted(r.identification for r in kept),
+            ["1032456789", "1233497720"],
+        )
         self.assertEqual(
             sorted(r.identification for r in placeholders), ["0000", "1234567"]
         )
@@ -339,24 +383,32 @@ class TestDedupNormalizedKey(unittest.TestCase):
 # --------------------------------------------------------------------------- #
 class TestPlaceholderRangeGate(unittest.TestCase):
     def test_within_range_true(self):
-        self.assertTrue(etl.placeholder_within_range(50))
-        self.assertTrue(etl.placeholder_within_range(90))
-        self.assertTrue(etl.placeholder_within_range(200))
+        # Corrected range [1, 30] — the closed zeros+ramps+denylist rule
+        # discards ~13 ids (2026-05-25 dry-run). Was [50, 200], calibrated to
+        # the over-matching ^123\d{4,}$ premise that discarded real cedulas.
+        self.assertTrue(etl.placeholder_within_range(1))
+        self.assertTrue(etl.placeholder_within_range(13))
+        self.assertTrue(etl.placeholder_within_range(30))
 
     def test_below_range_false(self):
-        self.assertFalse(etl.placeholder_within_range(49))
+        # 0 discarded -> below the floor (extraction returned no placeholders).
         self.assertFalse(etl.placeholder_within_range(0))
 
     def test_above_range_false_overmatch_signal(self):
-        # The over-matching ^123\d{4,}$ scenario: 600 discarded -> regex wrong.
+        # A rule that over-matches (e.g. the old ^123\d{4,}$ → 600, or 31)
+        # exceeds the cap -> blocked, a signal the rule is wrong for this data.
+        self.assertFalse(etl.placeholder_within_range(31))
         self.assertFalse(etl.placeholder_within_range(600))
 
     def test_summary_within_expected_range_field(self):
         # An out-of-range placeholder set surfaces within_expected_range=false.
         extract = etl.ExtractResult(rows=[], legacy_rows_total=0)
+        # 31 distinct all-zeros placeholders (lengths 1..31) -> 31 unique,
+        # above the [1, 30] cap -> within_expected_range=false (over-match
+        # signal). Real values, all genuine ^0+$ placeholders.
         placeholders = [
-            _legacy(i, "X", f"123000{i:04d}") for i in range(5)
-        ]  # 5 unique -> below 50.
+            _legacy(i, "X", "0" * (i + 1)) for i in range(31)
+        ]
         dedup = etl.DedupResult()
         summary = etl.build_summary(
             dry_run=True,

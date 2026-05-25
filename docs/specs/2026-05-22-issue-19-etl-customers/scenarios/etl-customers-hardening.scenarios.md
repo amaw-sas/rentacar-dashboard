@@ -25,10 +25,16 @@ Same target: `scripts/migration/etl-customers.py` + `test_etl_customers.py`.
 
 ## SCEN-010: placeholder discard count outside expected range blocks commit
 
-**Given**: commit mode (not --dry-run) AND the number of unique discarded placeholder identifications falls OUTSIDE the expected range [50, 200] (e.g. the provisional `^123\d{4,}$` regex over-matched and discarded 600 ids — a signal the regex is wrong for this data).
+**Given**: commit mode (not --dry-run) AND the number of unique discarded placeholder identifications falls OUTSIDE the expected range [1, 30] (e.g. a
+rule that over-matches — like the original provisional `^123\d{4,}$` that discarded ~89 ids including real 10-digit cedulas — exceeds the cap; the
+corrected zeros+ramps+denylist rule discards 14, confirmed by the 2026-05-25 dry-run).
 **When**: the ETL runs in commit mode.
-**Then**: the gate FAILS — the whole transaction is rolled back, exit code = 7, zero rows written; the summary reports `placeholders_discarded.within_expected_range = false`. In --dry-run mode the run still completes and enumerates the full discarded-id list (the operator's evidence to re-tune the regex) without the range blocking anything.
-**Evidence**: gate unit test (or injected-count test) shows commit-mode `gate_pass == False` when placeholder unique-id count ∉ [50,200]; the run exits 7 with `committed=false`; `SELECT count(*) FROM customers WHERE _legacy_migrated_at IS NOT NULL` unchanged; dry-run with the same data still emits `discarded_identifications` in full.
+**Then**: the gate FAILS — the whole transaction is rolled back, exit code = 7, zero rows written; the summary reports
+`placeholders_discarded.within_expected_range = false`. In --dry-run mode the run still completes and enumerates the full discarded-id list (the
+operator's evidence to re-tune the rule) without the range blocking anything.
+**Evidence**: gate unit test (or injected-count test) shows commit-mode `gate_pass == False` when placeholder unique-id count ∉ [1,30]; the run exits 7
+with `committed=false`; `SELECT count(*) FROM customers WHERE _legacy_migrated_at IS NOT NULL` unchanged; dry-run with the same data still emits
+`discarded_identifications` in full.
 
 ---
 

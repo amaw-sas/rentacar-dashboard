@@ -11,6 +11,7 @@ import {
   createFranchise,
   updateFranchise,
 } from "@/lib/actions/franchises";
+import { getReturnTo } from "@/lib/navigation/return-to";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -76,7 +77,7 @@ export function FranchiseForm({ defaultValues, id }: FranchiseFormProps) {
       return;
     }
 
-    router.push("/franchises");
+    router.push(getReturnTo("/franchises"));
   }
 
   return (

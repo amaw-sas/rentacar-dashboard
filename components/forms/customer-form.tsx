@@ -11,6 +11,7 @@ import {
   createCustomer,
   updateCustomer,
 } from "@/lib/actions/customers";
+import { getReturnTo } from "@/lib/navigation/return-to";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -75,7 +76,7 @@ export function CustomerForm({ defaultValues, id }: CustomerFormProps) {
       return;
     }
 
-    router.push("/customers");
+    router.push(getReturnTo("/customers"));
   }
 
   return (

@@ -11,6 +11,7 @@ import {
   createReferral,
   updateReferral,
 } from "@/lib/actions/referrals";
+import { getReturnTo } from "@/lib/navigation/return-to";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -76,7 +77,7 @@ export function ReferralForm({ defaultValues, id }: ReferralFormProps) {
       return;
     }
 
-    router.push("/referrals");
+    router.push(getReturnTo("/referrals"));
   }
 
   return (

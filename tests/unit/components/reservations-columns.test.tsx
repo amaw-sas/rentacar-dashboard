@@ -7,6 +7,13 @@ vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
 
+// The "actions" cell now renders <ReturnLink> for the Editar link, which calls
+// useRouter() — provide a stub router so the cell mounts. The Libro link and
+// the copy-cell assertions below are unaffected by this stub.
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: vi.fn(), back: vi.fn(), refresh: vi.fn() }),
+}));
+
 const baseRow: ReservationRow = {
   id: "res-1",
   franchise: "alquilame",

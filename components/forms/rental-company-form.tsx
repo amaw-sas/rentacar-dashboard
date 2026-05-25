@@ -11,6 +11,7 @@ import {
   createRentalCompany,
   updateRentalCompany,
 } from "@/lib/actions/rental-companies";
+import { getReturnTo } from "@/lib/navigation/return-to";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -80,7 +81,7 @@ export function RentalCompanyForm({ defaultValues, id }: RentalCompanyFormProps)
       return;
     }
 
-    router.push("/rental-companies");
+    router.push(getReturnTo("/rental-companies"));
   }
 
   return (

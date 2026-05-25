@@ -2,6 +2,7 @@
 
 import { type ColumnDef } from "@tanstack/react-table";
 import Link from "next/link";
+import { ReturnLink } from "@/components/data-table/return-link";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 
@@ -71,7 +72,9 @@ export const columns: ColumnDef<ReferralRow, unknown>[] = [
     header: "",
     cell: ({ row }) => (
       <Button variant="ghost" size="sm" asChild>
-        <Link href={`/referrals/${row.original.id}/edit`}>Editar</Link>
+        <ReturnLink href={`/referrals/${row.original.id}/edit`}>
+          Editar
+        </ReturnLink>
       </Button>
     ),
   },

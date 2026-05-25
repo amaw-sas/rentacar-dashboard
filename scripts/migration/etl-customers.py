@@ -9,10 +9,10 @@ into Supabase public.customers with ON CONFLICT (identification_number) DO NOTHI
 Two modes:
   --dry-run   read everything, compute everything, ROLLBACK at the end. Writes
               nothing to the destination. Use this against a disposable branch
-              FIRST to validate the placeholder regex against the real data.
+              FIRST to validate the placeholder rule against the real data.
   (commit)    COMMIT only if the gate passes (0 unexpected rejects AND
               inserted == computed_unique_non_placeholder AND the unique
-              placeholder count is within [50, 200]); otherwise ROLLBACK the
+              placeholder count is within [1, 30]); otherwise ROLLBACK the
               whole transaction. The decision is printed.
 
 Idempotent: a re-run inserts 0 (ON CONFLICT DO NOTHING + the _legacy_migrated_at
@@ -1094,7 +1094,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
             "Modes: --dry-run reads + computes + ROLLS BACK (writes nothing); "
             "without it, commit mode COMMITs only if the gate passes "
             "(0 unexpected rejects AND inserted == computed_unique_non_placeholder "
-            "AND the unique placeholder count is within [50, 200]). "
+            "AND the unique placeholder count is within [1, 30]). "
             "Exit codes: 0 ok, 2 connection, 3 query error, 4 env missing, "
             "5 report not persisted, 6 unexpected, 7 gate failed (rolled back)."
         ),

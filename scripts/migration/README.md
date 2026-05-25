@@ -181,18 +181,21 @@ The destination MUST have migrations through **048**
 - **Fullname split**: 1 token → `(token, '.')` + `needs_review=true`;
   2/3/4+ tokens per the documented rule; stopwords `{de, del, la, las, los}`
   glue to the following token (compound surname). Empty name → rejected.
-- **Placeholder discard (Q11)**: `is_placeholder` matches `^0+$` and
-  `^123\d{4,}$` (`PLACEHOLDER_PATTERNS`) against the NORMALIZED id. Discarded
-  BEFORE dedup, logged `action="skipped", reason="placeholder"`. **The
-  `^123\d{4,}$` pattern is PROVISIONAL** — it can match a real cédula starting
-  with `123`. The gitignored JSONL report enumerates EVERY discarded
-  identification in full; the stdout summary keeps only the count and
+- **Placeholder discard (Q11)**: `is_placeholder` (against the NORMALIZED id)
+  discards three closed junk families: `^0+$` (all-zeros), keyboard ramps
+  (prefixes of `1234567890`, length ≥ 6), and a verified operator/test denylist.
+  Discarded BEFORE dedup, logged `action="skipped", reason="placeholder"`. This
+  REPLACED the original provisional `^123\d{4,}$` regex, which the 2026-05-25
+  dry-run proved discarded ~66 REAL 10-digit cédulas starting with `123`
+  (personal emails + birth-year correlation). A closed enumeration cannot
+  over-match a real cédula. The gitignored JSONL report enumerates EVERY
+  discarded identification in full; the stdout summary keeps only the count and
   `within_expected_range`. **Commit-mode gate (Decision A):** if the unique
-  discarded-placeholder count is outside `[50, 200]` (a signal the regex
-  over-/under-matched), the gate FAILS, the whole transaction rolls back, and
-  the run exits 7. `--dry-run` never blocks on the range — it completes and
-  enumerates the full list so the operator can re-tune. Always run the dry-run
-  first and eyeball that list.
+  discarded-placeholder count is outside `[1, 30]` (a coarse anomaly tripwire —
+  the closed rule discards 14 on the real dump), the gate FAILS, the whole
+  transaction rolls back, and the run exits 7. `--dry-run` never blocks on the
+  range — it completes and enumerates the full list so the operator can eyeball
+  it. Always run the dry-run first and eyeball that list.
 - **Control chars + bad rows**: free-text fields are stripped of NUL and other
   control characters during extraction (Postgres text rejects them). If a row
   still raises a DB error inside a batch, the batch retries row-by-row so one
@@ -216,7 +219,7 @@ echo $?
 
 # Commit: COMMITs only if the gate passes
 # (0 unexpected rejects
-#  AND unique placeholder count within [50, 200]
+#  AND unique placeholder count within [1, 30]
 #  AND inserted == computed_unique_non_placeholder, or every non-inserted
 #      record is an explained idempotent skip).
 # Else the whole transaction is ROLLED BACK (exit 7).
@@ -262,7 +265,7 @@ marker NULL, never overwritten).
 | `4` | A required env var is missing or empty | Fill `.env` (stderr lists which) |
 | `5` | Report not persisted to ANY path (canonical AND `/tmp`) | Fix filesystem permissions; rerun |
 | `6` | Unexpected/uncaught error (sanitized — never the body) | Read stderr exception type |
-| `7` | Commit mode: gate FAILED (unexpected rejects, placeholder count outside `[50,200]`, or unexplained insert mismatch) → whole transaction ROLLED BACK, nothing written | Read the stderr reason + stdout summary; fix the cause; rerun |
+| `7` | Commit mode: gate FAILED (unexpected rejects, placeholder count outside `[1, 30]`, or unexplained insert mismatch) → whole transaction ROLLED BACK, nothing written | Read the stderr reason + stdout summary; fix the cause; rerun |
 
 (Code `1` is reserved for the pre-flight's "gaps" and is not used by the ETL.)
 

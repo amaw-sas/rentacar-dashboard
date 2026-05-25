@@ -41,6 +41,10 @@ export async function checkPendingReservationStatuses(): Promise<{
 
   let updated = 0;
   let errors = 0;
+  // WhatsApp sends for `reservado` are now spaced (~3s); collect the detached
+  // dispatches and await them before returning so the serverless function isn't
+  // reclaimed mid-sequence, which would silently drop the instruction messages.
+  const dispatches: Promise<unknown>[] = [];
 
   for (const reservation of pendingReservations) {
     try {
@@ -93,16 +97,20 @@ export async function checkPendingReservationStatuses(): Promise<{
 
       // Send notifications for the new status
       if (reservation.franchise) {
-        sendReservationNotifications(
-          reservation.id,
-          newStatus,
-          reservation.franchise
-        ).catch((err) =>
-          console.error("[check-pending] Email notification failed:", err)
+        dispatches.push(
+          sendReservationNotifications(
+            reservation.id,
+            newStatus,
+            reservation.franchise
+          ).catch((err) =>
+            console.error("[check-pending] Email notification failed:", err)
+          )
         );
 
-        sendStatusWhatsApp(reservation.id, newStatus).catch((err) =>
-          console.error("[check-pending] WhatsApp notification failed:", err)
+        dispatches.push(
+          sendStatusWhatsApp(reservation.id, newStatus).catch((err) =>
+            console.error("[check-pending] WhatsApp notification failed:", err)
+          )
         );
       }
     } catch (err) {
@@ -113,6 +121,9 @@ export async function checkPendingReservationStatuses(): Promise<{
       errors++;
     }
   }
+
+  // Block until all notification dispatches settle (see `dispatches` above).
+  await Promise.allSettled(dispatches);
 
   console.log(
     `[check-pending] Done: checked=${pendingReservations.length}, updated=${updated}, errors=${errors}`

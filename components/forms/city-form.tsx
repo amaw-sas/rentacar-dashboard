@@ -5,6 +5,7 @@ import { useForm, type Resolver } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { citySchema, type CityFormData } from "@/lib/schemas/city";
 import { createCity, updateCity } from "@/lib/actions/cities";
+import { getReturnTo } from "@/lib/navigation/return-to";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -62,7 +63,7 @@ export function CityForm({ defaultValues, id }: CityFormProps) {
       return;
     }
 
-    router.push("/cities");
+    router.push(getReturnTo("/cities"));
   }
 
   return (

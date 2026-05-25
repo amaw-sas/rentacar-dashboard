@@ -11,6 +11,7 @@ import {
   createLocation,
   updateLocation,
 } from "@/lib/actions/locations";
+import { getReturnTo } from "@/lib/navigation/return-to";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -80,7 +81,7 @@ export function LocationForm({ defaultValues, id, rentalCompanies, cities }: Loc
       return;
     }
 
-    router.push("/locations");
+    router.push(getReturnTo("/locations"));
   }
 
   return (

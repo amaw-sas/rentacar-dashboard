@@ -3,6 +3,7 @@
 import { type ColumnDef } from "@tanstack/react-table";
 import Link from "next/link";
 import { BookOpenIcon, PencilIcon } from "lucide-react";
+import { ReturnLink } from "@/components/data-table/return-link";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { CopyableText } from "@/components/ui/copyable-text";
@@ -258,12 +259,12 @@ export const columns: ColumnDef<ReservationRow, unknown>[] = [
           </Button>
         ) : null}
         <Button variant="ghost" size="icon-xs" asChild>
-          <Link
+          <ReturnLink
             href={`/reservations/${row.original.id}/edit`}
             aria-label="Editar"
           >
             <PencilIcon />
-          </Link>
+          </ReturnLink>
         </Button>
       </div>
     ),

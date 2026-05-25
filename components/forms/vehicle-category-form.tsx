@@ -11,6 +11,7 @@ import {
   createVehicleCategory,
   updateVehicleCategory,
 } from "@/lib/actions/vehicle-categories";
+import { getReturnTo } from "@/lib/navigation/return-to";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -92,7 +93,7 @@ export function VehicleCategoryForm({
       return;
     }
 
-    router.push("/categories");
+    router.push(getReturnTo("/categories"));
   }
 
   return (

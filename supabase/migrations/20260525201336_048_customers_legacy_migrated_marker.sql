@@ -1,5 +1,12 @@
 -- Issue #19 — legacy customers ETL marker column.
 --
+-- Filename version 20260525201336 == the version recorded in
+-- supabase_migrations.schema_migrations when this was applied to prod via MCP
+-- apply_migration (issue #63 reconciliation: the original 20260522000048 prefix
+-- was synthetic and absent from schema_migrations, so a `supabase db push` would
+-- have re-applied it). Now the prefix matches the remote, so push treats it as
+-- already applied. See migration 049 (sorts strictly after, version ...337).
+--
 -- Adds a TEMPORARY provenance marker to public.customers. The ETL
 -- (scripts/migration/etl-customers.py) stamps every row it inserts with a
 -- single run-start timestamp; rows created by the dashboard keep it NULL.

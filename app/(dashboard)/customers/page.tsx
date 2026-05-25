@@ -1,6 +1,6 @@
-import Link from "next/link";
 import { getCustomers } from "@/lib/queries/customers";
 import { DataTable } from "@/components/data-table/data-table";
+import { ReturnLink } from "@/components/data-table/return-link";
 import { Button } from "@/components/ui/button";
 import { columns } from "./columns";
 
@@ -12,7 +12,7 @@ export default async function CustomersPage() {
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">Clientes</h1>
         <Button asChild>
-          <Link href="/customers/new">Nuevo Cliente</Link>
+          <ReturnLink href="/customers/new">Nuevo Cliente</ReturnLink>
         </Button>
       </div>
 

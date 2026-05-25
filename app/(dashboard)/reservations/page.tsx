@@ -1,7 +1,7 @@
-import Link from "next/link";
 import { getReservations } from "@/lib/queries/reservations";
 import { getReferrals } from "@/lib/queries/referrals";
 import { getCities } from "@/lib/queries/cities";
+import { ReturnLink } from "@/components/data-table/return-link";
 import { Button } from "@/components/ui/button";
 import { ReservationsTable } from "./reservations-table";
 import type { ReservationRow } from "./columns";
@@ -27,7 +27,7 @@ export default async function ReservationsPage() {
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">Reservas</h1>
         <Button asChild>
-          <Link href="/reservations/new">Nueva Reserva</Link>
+          <ReturnLink href="/reservations/new">Nueva Reserva</ReturnLink>
         </Button>
       </div>
 

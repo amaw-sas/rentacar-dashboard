@@ -19,6 +19,7 @@ import {
 } from "@/lib/actions/reservations";
 import { updateCustomerContact } from "@/lib/actions/customers";
 import { customerContactSchema } from "@/lib/schemas/customer";
+import { getReturnTo } from "@/lib/navigation/return-to";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -309,7 +310,7 @@ export function ReservationForm({
       return;
     }
 
-    router.push("/reservations");
+    router.push(getReturnTo("/reservations"));
   }
 
   function onInvalid(

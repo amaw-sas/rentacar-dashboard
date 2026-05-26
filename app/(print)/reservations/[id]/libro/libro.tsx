@@ -29,6 +29,7 @@ type LibroReservation = {
   baby_seat: boolean;
   wash: boolean;
   extra_driver: boolean;
+  customers: { first_name: string; last_name: string } | null;
   pickup_location: {
     name: string;
     pickup_address: string;
@@ -109,6 +110,9 @@ export function Libro({
   const vehicleImage = pickVehicleImage(category, models);
   const companyName = reservation.rental_companies?.name ?? "";
   const reservationCode = reservation.reservation_code ?? "";
+  const customerName = reservation.customers
+    ? `${reservation.customers.first_name} ${reservation.customers.last_name}`.trim()
+    : "";
 
   return (
     <div className="libro mx-auto flex min-h-screen w-full max-w-[1280px] flex-col bg-white text-neutral-900">
@@ -136,6 +140,7 @@ export function Libro({
             </p>
           </div>
 
+          <FieldRow label="Titular autorizado" value={customerName || "—"} />
           <FieldRow label="Fecha recogida" value={formatDate(reservation.pickup_date)} />
           <FieldRow label="Hora recogida" value={formatHour(reservation.pickup_hour)} />
           <FieldRow

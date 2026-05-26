@@ -36,16 +36,18 @@ Reconciliation invariant (SCEN-012): `inserted(12,846 reservations) + placeholde
 | Scenario | Observable | Result |
 |---|---|---|
 | SCEN-001 happy path | total=10,775, marker NOT NULL=10,774, marker NULL=1 | PASS |
-| SCEN-002 placeholder (corrected) | real `1233497720`/`1235540187` present (1,1); junk `1234566`/`123456`/`^0+$` absent (0,0,0) | PASS |
+| SCEN-002 placeholder (corrected) | two real 123-prefix 10-digit cédulas present (1,1)[^pii]; junk `1234566`/`123456`/`^0+$` absent (0,0,0) | PASS |
 | SCEN-003 one-token name | rows with `last_name='.'` = 2 (= report `needs_review`) | PASS |
 | SCEN-005 idempotent re-run | run 3 inserted=0, `skipped.already_migrated`=10,774, counts unchanged | PASS |
 | SCEN-006 cross-type UNIQUE | identification_numbers with >1 row = 0; `conflicts_resolved.cross_type`=17 | PASS |
 | SCEN-007 rollback | `rollback.sql` deleted 10,774 marker rows; total → C0=1; dashboard seed survived | PASS |
 
-SCEN-008 (env/connection contract), SCEN-009/011/012/013 (normalization, control-char sanitization, reconciliation, zero-date) are covered by the 68 stdlib unit tests (`test_etl_customers.py`, all green). SCEN-010 (range gate) is unit-tested; its scenario text amend (`[50,200]→[1,30]`) is human-applied per the amend protocol.
+SCEN-008 (env/connection contract), SCEN-009/011/012/013 (normalization, control-char sanitization, reconciliation, zero-date) are covered by the stdlib unit tests (`test_etl_customers.py`, all green — 88 after the issue #63 follow-ups, which add SCEN-014..017/019). SCEN-010 (range gate) is unit-tested; its scenario text amend (`[50,200]→[1,30]`) is human-applied per the amend protocol.
 
 ## Operational notes
 
 - Branch DB password is independent of prod — reset in the dashboard; the connstring uses the Session pooler (IPv4) on port 5432.
 - Pooler cold-start > 10s: the ETL's late destination connect (timeout 10s) can exit 2 on a cold pooler. Pre-warm with a `connect_timeout=30` connection immediately before the run.
 - A hard ref-guard refuses to run unless the destination ref is the branch (`douqvrnijqhgpjnhmbmq`), never prod.
+
+[^pii]: The two real cédula literals originally recorded here were redacted (issue #63, Ley 1581 hygiene). They were genuine 10-digit 123-prefix cédulas confirmed present in the prod result; the regression is now exercised by clearly-synthetic 123-prefix values in `test_etl_customers.py`.

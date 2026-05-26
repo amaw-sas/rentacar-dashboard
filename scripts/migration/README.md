@@ -160,7 +160,7 @@ Same venv and `.env` as the pre-flight (above): the five vars
 `python-dotenv`.
 
 The destination MUST have migrations through **048**
-(`20260522000048_048_customers_legacy_migrated_marker.sql`) applied, so the
+(`20260525201336_048_customers_legacy_migrated_marker.sql`) applied, so the
 `customers._legacy_migrated_at` marker column exists.
 
 ## Transform decisions (encoded in the code + unit tests)
@@ -180,7 +180,10 @@ The destination MUST have migrations through **048**
   (`reason="invalid_identification_type"`), never guessed.
 - **Fullname split**: 1 token → `(token, '.')` + `needs_review=true`;
   2/3/4+ tokens per the documented rule; stopwords `{de, del, la, las, los}`
-  glue to the following token (compound surname). Empty name → rejected.
+  glue to the following token (compound surname). An empty name OR a name that
+  is ENTIRELY stopwords (e.g. `"de la"`) → rejected
+  (`reason="invalid_first_name"`) — an all-stopword string is not a name, so it
+  is never persisted as `first_name="de la"` (issue #63).
 - **Placeholder discard (Q11)**: `is_placeholder` (against the NORMALIZED id)
   discards three closed junk families: `^0+$` (all-zeros), keyboard ramps
   (prefixes of `1234567890`, length ≥ 6), and a verified operator/test denylist.
@@ -200,13 +203,18 @@ The destination MUST have migrations through **048**
   control characters during extraction (Postgres text rejects them). If a row
   still raises a DB error inside a batch, the batch retries row-by-row so one
   bad row is isolated as `rejected` while the rest insert — one bad row never
-  rolls back up to 500 good rows.
+  rolls back up to 500 good rows. If a `ROLLBACK TO SAVEPOINT` itself fails (the
+  transaction is poisoned, `25P02`), the error PROPAGATES and the whole run
+  aborts (exit 3) rather than masking the real poison row behind spurious
+  per-row rejects (issue #63).
 - **Full accounting**: every scanned legacy row has exactly one disposition.
   Blank/NULL-identification rows are counted in `dropped_no_identification`;
-  zero-date / unparseable timestamps fall back to a synthetic value and are
-  counted in `timestamp_fallback`. The summary's `reconciliation` block proves
-  `legacy_rows_total == inserted + skipped + rejected + placeholder_reservations
-  + dropped_no_identification` at the row level.
+  zero-date / unparseable timestamps are counted in `timestamp_fallback` AND
+  EXCLUDED from the dedup `created_at` MIN / `updated_at` MAX — the synthetic
+  sentinel never persists as year 0001; an all-fallback customer coalesces to
+  the run-start timestamp (issue #63). The summary's `reconciliation` block
+  proves `legacy_rows_total == inserted + skipped + rejected +
+  placeholder_reservations + dropped_no_identification` at the row level.
 
 ## Running
 
@@ -253,7 +261,10 @@ list and the conflict counts), then commit.
 A re-run inserts 0: `ON CONFLICT DO NOTHING` plus the `_legacy_migrated_at`
 marker. Skips are classified by the existing row's marker —
 `already_migrated` (a prior ETL run) vs `conflict_existing` (dashboard-owned,
-marker NULL, never overwritten).
+marker NULL, never overwritten). Both are "explained" skips that pass the gate.
+A `conflict_unknown` (ON CONFLICT fired yet the row is absent on re-read — a
+"shouldn't happen" anomaly) is NOT explained: it FAILS the commit gate and
+rolls the whole transaction back (issue #63).
 
 ## Exit codes
 
@@ -265,7 +276,7 @@ marker NULL, never overwritten).
 | `4` | A required env var is missing or empty | Fill `.env` (stderr lists which) |
 | `5` | Report not persisted to ANY path (canonical AND `/tmp`) | Fix filesystem permissions; rerun |
 | `6` | Unexpected/uncaught error (sanitized — never the body) | Read stderr exception type |
-| `7` | Commit mode: gate FAILED (unexpected rejects, placeholder count outside `[1, 30]`, or unexplained insert mismatch) → whole transaction ROLLED BACK, nothing written | Read the stderr reason + stdout summary; fix the cause; rerun |
+| `7` | Commit mode: gate FAILED (unexpected rejects, placeholder count outside `[1, 30]`, unexplained insert mismatch, or any `conflict_unknown` skip) → whole transaction ROLLED BACK, nothing written | Read the stderr reason + stdout summary; fix the cause; rerun |
 
 (Code `1` is reserved for the pre-flight's "gaps" and is not used by the ETL.)
 
@@ -277,5 +288,5 @@ dashboard-created customers (marker NULL) are never touched. It opens with an
 executable FK guard (`DO $$ ... RAISE EXCEPTION ... $$`) that aborts the whole
 transaction if any reservation references an ETL-inserted customer, so the
 rollback can never partially run. After sign-off, migration **049**
-(`20260522000049_049_drop_customers_legacy_migrated_marker.sql`) drops the
+(`20260525201337_049_drop_customers_legacy_migrated_marker.sql`) drops the
 marker column.

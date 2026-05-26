@@ -81,5 +81,15 @@ next-env.d.ts
 
 # customers ETL (issue #19): per-row reports carry identification numbers (PII)
 /docs/migration-runs/*.jsonl
-/docs/data-ops/2026-05-22-issue-19-etl-customers/*.json
-/docs/data-ops/2026-05-22-issue-19-etl-customers/*.jsonl
+
+# data-ops PII (issue #62): never commit raw data dumps — they carry customer PII (cédula, phone, email).
+# Audit artifacts (*.sql rollback scripts, *.md run summaries) stay tracked; only data dumps are ignored.
+# Covers common dump formats under docs/data-ops/ (json/ndjson/csv/tsv/xlsx/gz/zip); **/*.jsonl is repo-wide.
+docs/data-ops/**/*.json
+docs/data-ops/**/*.ndjson
+docs/data-ops/**/*.csv
+docs/data-ops/**/*.tsv
+docs/data-ops/**/*.xlsx
+docs/data-ops/**/*.gz
+docs/data-ops/**/*.zip
+**/*.jsonl

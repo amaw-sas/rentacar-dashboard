@@ -40,6 +40,14 @@ const navGroups = [
     ],
   },
   {
+    label: "Operaciones",
+    items: [
+      { title: "Reservas", href: "/reservations", icon: UserRound },
+      { title: "Clientes", href: "/customers", icon: Users },
+      { title: "Referidos", href: "/referrals", icon: Tags },
+    ],
+  },
+  {
     label: "Datos de Referencia",
     items: [
       { title: "Rentadoras", href: "/rental-companies", icon: Building2 },
@@ -47,14 +55,6 @@ const navGroups = [
       { title: "Categorías", href: "/categories", icon: Car },
       { title: "Ciudades", href: "/cities", icon: Globe },
       { title: "Franquicias", href: "/franchises", icon: Store },
-    ],
-  },
-  {
-    label: "Operaciones",
-    items: [
-      { title: "Referidos", href: "/referrals", icon: Tags },
-      { title: "Clientes", href: "/customers", icon: Users },
-      { title: "Reservas", href: "/reservations", icon: UserRound },
     ],
   },
   {

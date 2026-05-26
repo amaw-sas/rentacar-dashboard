@@ -116,11 +116,14 @@ class TestIsPlaceholder(unittest.TestCase):
         self.assertTrue(etl.is_placeholder("1234564"))
 
     # Regression guard: real 10-digit cedulas starting with 123 are REAL
-    # customers (personal emails + birth-year match) — never discarded. The
-    # provisional ^123\\d{4,}$ rule wrongly discarded ~66 of these.
+    # customers — never discarded. The provisional ^123\\d{4,}$ rule wrongly
+    # discarded ~66 of these. SYNTHETIC fixtures (issue #63 / Ley 1581 hygiene):
+    # all-repeated-tail 123 cedulas are assigned to no person, yet still match
+    # the OLD over-matching ^123\\d{4,}$ rule, so they exercise the exact
+    # regression without persisting real PII.
     def test_real_123_cedula_not_placeholder(self):
-        self.assertFalse(etl.is_placeholder("1233497720"))
-        self.assertFalse(etl.is_placeholder("1235540187"))
+        self.assertFalse(etl.is_placeholder("1239999999"))
+        self.assertFalse(etl.is_placeholder("1238888888"))
 
     def test_real_123_zero_tail_not_placeholder(self):
         # 1230000000 is not all-zeros and not a ramp prefix -> a real cedula
@@ -199,6 +202,28 @@ class TestSplitFullname(unittest.TestCase):
         with self.assertRaises(ValueError):
             etl.split_fullname("   ")
 
+    # SCEN-017: an all-stopword fullname is rejected, never persisted as a
+    # stopword-only first_name.
+    def test_all_stopword_de_la_raises(self):
+        with self.assertRaises(ValueError):
+            etl.split_fullname("de la")
+
+    def test_all_stopword_uppercase_raises(self):
+        # Case-insensitive: 'DE LA' is also all-stopword.
+        with self.assertRaises(ValueError):
+            etl.split_fullname("DE LA")
+
+    def test_single_stopword_raises(self):
+        with self.assertRaises(ValueError):
+            etl.split_fullname("los")
+
+    def test_real_token_with_trailing_stopword_kept(self):
+        # A real first name followed by a trailing stopword is NOT all-stopword:
+        # 'JUAN de' keeps a real first_name (degenerate last_name, but valid).
+        first, last, needs_review = etl.split_fullname("JUAN de")
+        self.assertEqual(first, "JUAN")
+        self.assertFalse(needs_review)
+
 
 class TestTransformRow(unittest.TestCase):
     def test_invalid_type_rejected(self):
@@ -208,6 +233,13 @@ class TestTransformRow(unittest.TestCase):
 
     def test_empty_name_rejected(self):
         out = etl.transform_row(_legacy(1, "   ", "123"))
+        self.assertIsInstance(out, etl.RejectedRow)
+        self.assertEqual(out.reason, "invalid_first_name")
+
+    def test_all_stopword_name_rejected(self):
+        # SCEN-017: 'de la' (all stopwords) -> RejectedRow, not a customer with
+        # first_name='de la'.
+        out = etl.transform_row(_legacy(1, "de la", "123"))
         self.assertIsInstance(out, etl.RejectedRow)
         self.assertEqual(out.reason, "invalid_first_name")
 
@@ -305,12 +337,12 @@ class TestPartitionPlaceholders(unittest.TestCase):
             _legacy(1, "JUAN PEREZ", "1032456789"),
             _legacy(2, "FAKE ONE", "0000"),
             _legacy(3, "FAKE TWO", "1234567"),
-            _legacy(4, "REAL PERSON", "1233497720"),  # real 123 cedula -> KEPT
+            _legacy(4, "REAL PERSON", "1239999999"),  # synthetic 123 cedula -> KEPT
         ]
         kept, placeholders = etl.partition_placeholders(rows)
         self.assertEqual(
             sorted(r.identification for r in kept),
-            ["1032456789", "1233497720"],
+            ["1032456789", "1239999999"],
         )
         self.assertEqual(
             sorted(r.identification for r in placeholders), ["0000", "1234567"]
@@ -649,7 +681,211 @@ class TestTimestampFallback(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------- #
-# Test helpers used by the SCEN-011/012/013 tests.
+# SCEN-014: the fallback sentinel never persists as year 0001.
+# --------------------------------------------------------------------------- #
+class TestTimestampSentinelExclusion(unittest.TestCase):
+    def _row(self, row_id, ident, created, updated):
+        return etl.LegacyRow(
+            row_id=row_id,
+            fullname="JUAN PEREZ",
+            identification=ident,
+            identification_type="Cedula Ciudadania",
+            email="a@b.com",
+            phone="300",
+            created_at=created,
+            updated_at=updated,
+        )
+
+    def test_all_fallback_group_coalesces_to_run_started(self):
+        # Every member fell back -> no real timestamp -> persist run_started,
+        # NOT datetime.min / year 0001.
+        run = _dt(2026, 5, 25)
+        s = etl.FALLBACK_SENTINEL
+        rows = [self._row(1, "555", s, s), self._row(2, "555", s, s)]
+        result = etl.dedup_records(rows, run_started=run)
+        self.assertEqual(len(result.records), 1)
+        rec = result.records[0]
+        self.assertEqual(rec.created_at, run)
+        self.assertEqual(rec.updated_at, run)
+        self.assertNotEqual(rec.created_at, etl.FALLBACK_SENTINEL)
+
+    def test_mixed_group_excludes_sentinel_real_wins(self):
+        # One real (2020) member + one fully-fallback member: the real timestamp
+        # wins both MIN and MAX; the sentinel is excluded; run_started unused.
+        run = _dt(2026, 5, 25)
+        s = etl.FALLBACK_SENTINEL
+        real = _dt(2020, 6, 1)
+        rows = [self._row(1, "777", real, real), self._row(2, "777", s, s)]
+        result = etl.dedup_records(rows, run_started=run)
+        rec = result.records[0]
+        self.assertEqual(rec.created_at, real)
+        self.assertEqual(rec.updated_at, real)
+
+    def test_single_fallback_row_coalesces(self):
+        run = _dt(2026, 5, 25)
+        s = etl.FALLBACK_SENTINEL
+        result = etl.dedup_records([self._row(1, "888", s, s)], run_started=run)
+        rec = result.records[0]
+        self.assertEqual(rec.created_at, run)
+        self.assertEqual(rec.updated_at, run)
+
+    def test_per_field_sentinel_divergence_keeps_created_le_updated(self):
+        # Single row: created is a zero-date sentinel, updated is a real 2024.
+        # Drawing both bounds from the real-timestamp set keeps the invariant
+        # created_at <= updated_at (never created > updated, never year 0001).
+        run = _dt(2026, 5, 25)
+        s = etl.FALLBACK_SENTINEL
+        real = _dt(2024, 5, 1)
+        result = etl.dedup_records([self._row(1, "991", s, real)], run_started=run)
+        rec = result.records[0]
+        self.assertLessEqual(rec.created_at, rec.updated_at)
+        self.assertEqual(rec.created_at, real)
+        self.assertEqual(rec.updated_at, real)
+        self.assertNotEqual(rec.created_at, etl.FALLBACK_SENTINEL)
+
+    def test_cross_row_sentinel_divergence_keeps_created_le_updated(self):
+        # Group where the only real created_at (2025) is LATER than the only
+        # real updated_at (2020) — they live on different rows. The reduction
+        # must still yield created_at <= updated_at (the HIGH edge-case fix).
+        run = _dt(2026, 5, 25)
+        s = etl.FALLBACK_SENTINEL
+        rows = [
+            self._row(1, "992", _dt(2025, 1, 1), s),  # real created, sentinel updated
+            self._row(2, "992", s, _dt(2020, 1, 1)),  # sentinel created, real updated
+        ]
+        result = etl.dedup_records(rows, run_started=run)
+        rec = result.records[0]
+        self.assertLessEqual(rec.created_at, rec.updated_at)
+        self.assertEqual(rec.created_at, _dt(2020, 1, 1))
+        self.assertEqual(rec.updated_at, _dt(2025, 1, 1))
+
+
+# --------------------------------------------------------------------------- #
+# SCEN-015: conflict_unknown is NOT an explained skip -> commit gate fails.
+# --------------------------------------------------------------------------- #
+class TestNonInsertedAllExplained(unittest.TestCase):
+    def test_conflict_unknown_is_unexplained(self):
+        recs = [_record("100")]
+        self.assertFalse(
+            etl.non_inserted_all_explained(recs, set(), {}, {"100": "conflict_unknown"})
+        )
+
+    def test_already_migrated_is_explained(self):
+        recs = [_record("100")]
+        self.assertTrue(
+            etl.non_inserted_all_explained(recs, set(), {}, {"100": "already_migrated"})
+        )
+
+    def test_conflict_existing_is_explained(self):
+        recs = [_record("100")]
+        self.assertTrue(
+            etl.non_inserted_all_explained(recs, set(), {}, {"100": "conflict_existing"})
+        )
+
+    def test_inserted_is_explained(self):
+        recs = [_record("100")]
+        self.assertTrue(etl.non_inserted_all_explained(recs, {"100"}, {}, {}))
+
+    def test_batch_error_is_explained(self):
+        recs = [_record("100")]
+        self.assertTrue(
+            etl.non_inserted_all_explained(recs, set(), {"100": "Err:23514"}, {})
+        )
+
+    def test_one_conflict_unknown_among_explained_fails(self):
+        recs = [_record("100"), _record("200")]
+        skip = {"100": "already_migrated", "200": "conflict_unknown"}
+        self.assertFalse(etl.non_inserted_all_explained(recs, set(), {}, skip))
+
+    def test_count_conflict_unknown(self):
+        skip = {
+            "a": "conflict_unknown",
+            "b": "already_migrated",
+            "c": "conflict_unknown",
+        }
+        self.assertEqual(etl.count_conflict_unknown(skip), 2)
+
+
+# --------------------------------------------------------------------------- #
+# SCEN-016: a failed SAVEPOINT rollback propagates (poisoned tx), not swallowed.
+# --------------------------------------------------------------------------- #
+class TestSavepointRollbackReraise(unittest.TestCase):
+    def test_helper_reraises_on_failed_rollback(self):
+        class _C:
+            def execute(self, sql, params=None):
+                raise _FakePgError("25P02")
+
+        with self.assertRaises(Exception):
+            etl._rollback_to_savepoint(_C(), "etl_row")
+
+    def test_batch_rollback_failure_aborts_insert_records(self):
+        import types
+
+        fake_extras = types.SimpleNamespace()
+
+        def fake_execute_values(cur, sql, values, fetch=False):
+            # Every insert fails -> batch except path -> rollback to savepoint.
+            raise _FakePgError("insert boom")
+
+        fake_extras.execute_values = fake_execute_values
+        fake_psycopg2 = types.ModuleType("psycopg2")
+        fake_psycopg2.extras = fake_extras
+        saved = sys.modules.get("psycopg2")
+        sys.modules["psycopg2"] = fake_psycopg2
+        try:
+
+            class _RollbackFailsCursor:
+                def __init__(self):
+                    self.executed: list[str] = []
+
+                def execute(self, sql, params=None):
+                    self.executed.append(sql)
+                    if sql.startswith("ROLLBACK TO SAVEPOINT"):
+                        raise _FakePgError("25P02 rollback failed")
+
+                def fetchall(self):
+                    return []
+
+                def close(self):
+                    pass
+
+            cur = _RollbackFailsCursor()
+
+            class _Conn:
+                def cursor(self_inner):
+                    return cur
+
+            # The poisoned-tx rollback failure must PROPAGATE (not be swallowed
+            # into a list of spurious per-row rejects masking the poison row).
+            with self.assertRaises(Exception):
+                etl.insert_records(_Conn(), [_record("111")], _dt(2020))
+            # And row-by-row isolation must NEVER be reached on a poisoned tx:
+            # the per-row SAVEPOINT is never opened (would mask the poison row).
+            self.assertNotIn("SAVEPOINT etl_row", cur.executed)
+        finally:
+            if saved is not None:
+                sys.modules["psycopg2"] = saved
+            else:
+                del sys.modules["psycopg2"]
+
+
+# --------------------------------------------------------------------------- #
+# SCEN-019: synthetic 123-cedulas exercise the over-match regression w/o PII.
+# --------------------------------------------------------------------------- #
+class TestSyntheticCedulaFixtures(unittest.TestCase):
+    def test_synthetic_match_old_overmatch_regex_but_are_kept(self):
+        import re
+
+        old_overmatch = re.compile(r"^123\d{4,}$")
+        for synthetic in ("1239999999", "1238888888"):
+            # The OLD provisional rule WOULD have discarded these...
+            self.assertIsNotNone(old_overmatch.match(synthetic))
+            # ...but the closed zeros+ramps+denylist rule KEEPS them.
+            self.assertFalse(etl.is_placeholder(synthetic))
+
+
+# --------------------------------------------------------------------------- #
+# Test helpers used by the SCEN-011/012/013/014/015/016 tests.
 # --------------------------------------------------------------------------- #
 _EPOCH = datetime.min.replace(tzinfo=timezone.utc)
 

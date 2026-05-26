@@ -129,6 +129,15 @@ _ID_PUNCT_RE = re.compile(r"[ .\-]")
 # email / phone, so they go too.
 _CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f]")
 
+# Synthetic timestamp sentinel for a zero-date / NULL / unparseable legacy
+# timestamp (SCEN-013). `_as_aware` returns it (and increments
+# `timestamp_fallback`) so the fallback is COUNTED. It is deliberately
+# datetime.min (year 1) — a value no real legacy row can carry — so dedup can
+# recognize it and EXCLUDE it from the created_at MIN / updated_at MAX
+# reduction (SCEN-014). It is therefore a MARKER, never a value that reaches
+# the destination: a fully-fallback group coalesces to run_started instead.
+FALLBACK_SENTINEL = datetime.min.replace(tzinfo=timezone.utc)
+
 # P3 legacy identification_type -> destination CHECK domain. A value outside
 # these three is REJECTED (never guessed).
 IDENTIFICATION_TYPE_MAP: dict[str, str] = {
@@ -302,8 +311,12 @@ def split_fullname(fullname: str) -> tuple[str, str, bool]:
       3 tokens -> (t0, t1 + ' ' + t2)
       4+ tokens-> (t0 + ' ' + t1, ' '.join(t2:))
 
-    Raises ValueError if the name is empty/null after trim — caller rejects
-    with reason='invalid_first_name'.
+    Raises ValueError — caller rejects with reason='invalid_first_name' — when
+    the name is empty/null after trim, OR when it is ENTIRELY stopwords (e.g.
+    'de la', SCEN-017): an all-stopword string is not a name, so it is rejected
+    rather than persisted as first_name='de la'. A single REAL token ('MARIA')
+    is still kept as (token, '.', needs_review=True); a real token with trailing
+    stopwords ('JUAN de') keeps its real first_name.
     """
     normalized = " ".join((fullname or "").split())
     if not normalized:
@@ -314,18 +327,23 @@ def split_fullname(fullname: str) -> tuple[str, str, bool]:
     # Collapse stopwords onto the following token (compound surname).
     tokens: list[str] = []
     pending: list[str] = []
+    saw_real_token = False
     for tok in raw_tokens:
         if tok.lower() in STOPWORDS:
             pending.append(tok)
             continue
+        saw_real_token = True
         if pending:
             tokens.append(" ".join(pending + [tok]))
             pending = []
         else:
             tokens.append(tok)
-    # Trailing stopwords with no following token: keep them as their own token
-    # rather than dropping data (degenerate input, still surfaced for review).
     if pending:
+        # Trailing stopwords. If a real token preceded them, keep them as their
+        # own token (degenerate but has a real first name). If NONE did, the
+        # whole name is stopwords ('de la') -> reject; not a name.
+        if not saw_real_token:
+            raise ValueError("all-stopword fullname")
         tokens.append(" ".join(pending))
 
     n = len(tokens)
@@ -373,27 +391,38 @@ def transform_row(row: LegacyRow) -> CustomerRecord | RejectedRow:
     )
 
 
-def dedup_records(rows: list[LegacyRow]) -> DedupResult:
+def dedup_records(
+    rows: list[LegacyRow], run_started: datetime | None = None
+) -> DedupResult:
     """Dedup legacy rows by normalize_identification; latest-wins by updated_at.
 
     Pipeline per group (rows sharing the same normalized identification):
       * the WINNER is the row with MAX updated_at; stable tiebreak is
         created_at DESC then legacy row id DESC (deterministic -> idempotent).
         The winner provides ALL fields (type/name/email/phone).
-      * created_at = MIN over the group; updated_at = MAX over the group.
+      * created_at = MIN, updated_at = MAX, taken over the group's REAL
+        timestamps from BOTH columns, EXCLUDING the FALLBACK_SENTINEL (SCEN-014):
+        a synthetic zero-date never persists as year 0001, and bounding both
+        from the same real set keeps created_at <= updated_at even when sentinel
+        divergence splits the columns. A group whose every member fell back has
+        no real timestamp, so it coalesces to `run_started` (the migration run
+        stamp, == _legacy_migrated_at).
       * field divergence across the group is counted (by_name / by_email /
         by_phone) without blocking.
       * a same-number / different-type group is recorded as cross_type
         (the winner's mapped type is kept; both legacy types are listed).
 
-    Placeholders are assumed already removed by the caller. Rows whose
-    transform fails are collected into result.rejected (winner-level: a group
-    is rejected based on its WINNER's transform, since the winner supplies all
-    persisted fields).
+    `run_started` is the coalesce target for an all-fallback group; it defaults
+    to now(UTC) so callers that pass only real timestamps (e.g. unit tests) need
+    not supply it. Placeholders are assumed already removed by the caller. Rows
+    whose transform fails are collected into result.rejected (winner-level: a
+    group is rejected based on its WINNER's transform, since the winner supplies
+    all persisted fields).
 
     Pure: no DB, no I/O. Deterministic given the input order.
     """
     result = DedupResult()
+    coalesce_to = run_started or datetime.now(timezone.utc)
 
     # Group by the normalized identification (== the persisted value).
     groups: dict[str, list[LegacyRow]] = {}
@@ -417,8 +446,21 @@ def dedup_records(rows: list[LegacyRow]) -> DedupResult:
             continue
 
         record = outcome
-        record.created_at = min(m.created_at for m in members)
-        record.updated_at = max(m.updated_at for m in members)
+        # created_at = earliest, updated_at = latest, taken over the group's
+        # REAL timestamps from BOTH columns. The FALLBACK_SENTINEL is excluded
+        # so a zero-date row never persists as year 0001 (SCEN-014); drawing
+        # both bounds from the same real set guarantees created_at <= updated_at
+        # even under per-field sentinel divergence (a row with a real updated_at
+        # but a zero-date created_at, or the reverse across a group). A group
+        # with NO real timestamp at all coalesces to run_started.
+        real_timestamps = [
+            t
+            for m in members
+            for t in (m.created_at, m.updated_at)
+            if t != FALLBACK_SENTINEL
+        ]
+        record.created_at = min(real_timestamps) if real_timestamps else coalesce_to
+        record.updated_at = max(real_timestamps) if real_timestamps else coalesce_to
         record.group_size = len(members)
         result.records.append(record)
 
@@ -622,7 +664,6 @@ def extract_legacy_rows(legacy_cur) -> ExtractResult:
     """
     legacy_cur.execute(LEGACY_SELECT)
     result = ExtractResult()
-    epoch_min = datetime.min.replace(tzinfo=timezone.utc)
     for raw in legacy_cur.fetchall():
         result.legacy_rows_total += 1
         row_id, fullname, identification, id_type, email, phone, created, updated = raw
@@ -636,8 +677,8 @@ def extract_legacy_rows(legacy_cur) -> ExtractResult:
             result.dropped_no_identification += 1
             continue
 
-        created_at, created_fb = _as_aware(created, epoch_min)
-        updated_at, updated_fb = _as_aware(updated, epoch_min)
+        created_at, created_fb = _as_aware(created, FALLBACK_SENTINEL)
+        updated_at, updated_fb = _as_aware(updated, FALLBACK_SENTINEL)
         if created_fb or updated_fb:
             result.timestamp_fallback += 1
 
@@ -727,6 +768,19 @@ def _record_to_tuple(rec: CustomerRecord, migrated_at: datetime) -> tuple:
     )
 
 
+def _rollback_to_savepoint(cur, name: str) -> None:
+    """Roll back to and release a named SAVEPOINT. RE-RAISES on failure (SCEN-016).
+
+    A failed ROLLBACK TO SAVEPOINT means the transaction is poisoned (SQLSTATE
+    25P02). Continuing would record a spurious 25P02 reject on every subsequent
+    row and MASK the real poison row, so we let the error propagate: insert_records
+    aborts and run() rolls back the whole transaction (exit 3). `name` is always a
+    code literal ('etl_batch' / 'etl_row'), never user input — no injection surface.
+    """
+    cur.execute(f"ROLLBACK TO SAVEPOINT {name}")
+    cur.execute(f"RELEASE SAVEPOINT {name}")
+
+
 def insert_records(
     conn,
     records: list[CustomerRecord],
@@ -763,11 +817,9 @@ def insert_records(
                 inserted.add(number)
             cur.execute("RELEASE SAVEPOINT etl_batch")
         except Exception:  # batch failed: roll back, retry row-by-row.
-            try:
-                cur.execute("ROLLBACK TO SAVEPOINT etl_batch")
-                cur.execute("RELEASE SAVEPOINT etl_batch")
-            except Exception:
-                pass
+            # Re-raises if the savepoint rollback itself fails (poisoned tx):
+            # do not proceed to row-by-row on a broken transaction (SCEN-016).
+            _rollback_to_savepoint(cur, "etl_batch")
             _insert_rows_individually(cur, batch, migrated_at, inserted, batch_errors)
         finally:
             try:
@@ -804,11 +856,11 @@ def _insert_rows_individually(
             cur.execute("RELEASE SAVEPOINT etl_row")
         except Exception as exc:
             reason = _sql_reason(exc)
-            try:
-                cur.execute("ROLLBACK TO SAVEPOINT etl_row")
-                cur.execute("RELEASE SAVEPOINT etl_row")
-            except Exception:
-                pass
+            # Re-raises if the savepoint rollback itself fails (poisoned tx):
+            # the real poison row must not be masked by spurious 25P02 on every
+            # later row (SCEN-016). Only the successful-rollback path records the
+            # single bad row as a reject and continues isolating the rest.
+            _rollback_to_savepoint(cur, "etl_row")
             batch_errors.append((r.identification_number, reason))
 
 
@@ -830,7 +882,8 @@ def classify_skips(
       * 'conflict_existing' — existing row has _legacy_migrated_at NULL
         (dashboard-owned; never overwrite).
     Numbers not found in the destination at all (shouldn't happen after a
-    conflict) are reported 'conflict_unknown'.
+    conflict) are reported 'conflict_unknown' — an anomaly that is NOT an
+    explained skip and FAILS the commit gate (see EXPLAINED_SKIP_REASONS).
     """
     classification: dict[str, str] = {}
     if not skipped_numbers:
@@ -859,6 +912,44 @@ def classify_skips(
         except Exception:
             pass
     return classification
+
+
+# The set of SKIP-classification reasons that count as "explained" (a legitimate
+# idempotent-re-run outcome). `conflict_unknown` is DELIBERATELY excluded: it
+# means ON CONFLICT DO NOTHING fired yet the row is absent on re-read — a real
+# anomaly that must FAIL the commit gate, never be treated as explained.
+# NOTE: a batch_error is ALSO explained, but it is not a skip reason — it is
+# handled by the separate `num in batch_errors` clause in the predicate below.
+EXPLAINED_SKIP_REASONS: frozenset[str] = frozenset(
+    {"already_migrated", "conflict_existing"}
+)
+
+
+def non_inserted_all_explained(
+    records: list[CustomerRecord],
+    inserted_numbers: set[str],
+    batch_errors: dict[str, str],
+    skip_classification: dict[str, str],
+) -> bool:
+    """True iff every computed record is inserted, a batch_error, or an EXPLAINED skip.
+
+    On a clean first run all records insert. On a re-run, conflicts mean
+    inserted < computed; that is legitimate ONLY when each non-inserted record
+    is an already_migrated / conflict_existing skip (or a recorded batch_error).
+    A `conflict_unknown` classification is NOT explained -> returns False ->
+    the gate fails -> the whole transaction rolls back (SCEN-015).
+    """
+    return all(
+        num in inserted_numbers
+        or num in batch_errors
+        or skip_classification.get(num) in EXPLAINED_SKIP_REASONS
+        for num in (r.identification_number for r in records)
+    )
+
+
+def count_conflict_unknown(skip_classification: dict[str, str]) -> int:
+    """Count numbers classified `conflict_unknown` (gate-fail diagnostics)."""
+    return sum(1 for r in skip_classification.values() if r == "conflict_unknown")
 
 
 # --------------------------------------------------------------------------- #
@@ -1155,7 +1246,9 @@ def run(dry_run: bool) -> int:
         _close(legacy_conn)  # legacy read is done; release it before connecting dest.
 
     kept, placeholders = partition_placeholders(extract.rows)
-    dedup = dedup_records(kept)
+    # run_started is the coalesce target for any all-fallback group's
+    # created_at/updated_at (SCEN-014) — same stamp as _legacy_migrated_at.
+    dedup = dedup_records(kept, run_started)
     computed_unique_non_placeholder = len(dedup.records)
     placeholder_unique_count = len(
         {normalize_identification(p.identification) for p in placeholders}
@@ -1183,7 +1276,15 @@ def run(dry_run: bool) -> int:
                 dest_conn, dedup.records, migrated_at
             )
         except Exception as exc:
-            print(f"destination insert failed: {type(exc).__name__}", file=sys.stderr)
+            # Surface the ROOT cause type too: when a poison batch error is
+            # followed by a failing SAVEPOINT rollback (SCEN-016), `exc` is the
+            # rollback failure and its chained cause is the real poison error.
+            # Type names only — never the body — so no PII / password leaks.
+            root = exc.__cause__ or exc.__context__
+            detail = type(exc).__name__
+            if root is not None and type(root) is not type(exc):
+                detail += f" (caused by {type(root).__name__})"
+            print(f"destination insert failed: {detail}", file=sys.stderr)
             try:
                 dest_conn.rollback()
             except Exception:
@@ -1211,14 +1312,14 @@ def run(dry_run: bool) -> int:
         # ---- Gate decision. ----
         unexpected_rejects = len(batch_errors)  # transform rejects are EXPECTED.
         gate_inserted_ok = len(inserted_numbers) == computed_unique_non_placeholder
-        # In a clean first run all computed records insert. On a re-run, conflicts
-        # mean inserted < computed; that is a LEGITIMATE idempotent outcome, not a
-        # gate failure. So the gate also passes when every non-inserted record is
-        # an explained skip (already_migrated / conflict_existing).
-        all_non_inserted_explained = all(
-            num in batch_errors or num in skip_classification or num in inserted_numbers
-            for num in (r.identification_number for r in dedup.records)
+        # On a re-run, conflicts mean inserted < computed; that is a LEGITIMATE
+        # idempotent outcome ONLY when every non-inserted record is an EXPLAINED
+        # skip (already_migrated / conflict_existing) or a batch_error. A
+        # conflict_unknown is an anomaly and fails the gate (SCEN-015).
+        all_non_inserted_explained = non_inserted_all_explained(
+            dedup.records, inserted_numbers, batch_errors, skip_classification
         )
+        conflict_unknown_count = count_conflict_unknown(skip_classification)
         # Decision A: in COMMIT mode the placeholder count MUST be within range.
         gate_pass = (
             unexpected_rejects == 0
@@ -1252,6 +1353,8 @@ def run(dry_run: bool) -> int:
                     f"inserted={len(inserted_numbers)} != "
                     f"computed={computed_unique_non_placeholder} and unexplained"
                 )
+            if conflict_unknown_count:
+                reasons.append(f"conflict_unknown={conflict_unknown_count}")
             print(
                 "GATE FAILED: ROLLED BACK whole transaction ("
                 + "; ".join(reasons)

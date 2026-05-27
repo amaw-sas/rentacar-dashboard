@@ -30,6 +30,24 @@ export default async function EditReservationPage({
       getActiveVehicleCategories(),
     ]);
 
+  // The reservation's linked customer comes from the FK JOIN (getReservation),
+  // not from `customers` — which PostgREST caps at 1000 rows and usually omits
+  // it (issue #75). Pass it explicitly so the form seeds the Cliente section
+  // and the combobox label regardless of that window.
+  const linked = reservation.customers;
+  const selectedCustomer =
+    linked && reservation.customer_id
+      ? {
+          id: reservation.customer_id,
+          first_name: linked.first_name,
+          last_name: linked.last_name,
+          identification_type: linked.identification_type,
+          identification_number: linked.identification_number,
+          phone: linked.phone,
+          email: linked.email,
+        }
+      : undefined;
+
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-semibold">Editar Reserva</h1>
@@ -75,6 +93,7 @@ export default async function EditReservationPage({
           nota: reservation.nota,
         }}
         customers={customers}
+        selectedCustomer={selectedCustomer}
         rentalCompanies={rentalCompanies}
         locations={locations}
         referrals={referrals}

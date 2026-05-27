@@ -474,3 +474,144 @@ describe("ReservationForm layout", () => {
     expect(titlesInGroup(2)).toEqual(["Adicionales", "Vuelo"]);
   });
 });
+
+// Issue #75: after the legacy customers ETL (#19), `customers` has ~11k rows
+// but getCustomers() returns only the first 1000 (PostgREST cap). The form
+// seeded contact inputs + combobox label via customers.find(customerId),
+// which returned undefined for ~84% of reservations → empty section. The fix
+// passes the reservation's linked customer as `selectedCustomer`; the form
+// seeds from it (and merges it into the combobox options) when the active
+// customer is outside the loaded window.
+describe("ReservationForm — issue #75: linked customer outside the getCustomers() window", () => {
+  afterEach(() => cleanup());
+
+  // Deliberately NOT present in the `customers` array above — simulates a
+  // customer whose last_name sorts beyond the 1000-row window.
+  const customerOutOfWindow = {
+    id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+    first_name: "Juan",
+    last_name: "Pérez",
+    identification_type: "CC",
+    identification_number: "1020304050",
+    phone: "+57 300 1112233",
+    email: "juan@example.com",
+  };
+
+  function renderEdit(
+    selectedCustomer: typeof customerOutOfWindow | undefined,
+    customerId: string,
+  ) {
+    return render(
+      <ReservationForm
+        id="55555555-5555-5555-5555-555555555555"
+        defaultValues={
+          {
+            customer_id: customerId,
+            status: "reservado",
+          } as Parameters<typeof ReservationForm>[0]["defaultValues"]
+        }
+        customers={customers}
+        selectedCustomer={selectedCustomer}
+        rentalCompanies={rentalCompanies}
+        locations={locations}
+        referrals={referrals}
+        vehicleCategories={vehicleCategories}
+      />,
+    );
+  }
+
+  // SCEN-001: cliente fuera de la ventana → inputs + combobox poblados.
+  it("seeds inputs and combobox label from selectedCustomer when the customer is not in the loaded list", () => {
+    renderEdit(customerOutOfWindow, customerOutOfWindow.id);
+    expect((screen.getByLabelText("Nombre") as HTMLInputElement).value).toBe(
+      "Juan",
+    );
+    expect((screen.getByLabelText("Apellido") as HTMLInputElement).value).toBe(
+      "Pérez",
+    );
+    expect(
+      (screen.getByLabelText("Identificación") as HTMLInputElement).value,
+    ).toBe("1020304050");
+    expect((screen.getByLabelText("Teléfono") as HTMLInputElement).value).toBe(
+      "+57 300 1112233",
+    );
+    expect((screen.getByLabelText("Email") as HTMLInputElement).value).toBe(
+      "juan@example.com",
+    );
+    expect(screen.getByLabelText("Tipo identificación").textContent).toContain(
+      "CC",
+    );
+    expect(screen.getByLabelText("Cliente").textContent).toContain(
+      "Juan Pérez",
+    );
+  });
+
+  // SCEN-002: cliente dentro de la ventana → sin regresión.
+  it("still seeds from the loaded list when the customer is in the window (no regression)", () => {
+    renderEdit(undefined, customers[0].id);
+    expect((screen.getByLabelText("Nombre") as HTMLInputElement).value).toBe(
+      "Daniela",
+    );
+    expect((screen.getByLabelText("Email") as HTMLInputElement).value).toBe(
+      "dc005241@gmail.com",
+    );
+    expect(screen.getByLabelText("Cliente").textContent).toContain(
+      "Daniela Carreño",
+    );
+  });
+
+  // SCEN-003: el fallback está acotado por id — no clobberea otro cliente.
+  it("scopes the selectedCustomer fallback by id — a different active customer is not clobbered", () => {
+    // selectedCustomer = Juan (out-of-window), but active customer_id = Daniela
+    // (in window). find() resolves Daniela; the fallback must NOT apply.
+    renderEdit(customerOutOfWindow, customers[0].id);
+    const nombre = screen.getByLabelText("Nombre") as HTMLInputElement;
+    expect(nombre.value).toBe("Daniela");
+    expect(nombre.value).not.toBe("Juan");
+  });
+
+  // SCEN-006 (de #36) preservado: cambiar de cliente vía combobox re-siembra
+  // desde la lista in-window, NO desde el linked record fuera de ventana.
+  // El code-reviewer pidió ejercitar el switch real, no sólo afirmarlo en
+  // comentarios.
+  it("re-seeds from the in-window list when the operator switches customer", async () => {
+    renderEdit(customerOutOfWindow, customerOutOfWindow.id);
+    // Sembrado inicial desde el cliente vinculado (fuera de ventana).
+    expect((screen.getByLabelText("Nombre") as HTMLInputElement).value).toBe(
+      "Juan",
+    );
+    // Abrir el combobox y seleccionar el cliente in-window (Daniela).
+    fireEvent.click(screen.getByLabelText("Cliente"));
+    const option = await screen.findByText("Daniela Carreño");
+    fireEvent.click(option);
+    // customerId cambió → el efecto refire → siembra desde `customers`, no
+    // desde el linked record obsoleto.
+    await waitFor(() => {
+      expect((screen.getByLabelText("Nombre") as HTMLInputElement).value).toBe(
+        "Daniela",
+      );
+    });
+    expect((screen.getByLabelText("Email") as HTMLInputElement).value).toBe(
+      "dc005241@gmail.com",
+    );
+  });
+
+  // SCEN-004: nueva reserva sin selectedCustomer → sección Cliente vacía.
+  it("starts empty on a new reservation (no selectedCustomer, no customer_id)", () => {
+    render(
+      <ReservationForm
+        customers={customers}
+        rentalCompanies={rentalCompanies}
+        locations={locations}
+        referrals={referrals}
+        vehicleCategories={vehicleCategories}
+      />,
+    );
+    const nombre = screen.getByLabelText("Nombre") as HTMLInputElement;
+    expect(nombre.value).toBe("");
+    expect(nombre).toBeDisabled();
+    expect(screen.getByLabelText("Cliente").textContent).toContain(
+      "Seleccionar cliente",
+    );
+  });
+});

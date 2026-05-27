@@ -65,6 +65,12 @@ interface ReservationFormProps {
   defaultValues?: Partial<ReservationFormData>;
   id?: string;
   customers: CustomerOption[];
+  // The reservation's linked customer, resolved server-side from the FK
+  // (edit only). `customers` is capped at 1000 rows by PostgREST, so the
+  // linked customer is often absent from it (issue #75); this guarantees the
+  // selected customer is always available to seed the section and the combobox
+  // label, independent of that window.
+  selectedCustomer?: CustomerOption;
   rentalCompanies: SelectOption[];
   locations: SelectOption[];
   referrals: SelectOption[];
@@ -118,6 +124,7 @@ export function ReservationForm({
   defaultValues,
   id,
   customers,
+  selectedCustomer,
   rentalCompanies,
   locations,
   referrals,
@@ -206,14 +213,30 @@ export function ReservationForm({
   // unrelated revalidation. The combobox label still resyncs because it
   // reads the refreshed `customers` prop directly.
   useEffect(() => {
-    const seeded = contactFromCustomer(
-      customers.find((c) => c.id === customerId),
-    );
+    // Prefer the loaded list; fall back to the server-resolved linked customer
+    // when the active customer is outside the 1000-row window (issue #75). The
+    // fallback is id-scoped so switching to another (in-window) customer still
+    // re-seeds from the list, never from the stale linked record.
+    const resolved =
+      customers.find((c) => c.id === customerId) ??
+      (customerId === selectedCustomer?.id ? selectedCustomer : undefined);
+    const seeded = contactFromCustomer(resolved);
     setCustomerDraft(seeded);
     setCustomerSnapshot(seeded);
     setCustomerError(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [customerId]);
+
+  // The combobox resolves its selected label from its options. When the linked
+  // customer is outside the loaded window (issue #75), merge it in so the label
+  // renders the customer's name instead of the "Seleccionar cliente" placeholder.
+  const customerOptions = useMemo(
+    () =>
+      selectedCustomer && !customers.some((c) => c.id === selectedCustomer.id)
+        ? [selectedCustomer, ...customers]
+        : customers,
+    [customers, selectedCustomer],
+  );
 
   const isCustomerDirty = useMemo(
     () =>
@@ -339,7 +362,7 @@ export function ReservationForm({
             <Label htmlFor="customer_id">Cliente</Label>
             <Combobox<CustomerOption>
               id="customer_id"
-              options={customers}
+              options={customerOptions}
               value={customerId}
               onChange={(value) =>
                 setValue("customer_id", value, { shouldValidate: true })

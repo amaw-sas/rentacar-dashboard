@@ -2,7 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 
 const RESERVATION_SELECT = `
   *,
-  customers(first_name, last_name, identification_number, phone, email),
+  customers(first_name, last_name, identification_type, identification_number, phone, email),
   rental_companies(name),
   pickup_location:locations!pickup_location_id(name, city_id, cities(id, name)),
   return_location:locations!return_location_id(name),

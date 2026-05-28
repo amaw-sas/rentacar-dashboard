@@ -109,7 +109,86 @@ IDENTIFICATION_TYPE_MAP: dict[str, str] = {
     "Pasaporte": "PP",
 }
 
+# CLOSED status map (Gap 4): the 13 canonical legacy statuses -> snake_case
+# destination CHECK domain. ANY value outside this dict (incl. the historical
+# 'Terminado', 0 rows in the dump) is REJECTED with `status_unmapped` — never a
+# blind lower(replace()) guess, never a row that lets the destination CHECK
+# explode as a raw SQL error. Authoritative table: design §"Reglas de
+# transformación" / scenarios SCEN-004 preamble.
+STATUS_MAP: dict[str, str] = {
+    "Nueva": "nueva",
+    "Pendiente": "pendiente",
+    "Reservado": "reservado",
+    "Sin disponibilidad": "sin_disponibilidad",
+    "Utilizado": "utilizado",
+    "No Contactado": "no_contactado",
+    "Baneado": "baneado",
+    "No recogido": "no_recogido",
+    "Pendiente Pago": "pendiente_pago",
+    "Pendiente Modificar": "pendiente_modificar",
+    "Cancelado": "cancelado",
+    "Indeterminado": "indeterminado",
+    "Mensualidad": "mensualidad",
+}
+
+# Legacy monthly_mileage enum -> destination integer (kms). NULL -> NULL; any
+# other non-null value is a defensive `monthly_mileage_unmapped` reject.
+MONTHLY_MILEAGE_MAP: dict[str, int] = {
+    "1k_kms": 1000,
+    "2k_kms": 2000,
+    "3k_kms": 3000,
+}
+
+# Destination franchise enum (P-franchise). A legacy franchise whose mapped name
+# is outside this set is rejected `franchise_unmapped`. The franchise map passed
+# to resolve_franchise is built destination-side already collapsed to these enum
+# values; the set is the defensive guard against a map that drifts out of domain.
+FRANCHISE_ENUM: frozenset[str] = frozenset(
+    {"alquilatucarro", "alquilame", "alquicarros"}
+)
+
+# numeric(12,2) ceiling: 10 integer digits + 2 fractional. A coerced money value
+# strictly above this overflows the destination column and is rejected
+# `numeric_overflow` (never truncated). The known outlier (legacy ID 7721 ~=
+# 816,999,989) is well below this and migrates as-is.
+NUMERIC_12_2_MAX = 9_999_999_999.99
+
+# Postgres smallint upper bound. selected_days / coverage_days / extra_hours are
+# range-guarded against it; a value above it rejects `numeric_overflow`.
+SMALLINT_MAX = 32767
+
 INSERT_BATCH_SIZE = 500
+
+
+# --------------------------------------------------------------------------- #
+# Reject signal.
+#
+# DESIGN CHOICE (reject mechanism): ONE exception, `RejectRow`, raised by every
+# pure transform / FK-resolution function when a row cannot be migrated. It
+# carries a single no-PII `.reason` string drawn from the closed taxonomy below.
+# A reason NEVER embeds an identification / name / email / branch id. The
+# row-processing pipeline (step 7) wraps each row's transform in one try/except
+# RejectRow and turns a caught reason into a RejectedRow(legacy_id, reason) for
+# the reconciliation invariant — exactly one disposition per legacy row. An
+# exception (not a (value, reason) tuple) is chosen because resolution is a deep
+# call chain (customer -> pickup -> return -> category -> franchise -> status ->
+# numerics); the first failure must short-circuit the whole row, which an
+# exception does for free without threading an error result through every step.
+# --------------------------------------------------------------------------- #
+class RejectRow(Exception):
+    """Signal that a legacy row cannot be migrated. Carries a no-PII reason.
+
+    `reason` is one of the closed reject-taxonomy strings (customer_not_migrated,
+    pickup_location_null, return_location_null, pickup_location_unmapped,
+    return_location_unmapped, category_unmapped, franchise_unmapped,
+    status_unmapped, numeric_overflow, monthly_mileage_unmapped). It is a
+    code-controlled literal — never interpolated with row data — so logging the
+    reason can never leak PII.
+    """
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
 
 
 # --------------------------------------------------------------------------- #
@@ -194,6 +273,222 @@ def normalize_identification(identification: str) -> str:
     silently misses and every reservation cascade-rejects. Do not change it.
     """
     return _ID_PUNCT_RE.sub("", (identification or "").strip())
+
+
+# --------------------------------------------------------------------------- #
+# Step 3 — status (SCEN-004).
+# --------------------------------------------------------------------------- #
+def map_status(legacy_status) -> str:
+    """Map a legacy status to its destination value via the CLOSED STATUS_MAP.
+
+    Returns the snake_case destination value for one of the 13 canonical legacy
+    statuses. ANYTHING outside the map — including the historical 'Terminado'
+    (0 rows in the dump), an unknown string, None, or an already-snake variant —
+    raises RejectRow('status_unmapped'). Never a blind lower(replace()), never
+    lets the destination CHECK constraint explode (SCEN-004). Non-str input
+    (incl. an unhashable list/dict) rejects rather than raising — only a string
+    can ever map, matching the closed-enum intent.
+    """
+    dest = STATUS_MAP.get(legacy_status) if isinstance(legacy_status, str) else None
+    if dest is None:
+        raise RejectRow("status_unmapped")
+    return dest
+
+
+# --------------------------------------------------------------------------- #
+# Step 4 — booking_type (SCEN-005). Total function — NEVER rejects.
+# --------------------------------------------------------------------------- #
+def derive_booking_type(monthly_mileage, total_insurance) -> str:
+    """Derive booking_type. Total function: every input yields a valid value.
+
+    Rule (SCEN-005):
+      monthly_mileage is not None      -> 'monthly'  (wins regardless of insurance)
+      elif total_insurance is True     -> 'standard_with_insurance'
+      else                             -> 'standard'
+
+    `monthly_mileage` here is the ALREADY-MAPPED integer (or None); a present
+    value of 0 is still "not None" and yields 'monthly'. Never raises.
+    """
+    if monthly_mileage is not None:
+        return "monthly"
+    if total_insurance is True:
+        return "standard_with_insurance"
+    return "standard"
+
+
+# --------------------------------------------------------------------------- #
+# Step 5 — numeric / mileage (SCEN-011 overflow + mileage map).
+# --------------------------------------------------------------------------- #
+def map_monthly_mileage(value):
+    """Map the legacy monthly_mileage enum to an integer (kms), or None.
+
+    '1k_kms'/'2k_kms'/'3k_kms' -> 1000/2000/3000; None -> None. ANY other
+    non-null value raises RejectRow('monthly_mileage_unmapped') — a defensive
+    guard (no other value exists in the real dump), never a silent coercion.
+    """
+    if value is None:
+        return None
+    mapped = MONTHLY_MILEAGE_MAP.get(value)
+    if mapped is None:
+        raise RejectRow("monthly_mileage_unmapped")
+    return mapped
+
+
+def coerce_numeric(value):
+    """Coerce a money field to numeric(12,2): round to 2 decimals, range-guard.
+
+    None -> None. Otherwise rounds to 2 decimals; if the rounded magnitude
+    exceeds the numeric(12,2) ceiling (> 9,999,999,999.99) raises
+    RejectRow('numeric_overflow') — never truncated, never let to explode the DB
+    numeric-range constraint (SCEN-011). Applies to all 7 money fields including
+    total_price_to_pay (the known outlier ID 7721 is below the ceiling).
+
+    Rounding is Python round() (half-to-even). Acceptable because legacy money is
+    `float`/`unsigned int` and exact half-cents (.xx5) don't occur in binary
+    float — do NOT "fix" to Decimal ROUND_HALF_UP without a reconciliation reason.
+    A non-coercible value (impossible under the NOT-NULL numeric legacy schema)
+    rejects `numeric_overflow` rather than raising, so a malformed input becomes a
+    logged disposition and the per-row reconciliation invariant holds.
+    """
+    if value is None:
+        return None
+    try:
+        rounded = round(float(value), 2)
+    except (TypeError, ValueError):
+        raise RejectRow("numeric_overflow")
+    if abs(rounded) > NUMERIC_12_2_MAX:
+        raise RejectRow("numeric_overflow")
+    return rounded
+
+
+def coerce_smallint(value):
+    """Range-guard a smallint field (selected_days / coverage_days / extra_hours).
+
+    None -> None. A magnitude above the Postgres smallint bound (32767) raises
+    RejectRow('numeric_overflow') rather than overflowing the column (SCEN-011).
+    A non-coercible value rejects rather than raising (same reconciliation-invariant
+    reasoning as coerce_numeric).
+    """
+    if value is None:
+        return None
+    try:
+        ivalue = int(value)
+    except (TypeError, ValueError):
+        raise RejectRow("numeric_overflow")
+    if abs(ivalue) > SMALLINT_MAX:
+        raise RejectRow("numeric_overflow")
+    return ivalue
+
+
+def coerce_return_fee(value):
+    """Coerce return_fee: NULL -> 0, otherwise the same numeric(12,2) guard.
+
+    Distinct from coerce_numeric only in the NULL default (0.0 instead of None);
+    overflow still rejects `numeric_overflow`. Returns a float for type-uniformity
+    with coerce_numeric.
+    """
+    if value is None:
+        return 0.0
+    return coerce_numeric(value)
+
+
+# --------------------------------------------------------------------------- #
+# Step 6 — FK resolution (SCEN-002 / 003 / 006 / 010 / 011). Pure: each takes
+# the legacy value + an in-memory destination lookup map, returns the resolved
+# id/code/enum, or raises RejectRow with a taxonomy reason. No DB access.
+# --------------------------------------------------------------------------- #
+def resolve_customer_id(legacy_identification, customer_map: dict[str, str]) -> str:
+    """Resolve a legacy identification to a destination customer UUID.
+
+    Keys `customer_map` (normalized-id -> uuid) by the SAME
+    normalize_identification used by #19 as its dedup key / persisted
+    identification_number — so the join lands exactly. A normalized id ABSENT
+    from the map (e.g. a placeholder #19 discarded) raises
+    RejectRow('customer_not_migrated') (SCEN-002) — never an exception leak,
+    never a NULL/guessed FK. The reason carries NO identification (no PII).
+    """
+    key = normalize_identification(legacy_identification)
+    uuid = customer_map.get(key)
+    if uuid is None:
+        raise RejectRow("customer_not_migrated")
+    return uuid
+
+
+def resolve_location(
+    legacy_branch_id, location_map: dict, side: str
+) -> str:
+    """Resolve a legacy BRANCH id to a destination location UUID for one side.
+
+    `side` is 'pickup' or 'return' — it only shapes the reject reason. The legacy
+    reservation's pickup_location / return_location is a legacy BRANCH id.
+    `location_map` is a PRE-JOINED dict `branch_id -> location_id` (built
+    destination-side by joining legacy.branches.code == locations.code once), so
+    the two-hop branch_id -> branch.code -> location.id is one O(1) lookup.
+
+    Rejects (SCEN-003 / SCEN-010), distinct so a broken branches.code<->
+    locations.code mapping is observable rather than lost in the NULL bucket:
+      * legacy branch id is NULL                       -> '{side}_location_null'
+      * branch id present but absent from the map       -> '{side}_location_unmapped'
+    Never imputes / defaults a location.
+    """
+    if legacy_branch_id is None:
+        raise RejectRow(f"{side}_location_null")
+    location_id = location_map.get(legacy_branch_id)
+    if location_id is None:
+        raise RejectRow(f"{side}_location_unmapped")
+    return location_id
+
+
+def resolve_category_code(
+    legacy_category_id, category_map: dict, dest_codes
+) -> str:
+    """Resolve a legacy category id to a validated destination category code.
+
+    `category_map` maps legacy.categories.id -> its code (identification). The
+    resolved code is then validated against `dest_codes` (the destination
+    vehicle_categories.code set). A missing legacy id, OR a code absent from the
+    destination set, raises RejectRow('category_unmapped') (SCEN-011) — the
+    reject-never-guess contract; expected 0 in real data (all 17 codes resolve).
+    """
+    code = category_map.get(legacy_category_id)
+    if code is None or code not in dest_codes:
+        raise RejectRow("category_unmapped")
+    return code
+
+
+def resolve_franchise(legacy_franchise_id, franchise_map: dict) -> str:
+    """Resolve a legacy franchise id to a destination enum value.
+
+    `franchise_map` maps legacy franchise id -> the destination enum value
+    (legacy id -> name -> enum, collapsed destination-side). A missing id, or a
+    mapped value outside FRANCHISE_ENUM {alquilatucarro, alquilame, alquicarros},
+    raises RejectRow('franchise_unmapped') (SCEN-011). Expected 0 (3 franchises
+    map 1:1).
+    """
+    enum_value = franchise_map.get(legacy_franchise_id)
+    if enum_value is None or enum_value not in FRANCHISE_ENUM:
+        raise RejectRow("franchise_unmapped")
+    return enum_value
+
+
+def resolve_referral(legacy_user, referral_map: dict) -> tuple[str | None, str | None]:
+    """Resolve the legacy `user` (referral) column to (referral_id, referral_raw).
+
+    NEVER rejects — referral is OPTIONAL (P12: legacy.reservations.user is the
+    referral column, not an operator).
+      * referral_raw = TRIM(legacy_user), or None if null/empty.
+      * referral_id  = referral_map.get(lower(trim(user))), or None if no match.
+    CRITICAL (SCEN-006): referral_raw is PRESERVED even when referral_id is None
+    (free-text user that matches no referral code), so the original attribution
+    string is never lost. Non-str input is coerced via str() (mirrors #19
+    _sanitize_text) so this never-rejects function also never crashes — an
+    uncaught AttributeError here would escape the per-row RejectRow handler.
+    """
+    raw = ("" if legacy_user is None else str(legacy_user)).strip()
+    if not raw:
+        return None, None
+    referral_id = referral_map.get(raw.lower())
+    return referral_id, raw
 
 
 # --------------------------------------------------------------------------- #

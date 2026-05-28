@@ -193,5 +193,431 @@ class TestNormalizeIdentification(unittest.TestCase):
         self.assertEqual(etl.normalize_identification(""), "")
 
 
+# --------------------------------------------------------------------------- #
+# SCEN-004: status maps via a CLOSED dict (the 13 canonical legacy values ->
+# snake_case destination). ANYTHING outside the 13 — including the historical
+# 'Terminado' (0 rows in the dump, but the rule must hold defensively) — signals
+# a `status_unmapped` reject, NEVER a blind lower(replace()) guess and NEVER a
+# row that lets the destination CHECK constraint explode as a raw SQL error.
+# --------------------------------------------------------------------------- #
+class TestStatusMap(unittest.TestCase):
+    CANONICAL = {
+        "Nueva": "nueva",
+        "Pendiente": "pendiente",
+        "Reservado": "reservado",
+        "Sin disponibilidad": "sin_disponibilidad",
+        "Utilizado": "utilizado",
+        "No Contactado": "no_contactado",
+        "Baneado": "baneado",
+        "No recogido": "no_recogido",
+        "Pendiente Pago": "pendiente_pago",
+        "Pendiente Modificar": "pendiente_modificar",
+        "Cancelado": "cancelado",
+        "Indeterminado": "indeterminado",
+        "Mensualidad": "mensualidad",
+    }
+
+    def test_status_map_dict_is_the_13_canonical(self):
+        self.assertEqual(etl.STATUS_MAP, self.CANONICAL)
+
+    def test_all_13_canonical_values_map_to_destination(self):
+        for legacy, dest in self.CANONICAL.items():
+            self.assertEqual(etl.map_status(legacy), dest)
+
+    def test_terminado_rejects_status_unmapped(self):
+        # 'Terminado' is the legacy initial value (0 rows in dump). It is
+        # intentionally NOT in the map — it must reject, not be guessed.
+        with self.assertRaises(etl.RejectRow) as ctx:
+            etl.map_status("Terminado")
+        self.assertEqual(ctx.exception.reason, "status_unmapped")
+
+    def test_unknown_string_rejects_status_unmapped(self):
+        with self.assertRaises(etl.RejectRow) as ctx:
+            etl.map_status("Whatever Garbage")
+        self.assertEqual(ctx.exception.reason, "status_unmapped")
+
+    def test_none_rejects_status_unmapped(self):
+        with self.assertRaises(etl.RejectRow) as ctx:
+            etl.map_status(None)
+        self.assertEqual(ctx.exception.reason, "status_unmapped")
+
+    def test_case_or_spacing_variant_rejects_not_guessed(self):
+        # A lowercased / blind-replaced variant must NOT silently resolve — the
+        # map is exact, so 'nueva' (already snake) is NOT a legacy key.
+        with self.assertRaises(etl.RejectRow) as ctx:
+            etl.map_status("nueva")
+        self.assertEqual(ctx.exception.reason, "status_unmapped")
+
+
+# --------------------------------------------------------------------------- #
+# SCEN-005: booking_type derivation is a TOTAL function (never rejects). Rule:
+# monthly_mileage is not None -> 'monthly' (wins regardless of total_insurance);
+# elif total_insurance is True -> 'standard_with_insurance'; else 'standard'.
+# --------------------------------------------------------------------------- #
+class TestBookingType(unittest.TestCase):
+    def test_monthly_mileage_present_is_monthly(self):
+        self.assertEqual(etl.derive_booking_type(2000, False), "monthly")
+
+    def test_null_mileage_with_insurance_is_standard_with_insurance(self):
+        self.assertEqual(
+            etl.derive_booking_type(None, True), "standard_with_insurance"
+        )
+
+    def test_null_mileage_no_insurance_is_standard(self):
+        self.assertEqual(etl.derive_booking_type(None, False), "standard")
+
+    def test_monthly_wins_over_insurance(self):
+        # monthly_mileage non-None takes precedence even when insurance is True.
+        self.assertEqual(etl.derive_booking_type(1000, True), "monthly")
+
+    def test_monthly_mileage_zero_is_still_monthly(self):
+        # 0 is "not None" — a present mileage value, not absence.
+        self.assertEqual(etl.derive_booking_type(0, False), "monthly")
+
+    def test_none_insurance_treated_as_not_true(self):
+        # total_insurance None (not True) falls through to 'standard'.
+        self.assertEqual(etl.derive_booking_type(None, None), "standard")
+
+
+# --------------------------------------------------------------------------- #
+# SCEN-011 (mileage): map_monthly_mileage enum -> int. The three legacy enum
+# values map to 1000/2000/3000; None -> None; ANY other non-null value is a
+# defensive `monthly_mileage_unmapped` reject (never silently coerced).
+# --------------------------------------------------------------------------- #
+class TestMonthlyMileage(unittest.TestCase):
+    def test_known_enums_map_to_int(self):
+        self.assertEqual(etl.map_monthly_mileage("1k_kms"), 1000)
+        self.assertEqual(etl.map_monthly_mileage("2k_kms"), 2000)
+        self.assertEqual(etl.map_monthly_mileage("3k_kms"), 3000)
+
+    def test_none_maps_to_none(self):
+        self.assertIsNone(etl.map_monthly_mileage(None))
+
+    def test_unknown_value_rejects(self):
+        with self.assertRaises(etl.RejectRow) as ctx:
+            etl.map_monthly_mileage("5k_kms")
+        self.assertEqual(ctx.exception.reason, "monthly_mileage_unmapped")
+
+    def test_empty_string_rejects(self):
+        # An empty/blank non-null value is not a known enum -> defensive reject.
+        with self.assertRaises(etl.RejectRow) as ctx:
+            etl.map_monthly_mileage("")
+        self.assertEqual(ctx.exception.reason, "monthly_mileage_unmapped")
+
+
+# --------------------------------------------------------------------------- #
+# SCEN-011 (numeric overflow): coerce_numeric rounds to 2 decimals (numeric
+# (12,2)); a value above the numeric(12,2) ceiling (> 9,999,999,999.99) signals
+# a `numeric_overflow` reject — never truncated, never let to explode the DB
+# numeric-range constraint. coerce_smallint range-guards <= 32767.
+# --------------------------------------------------------------------------- #
+class TestCoerceNumeric(unittest.TestCase):
+    def test_rounds_to_two_decimals(self):
+        # Half-cent values round to 2 decimals (numeric(12,2)). Float internals:
+        # 12.345 is stored as 12.34500...0063 (just above the half) -> 12.35.
+        self.assertEqual(etl.coerce_numeric(12.345), 12.35)
+        self.assertEqual(etl.coerce_numeric(12.344), 12.34)
+        self.assertEqual(etl.coerce_numeric(99.999), 100.0)
+
+    def test_integer_value_passthrough(self):
+        self.assertEqual(etl.coerce_numeric(100), 100.0)
+
+    def test_none_passthrough(self):
+        self.assertIsNone(etl.coerce_numeric(None))
+
+    def test_known_outlier_under_ceiling_migrates(self):
+        # ID 7721 = 816,999,989 (~$817M COP) is BELOW the numeric(12,2) ceiling
+        # and migrates as-is (no overflow).
+        self.assertEqual(etl.coerce_numeric(816_999_989), 816_999_989.0)
+
+    def test_value_at_ceiling_ok(self):
+        # Exactly the max numeric(12,2) is allowed.
+        self.assertEqual(etl.coerce_numeric(9_999_999_999.99), 9_999_999_999.99)
+
+    def test_overflow_rejects_not_truncated(self):
+        with self.assertRaises(etl.RejectRow) as ctx:
+            etl.coerce_numeric(10_000_000_000.00)
+        self.assertEqual(ctx.exception.reason, "numeric_overflow")
+
+    def test_overflow_by_rounding_rejects(self):
+        # A value that rounds UP past the ceiling overflows, not silently capped.
+        with self.assertRaises(etl.RejectRow) as ctx:
+            etl.coerce_numeric(9_999_999_999.999)
+        self.assertEqual(ctx.exception.reason, "numeric_overflow")
+
+
+class TestCoerceSmallint(unittest.TestCase):
+    def test_in_range_passthrough(self):
+        self.assertEqual(etl.coerce_smallint(30), 30)
+        self.assertEqual(etl.coerce_smallint(32767), 32767)
+
+    def test_none_passthrough(self):
+        self.assertIsNone(etl.coerce_smallint(None))
+
+    def test_above_smallint_max_rejects(self):
+        with self.assertRaises(etl.RejectRow) as ctx:
+            etl.coerce_smallint(32768)
+        self.assertEqual(ctx.exception.reason, "numeric_overflow")
+
+
+class TestReturnFee(unittest.TestCase):
+    def test_none_becomes_zero(self):
+        self.assertEqual(etl.coerce_return_fee(None), 0)
+
+    def test_present_value_rounds(self):
+        self.assertEqual(etl.coerce_return_fee(15.5), 15.5)
+
+    def test_overflow_rejects(self):
+        with self.assertRaises(etl.RejectRow) as ctx:
+            etl.coerce_return_fee(10_000_000_000.00)
+        self.assertEqual(ctx.exception.reason, "numeric_overflow")
+
+
+# --------------------------------------------------------------------------- #
+# SCEN-002: resolve_customer_id keys the in-memory customer map by
+# normalize_identification(legacy.identification). A normalized id ABSENT from
+# the map signals `customer_not_migrated` (a placeholder customer #19 discarded
+# cascade-rejects here) — never an exception, never a NULL/guessed FK insert.
+# --------------------------------------------------------------------------- #
+class TestResolveCustomerId(unittest.TestCase):
+    CUSTOMER_MAP = {
+        "12345678": "11111111-1111-1111-1111-111111111111",
+        "AB12345": "22222222-2222-2222-2222-222222222222",
+    }
+
+    def test_resolves_present_id(self):
+        self.assertEqual(
+            etl.resolve_customer_id("12.345.678", self.CUSTOMER_MAP),
+            "11111111-1111-1111-1111-111111111111",
+        )
+
+    def test_resolves_via_same_normalization_as_19(self):
+        # 'AB-12345' normalizes to 'AB12345' (the persisted #19 key).
+        self.assertEqual(
+            etl.resolve_customer_id("AB-12345", self.CUSTOMER_MAP),
+            "22222222-2222-2222-2222-222222222222",
+        )
+
+    def test_resolve_customer_missing(self):
+        # Placeholder discarded by #19 -> absent from the map -> cascade reject.
+        with self.assertRaises(etl.RejectRow) as ctx:
+            etl.resolve_customer_id("0000000", self.CUSTOMER_MAP)
+        self.assertEqual(ctx.exception.reason, "customer_not_migrated")
+
+    def test_reject_reason_carries_no_identification(self):
+        # No-PII contract: the reason string must not embed the identification.
+        with self.assertRaises(etl.RejectRow) as ctx:
+            etl.resolve_customer_id("99999999", self.CUSTOMER_MAP)
+        self.assertEqual(ctx.exception.reason, "customer_not_migrated")
+        self.assertNotIn("99999999", ctx.exception.reason)
+
+
+# --------------------------------------------------------------------------- #
+# SCEN-003 (null) + SCEN-010 (unmapped): resolve_location takes a legacy BRANCH
+# id + a pre-joined branch_id -> location_id map. NULL legacy location ->
+# `{side}_location_null`; a present branch id whose code/branch has no
+# destination location -> `{side}_location_unmapped` (DISTINCT reason, so a
+# broken branches.code<->locations.code mapping is observable, not lost in the
+# NULL bucket). Never imputes, never inserts a guessed FK.
+#
+# Location-map shape (documented choice): a single PRE-JOINED dict
+# `branch_id -> location_id`, built destination-side by joining
+# legacy.branches.code -> locations.code once. A branch id present as a KEY with
+# a non-None value resolves; a branch id ABSENT (or mapped to None) is the
+# `_unmapped` path. NULL legacy branch id (None) is the `_null` path. This
+# collapses the two-hop (branch_id -> branch.code -> location.id) into one
+# lookup the resolver can check in O(1) without re-deriving codes per row.
+# --------------------------------------------------------------------------- #
+class TestResolveLocation(unittest.TestCase):
+    # branch_id -> destination location id (pre-joined via branch.code == location.code)
+    LOCATION_MAP = {
+        10: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        20: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+    }
+
+    def test_resolves_pickup(self):
+        self.assertEqual(
+            etl.resolve_location(10, self.LOCATION_MAP, "pickup"),
+            "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        )
+
+    def test_resolves_return(self):
+        self.assertEqual(
+            etl.resolve_location(20, self.LOCATION_MAP, "return"),
+            "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+        )
+
+    def test_resolve_location_null_pickup(self):
+        with self.assertRaises(etl.RejectRow) as ctx:
+            etl.resolve_location(None, self.LOCATION_MAP, "pickup")
+        self.assertEqual(ctx.exception.reason, "pickup_location_null")
+
+    def test_resolve_location_null_return(self):
+        with self.assertRaises(etl.RejectRow) as ctx:
+            etl.resolve_location(None, self.LOCATION_MAP, "return")
+        self.assertEqual(ctx.exception.reason, "return_location_null")
+
+    def test_resolve_location_unmapped_pickup(self):
+        # Branch id present (not NULL) but absent from the map -> unmapped,
+        # DISTINCT from the null path (SCEN-010).
+        with self.assertRaises(etl.RejectRow) as ctx:
+            etl.resolve_location(999, self.LOCATION_MAP, "pickup")
+        self.assertEqual(ctx.exception.reason, "pickup_location_unmapped")
+
+    def test_resolve_location_unmapped_return(self):
+        with self.assertRaises(etl.RejectRow) as ctx:
+            etl.resolve_location(999, self.LOCATION_MAP, "return")
+        self.assertEqual(ctx.exception.reason, "return_location_unmapped")
+
+    def test_null_and_unmapped_are_distinct_reasons(self):
+        with self.assertRaises(etl.RejectRow) as null_ctx:
+            etl.resolve_location(None, self.LOCATION_MAP, "pickup")
+        with self.assertRaises(etl.RejectRow) as unmapped_ctx:
+            etl.resolve_location(999, self.LOCATION_MAP, "pickup")
+        self.assertNotEqual(null_ctx.exception.reason, unmapped_ctx.exception.reason)
+
+
+# --------------------------------------------------------------------------- #
+# SCEN-011 (category): resolve_category_code maps legacy category id -> its
+# code, validating the code exists in the destination vehicle_categories set.
+# Missing legacy id OR a code absent from the destination set -> `category_unmapped`.
+# --------------------------------------------------------------------------- #
+class TestResolveCategoryCode(unittest.TestCase):
+    # legacy category id -> code (legacy.categories.id -> identification),
+    # with the resolved code validated against the destination code set.
+    CATEGORY_MAP = {
+        1: "GR",
+        2: "VP",
+        3: "GHOST",  # legacy code with NO destination vehicle_categories row.
+    }
+    DEST_CODES = frozenset({"GR", "VP", "G", "LP"})
+
+    def test_resolves_valid_code(self):
+        self.assertEqual(
+            etl.resolve_category_code(1, self.CATEGORY_MAP, self.DEST_CODES), "GR"
+        )
+
+    def test_missing_legacy_id_rejects(self):
+        with self.assertRaises(etl.RejectRow) as ctx:
+            etl.resolve_category_code(99, self.CATEGORY_MAP, self.DEST_CODES)
+        self.assertEqual(ctx.exception.reason, "category_unmapped")
+
+    def test_resolve_category_unmapped(self):
+        # Legacy id resolves to a code, but that code is not in the destination
+        # vehicle_categories set -> reject (S3 breach observable).
+        with self.assertRaises(etl.RejectRow) as ctx:
+            etl.resolve_category_code(3, self.CATEGORY_MAP, self.DEST_CODES)
+        self.assertEqual(ctx.exception.reason, "category_unmapped")
+
+
+# --------------------------------------------------------------------------- #
+# SCEN-011 (franchise): resolve_franchise maps legacy franchise id -> name ->
+# the destination enum {alquilatucarro, alquilame, alquicarros}. A name outside
+# the enum (or a missing id) -> `franchise_unmapped`.
+# --------------------------------------------------------------------------- #
+class TestResolveFranchise(unittest.TestCase):
+    # legacy franchise id -> destination enum value.
+    FRANCHISE_MAP = {
+        1: "alquilatucarro",
+        2: "alquilame",
+        3: "alquicarros",
+    }
+
+    def test_resolves_each_enum(self):
+        self.assertEqual(etl.resolve_franchise(1, self.FRANCHISE_MAP), "alquilatucarro")
+        self.assertEqual(etl.resolve_franchise(2, self.FRANCHISE_MAP), "alquilame")
+        self.assertEqual(etl.resolve_franchise(3, self.FRANCHISE_MAP), "alquicarros")
+
+    def test_resolve_franchise_unmapped(self):
+        with self.assertRaises(etl.RejectRow) as ctx:
+            etl.resolve_franchise(99, self.FRANCHISE_MAP)
+        self.assertEqual(ctx.exception.reason, "franchise_unmapped")
+
+
+# --------------------------------------------------------------------------- #
+# SCEN-006: resolve_referral returns (referral_id, referral_raw). It NEVER
+# rejects — referral is optional. referral_raw = TRIM(legacy.user) or None when
+# null/empty; referral_id = map.get(lower(trim(user))) or None. CRITICAL:
+# referral_raw is preserved even when referral_id is None (free-text user).
+# --------------------------------------------------------------------------- #
+class TestResolveReferral(unittest.TestCase):
+    REFERRAL_MAP = {
+        "promo2024": "cccccccc-cccc-cccc-cccc-cccccccccccc",
+        "partnerx": "dddddddd-dddd-dddd-dddd-dddddddddddd",
+    }
+
+    def test_resolve_referral_match(self):
+        # (i) known code -> (uuid, trimmed-original).
+        rid, raw = etl.resolve_referral("  PROMO2024 ", self.REFERRAL_MAP)
+        self.assertEqual(rid, "cccccccc-cccc-cccc-cccc-cccccccccccc")
+        self.assertEqual(raw, "PROMO2024")
+
+    def test_resolve_referral_unmatched(self):
+        # (ii) free text not in the map -> (None, trimmed-original) PRESERVED.
+        rid, raw = etl.resolve_referral("  Some Free Text ", self.REFERRAL_MAP)
+        self.assertIsNone(rid)
+        self.assertEqual(raw, "Some Free Text")
+
+    def test_resolve_referral_null(self):
+        self.assertEqual(etl.resolve_referral(None, self.REFERRAL_MAP), (None, None))
+
+    def test_resolve_referral_empty_string(self):
+        self.assertEqual(etl.resolve_referral("   ", self.REFERRAL_MAP), (None, None))
+
+    def test_referral_never_rejects(self):
+        # Even garbage (with real surrounding whitespace) never raises a
+        # RejectRow — referral is optional. .strip() removes the whitespace.
+        try:
+            rid, raw = etl.resolve_referral("\t\n garbage \t", self.REFERRAL_MAP)
+        except etl.RejectRow:
+            self.fail("resolve_referral must never reject")
+        self.assertIsNone(rid)
+        self.assertEqual(raw, "garbage")
+
+
+# --------------------------------------------------------------------------- #
+# Defensive input hardening (code-review I-1/I-2/I-3, M-5). The legacy schema
+# guarantees these inputs are str/float/int/None, so none of these fire on the
+# real dump — but Phase 3 runs every transform inside a per-row
+# `try/except RejectRow`, and an AttributeError/ValueError/TypeError would ESCAPE
+# that handler, leaving a legacy row with NO disposition and breaking the
+# reconciliation invariant (the acceptance criterion). So a malformed input must
+# become a logged disposition (RejectRow) or a clean value, never an uncaught
+# crash. Mirrors the #19 "coerce at the boundary" posture (_sanitize_text).
+# --------------------------------------------------------------------------- #
+class TestDefensiveInputHardening(unittest.TestCase):
+    def test_map_status_unhashable_rejects_not_crashes(self):
+        with self.assertRaises(etl.RejectRow) as ctx:
+            etl.map_status(["Nueva"])  # unhashable — must not raise TypeError
+        self.assertEqual(ctx.exception.reason, "status_unmapped")
+
+    def test_map_status_non_string_rejects(self):
+        with self.assertRaises(etl.RejectRow) as ctx:
+            etl.map_status(123)
+        self.assertEqual(ctx.exception.reason, "status_unmapped")
+
+    def test_coerce_numeric_non_numeric_string_rejects_not_crashes(self):
+        for bad in ("", "abc", "1,234.50"):
+            with self.assertRaises(etl.RejectRow) as ctx:
+                etl.coerce_numeric(bad)
+            self.assertEqual(ctx.exception.reason, "numeric_overflow")
+
+    def test_coerce_smallint_non_numeric_string_rejects_not_crashes(self):
+        with self.assertRaises(etl.RejectRow) as ctx:
+            etl.coerce_smallint("abc")
+        self.assertEqual(ctx.exception.reason, "numeric_overflow")
+
+    def test_coerce_return_fee_none_is_float_zero(self):
+        result = etl.coerce_return_fee(None)
+        self.assertEqual(result, 0.0)
+        self.assertIsInstance(result, float)  # uniform with coerce_numeric
+
+    def test_resolve_referral_non_string_does_not_crash(self):
+        # int legacy_user — must coerce, never AttributeError, never reject.
+        rid, raw = etl.resolve_referral(12345, {})
+        self.assertIsNone(rid)
+        self.assertEqual(raw, "12345")
+
+
 if __name__ == "__main__":
     unittest.main()

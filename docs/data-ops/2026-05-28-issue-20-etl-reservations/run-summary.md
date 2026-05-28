@@ -5,7 +5,7 @@ stdout summary object here (the per-row JSONL report stays gitignored). No
 identification number / name / email is pasted here; this file is committed.
 
 > **STATUS: PENDING RUN.** The script + migration 050 + rollback are implemented
-> and unit-verified (93 tests, fake-cursor SCEN-001/007, branch-verified
+> and unit-verified (103 tests, fake-cursor SCEN-001/007, branch-verified
 > SCEN-008/009). The real extract+insert against the 12,967-row legacy dump has
 > NOT run — it requires the legacy MariaDB, which lives with the migration
 > operator. Fill the tables below from:

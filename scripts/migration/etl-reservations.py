@@ -331,7 +331,7 @@ class LookupMaps:
     location_map: dict  # legacy branch id -> location uuid (pre-joined via code)
     category_map: dict  # legacy category id -> code (legacy.categories.identification)
     dest_category_codes: frozenset  # destination vehicle_categories.code set
-    franchise_map: dict  # lower(franchise name) -> destination enum value
+    franchise_map: dict  # legacy franchise id -> destination enum value
     referral_map: dict  # lower(referrals.code) -> referral uuid
     rental_company_id: str  # the single localiza rental_companies uuid
     # Count of distinct stored identification_numbers that RE-NORMALIZE onto an
@@ -487,7 +487,9 @@ def coerce_smallint(value):
         return None
     try:
         ivalue = int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
+        # OverflowError: int(float('inf')) — not a ValueError/TypeError, so it
+        # would otherwise escape the per-row RejectRow handler and abort the run.
         raise RejectRow("numeric_overflow")
     if abs(ivalue) > SMALLINT_MAX:
         raise RejectRow("numeric_overflow")

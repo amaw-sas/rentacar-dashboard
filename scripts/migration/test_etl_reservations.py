@@ -620,6 +620,15 @@ class TestDefensiveInputHardening(unittest.TestCase):
             etl.coerce_smallint("abc")
         self.assertEqual(ctx.exception.reason, "numeric_overflow")
 
+    def test_coerce_smallint_infinity_rejects_not_overflowerror(self):
+        # int(float('inf')) raises OverflowError (NOT ValueError/TypeError) — it
+        # must become a clean numeric_overflow reject, never escape the per-row
+        # RejectRow handler and abort the whole run. Mirrors coerce_numeric's
+        # math.isfinite guard for its integer sibling.
+        with self.assertRaises(etl.RejectRow) as ctx:
+            etl.coerce_smallint(float("inf"))
+        self.assertEqual(ctx.exception.reason, "numeric_overflow")
+
     def test_coerce_return_fee_none_is_float_zero(self):
         result = etl.coerce_return_fee(None)
         self.assertEqual(result, 0.0)

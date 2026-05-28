@@ -290,3 +290,153 @@ transaction if any reservation references an ETL-inserted customer, so the
 rollback can never partially run. After sign-off, migration **049**
 (`20260525201337_049_drop_customers_legacy_migrated_marker.sql`) drops the
 marker column.
+
+# ETL: reservations (issue #20)
+
+`etl-reservations.py` reads the legacy MariaDB `rentacar_audit.reservations`
+(read-only, 12,967 rows), rewrites every legacy BIGINT FK to its destination
+UUID/enum, transforms each row to the destination shape, and inserts them **1:1**
+into Supabase `public.reservations` transactionally (`ON CONFLICT (_legacy_id)
+DO NOTHING`). Unlike customers (#19), reservations are NOT deduped — one legacy
+row becomes one destination row, or one logged reject. Run AFTER #19 customers
+and #17 categories are migrated — their rows are the FK targets this ETL
+resolves against.
+
+## Setup
+
+Same venv and `.env` as #19: `LEGACY_DB_HOST` / `LEGACY_DB_USER` /
+`LEGACY_DB_PASSWORD` / `LEGACY_DB_NAME` / `SUPABASE_DB_URL`. Same `pymysql`,
+`psycopg2-binary`, `python-dotenv`.
+
+The destination MUST have migrations through **050**
+(`..._050_reservations_legacy_migrated_marker.sql`) applied, so the
+`reservations._legacy_id` (idempotency key, UNIQUE) and `_legacy_migrated_at`
+(provenance marker) columns exist. It must ALSO have #19 customers and #17
+categories migrated, or FK resolution cascade-rejects en masse.
+
+## FK resolution (the core new work)
+
+Before insert, six lookup structures are built — most from the DESTINATION, a
+few composed with the legacy id→code/name tables:
+
+- **customer_id** ← `customers.identification_number → id`, keyed by
+  `normalize_identification(legacy.identification)` (the SAME function #19 used as
+  its dedup key / persisted `identification_number`, so the join lands). A legacy
+  identification absent from the map (e.g. a #19-discarded placeholder) →
+  `customer_not_migrated`.
+- **pickup_location_id / return_location_id** ← legacy `branches` (id→code)
+  composed with destination `locations` (code→id). NULL legacy branch →
+  `{side}_location_null`; a branch code with no destination location →
+  `{side}_location_unmapped` (distinct, so a broken `branches.code`↔
+  `locations.code` mapping is visible, not lost in the NULL bucket).
+- **category_code** ← legacy `categories` (id→identification) validated against
+  the destination `vehicle_categories.code` set → `category_unmapped` if outside.
+- **franchise** ← legacy `franchises` (id→name) → enum, lowercase-exact against
+  `{alquilatucarro, alquilame, alquicarros}` → `franchise_unmapped` if outside.
+- **rental_company_id** ← the single `localiza` UUID (P6: all legacy
+  reservations are Localiza, 1:1).
+- **referral_id / referral_raw** ← `referrals.code` keyed `lower(trim(user))`.
+  `legacy.reservations.user` IS the referral column (P12 correction, 2026-05-19),
+  NOT an operator name. `referral_raw` is the trimmed original, PRESERVED even
+  when `referral_id` is NULL (free-text user that matches no code). Never rejects.
+
+## Transform decisions (encoded in the code + unit tests)
+
+- **status** → a CLOSED `STATUS_MAP` of the 13 canonical legacy values to their
+  snake_case destination value. Anything outside (including the historical
+  `Terminado`, 0 rows in the dump) → `status_unmapped` — never a blind
+  `lower(replace())`, never lets the destination CHECK explode as a raw SQL error.
+- **booking_type** → derived (total function, never rejects): `monthly_mileage`
+  not null → `monthly` (wins); else `total_insurance` true →
+  `standard_with_insurance`; else `standard`.
+- **monthly_mileage** → `1k_kms/2k_kms/3k_kms → 1000/2000/3000`, NULL→NULL.
+- **numerics** → `ROUND(v, 2)` to `numeric(12,2)` with an overflow guard
+  (> 9,999,999,999.99 → `numeric_overflow`, never truncated), applied to all
+  money fields INCLUDING `total_price_to_pay`. `selected_days` / `coverage_days` /
+  `extra_hours` range-guarded to smallint. `return_fee` NULL→0. A non-coercible
+  value (impossible under the NOT-NULL numeric legacy schema) also rejects
+  `numeric_overflow` rather than crashing, so the reconciliation invariant holds.
+- **Reject taxonomy** (every reject carries a no-PII reason; one disposition per
+  row): `customer_not_migrated`, `pickup_location_null`, `return_location_null`,
+  `pickup_location_unmapped`, `return_location_unmapped`, `category_unmapped`,
+  `franchise_unmapped`, `status_unmapped`, `numeric_overflow`,
+  `monthly_mileage_unmapped`. The `*_unmapped` / `numeric_overflow` reasons are
+  defensive — expected 0 on the real dump (the audit confirms all 17 category
+  codes resolve, 3 franchises map 1:1, 0 `Terminado`, no price overflow).
+- **Control chars + bad rows**: same posture as #19 — free text is stripped of
+  NUL/control chars at extraction; a row that still raises inside a batch retries
+  row-by-row (one bad row isolated as a reject, never rolling back up to 500 good
+  rows); a poisoned transaction (`25P02`) propagates and aborts (exit 3).
+- **Full accounting**: every scanned legacy row has exactly one disposition. The
+  summary's `reconciliation` block proves `inserted + skipped + rejected ==
+  legacy_rows_total` (12,967) at the row level. **Acceptance is this invariant +
+  a logged reason per reject + 0 constraint violations — NOT a hardcoded
+  inserted-count.** The expected inserted band (~12,150–12,271, after location
+  NULLs and the ~121 placeholder-customer cascade rejects) is pinned by the
+  dry-run (#22), not asserted here.
+
+## Running
+
+From the repo root with the venv active:
+
+```bash
+# Dry-run: read + compute + ROLLBACK. Writes NOTHING. Run this FIRST against a
+# disposable Supabase branch (validate reconciliation + the reject taxonomy).
+python scripts/migration/etl-reservations.py --dry-run
+echo $?
+
+# Commit: COMMITs only if the gate passes (0 unexpected rejects — only the
+# taxonomy reasons — AND reconciliation closes AND every non-inserted record is
+# an explained idempotent skip). Else the whole transaction ROLLS BACK (exit 7).
+python scripts/migration/etl-reservations.py
+echo $?
+```
+
+`--dry-run` is also enabled by `ETL_DRY_RUN=1`. `--help` prints the exit-code
+table.
+
+## Reports
+
+- **Per-row JSONL** at `docs/migration-runs/etl-reservations-<UTC-timestamp>.jsonl`
+  (atomic write, `/tmp` fallback). One object per logged event: `inserted` /
+  `skipped` (`already_migrated`) / `rejected` (with the taxonomy reason). The
+  per-row report keys on the legacy `_legacy_id`; it carries no identification /
+  name / email. **Gitignored** (defensive, consistent with #19).
+- **Aggregate summary** to stdout (JSON): counts, elapsed, mode, gate decision,
+  the per-reason reject tallies, and the `reconciliation` block. No PII. Transcribe
+  into `docs/data-ops/2026-05-XX-issue-20-etl-reservations/run-summary.md`.
+
+## Idempotency
+
+A re-run inserts 0: `ON CONFLICT (_legacy_id) DO NOTHING` plus the
+`_legacy_migrated_at` marker. `_legacy_id` (the legacy `reservations.id`) is the
+key — reservations has no natural unique column, so migration 050 adds it with a
+UNIQUE index (nullable: dashboard-created rows keep `_legacy_id` NULL and Postgres
+treats NULLs as distinct, so they never collide). Skips are classified
+`already_migrated`; a `conflict_unknown` (ON CONFLICT fired yet the row is absent
+on re-read) FAILS the gate and rolls back.
+
+## Exit codes
+
+Identical contract to #19 (0 ok / 2 connection / 3 query / 4 env / 5 report /
+6 unexpected / 7 gate-failed). `--help` prints the table.
+
+## Rollback
+
+`docs/data-ops/2026-05-XX-issue-20-etl-reservations/rollback.sql` deletes ONLY
+rows with `_legacy_migrated_at IS NOT NULL`; dashboard-created reservations
+(marker NULL) are never touched. Two dependents have DIFFERENT delete semantics:
+`commissions.reservation_id` is NO ACTION (financial records — an executable
+`DO $$ ... RAISE EXCEPTION $$` guard ABORTS the whole rollback if any commission
+references an ETL reservation, so they are never silently deleted), while
+`notification_logs.reservation_id` is ON DELETE CASCADE (operational logs of a
+rolled-back reservation are removed automatically). After sign-off, the paired
+drop migration removes the marker + idempotency-key columns.
+
+## db:types
+
+`pnpm db:types` (`supabase gen types typescript --local`) regenerates the
+gitignored, untracked `lib/types/database.ts` from the local stack — the
+generated types are not committed and no tracked code imports them, so the
+marker columns require no committed type change (same as #19's migration 048).
+Run it locally when applying the migration if you use the typed client.

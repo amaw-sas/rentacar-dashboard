@@ -345,6 +345,19 @@ class TestCoerceNumeric(unittest.TestCase):
             etl.coerce_numeric(9_999_999_999.999)
         self.assertEqual(ctx.exception.reason, "numeric_overflow")
 
+    def test_nan_rejects_not_passes(self):
+        # FIX 5: NaN comparisons are always False, so `abs(nan) > MAX` was False
+        # and NaN slipped through. It must reject (numeric(12,2) cannot store NaN).
+        with self.assertRaises(etl.RejectRow) as ctx:
+            etl.coerce_numeric(float("nan"))
+        self.assertEqual(ctx.exception.reason, "numeric_overflow")
+
+    def test_inf_rejects(self):
+        # inf already overflows the ceiling; locked alongside the NaN guard.
+        with self.assertRaises(etl.RejectRow) as ctx:
+            etl.coerce_numeric(float("inf"))
+        self.assertEqual(ctx.exception.reason, "numeric_overflow")
+
 
 class TestCoerceSmallint(unittest.TestCase):
     def test_in_range_passthrough(self):
@@ -632,6 +645,11 @@ def _rdt(year, month=1, day=1):
     return datetime(year, month, day, tzinfo=timezone.utc)
 
 
+# Single run-start stamp passed to transform_row in the pipeline tests (also the
+# coalesce target for a fallback-sentinel timestamp — FIX 1).
+_RUN = _rdt(2026, 5, 28)
+
+
 # Destination FK targets shared across the pipeline tests. Built once,
 # destination-side, exactly as build_lookup_maps would produce them.
 _LOCALIZA_ID = "00000000-0000-0000-0000-0000000000aa"
@@ -673,6 +691,8 @@ def _legacy_res(
     note="",
     monthly_mileage=None,
     total_insurance=False,
+    created=None,
+    updated=None,
 ):
     """A fully-populated, resolvable LegacyRow (every FK present in the maps)."""
     return etl.LegacyRow(
@@ -713,8 +733,8 @@ def _legacy_res(
         ghl_contact_id=None,
         ghl_opportunity_id=None,
         ghl_last_sync=None,
-        created_at=_rdt(2024, 6, 1),
-        updated_at=_rdt(2024, 6, 2),
+        created_at=_rdt(2024, 6, 1) if created is None else created,
+        updated_at=_rdt(2024, 6, 2) if updated is None else updated,
     )
 
 
@@ -824,7 +844,7 @@ class _PipelineHarness:
 # --------------------------------------------------------------------------- #
 class TestTransformRow(unittest.TestCase):
     def test_resolvable_row_maps_all_columns(self):
-        rec = etl.transform_row(_legacy_res(7), _maps())
+        rec = etl.transform_row(_legacy_res(7), _maps(), _RUN)
         self.assertEqual(rec.legacy_id, 7)
         self.assertEqual(rec.customer_id, _CUSTOMER_MAP["12345678"])
         self.assertEqual(rec.rental_company_id, _LOCALIZA_ID)
@@ -849,54 +869,54 @@ class TestTransformRow(unittest.TestCase):
         self.assertEqual(rec.return_fee, 0.0)
 
     def test_status_maps_to_destination(self):
-        rec = etl.transform_row(_legacy_res(1, status="Pendiente Pago"), _maps())
+        rec = etl.transform_row(_legacy_res(1, status="Pendiente Pago"), _maps(), _RUN)
         self.assertEqual(rec.status, "pendiente_pago")
 
     def test_booking_type_monthly_when_mileage(self):
-        rec = etl.transform_row(_legacy_res(1, monthly_mileage="2k_kms"), _maps())
+        rec = etl.transform_row(_legacy_res(1, monthly_mileage="2k_kms"), _maps(), _RUN)
         self.assertEqual(rec.booking_type, "monthly")
         self.assertEqual(rec.monthly_mileage, 2000)
 
     def test_booking_type_with_insurance(self):
-        rec = etl.transform_row(_legacy_res(1, total_insurance=True), _maps())
+        rec = etl.transform_row(_legacy_res(1, total_insurance=True), _maps(), _RUN)
         self.assertEqual(rec.booking_type, "standard_with_insurance")
         self.assertTrue(rec.total_insurance)
 
     def test_reservation_code_null_preserved(self):
-        rec = etl.transform_row(_legacy_res(1, reserve_code=None), _maps())
+        rec = etl.transform_row(_legacy_res(1, reserve_code=None), _maps(), _RUN)
         self.assertIsNone(rec.reservation_code)
 
     def test_note_renamed_to_nota(self):
-        rec = etl.transform_row(_legacy_res(1, note="alergia gatos"), _maps())
+        rec = etl.transform_row(_legacy_res(1, note="alergia gatos"), _maps(), _RUN)
         self.assertEqual(rec.nota, "alergia gatos")
 
     def test_referral_resolves_and_raw_preserved(self):
-        rec = etl.transform_row(_legacy_res(1, user="  PROMO2024 "), _maps())
+        rec = etl.transform_row(_legacy_res(1, user="  PROMO2024 "), _maps(), _RUN)
         self.assertEqual(rec.referral_id, _REFERRAL_MAP["promo2024"])
         self.assertEqual(rec.referral_raw, "PROMO2024")
 
     def test_referral_raw_preserved_when_unmatched(self):
-        rec = etl.transform_row(_legacy_res(1, user="  Diana  "), _maps())
+        rec = etl.transform_row(_legacy_res(1, user="  Diana  "), _maps(), _RUN)
         self.assertIsNone(rec.referral_id)
         self.assertEqual(rec.referral_raw, "Diana")
 
     def test_missing_customer_raises_reject(self):
         with self.assertRaises(etl.RejectRow) as ctx:
-            etl.transform_row(_legacy_res(1, identification="0000000"), _maps())
+            etl.transform_row(_legacy_res(1, identification="0000000"), _maps(), _RUN)
         self.assertEqual(ctx.exception.reason, "customer_not_migrated")
 
     def test_null_pickup_location_raises_reject(self):
         with self.assertRaises(etl.RejectRow) as ctx:
-            etl.transform_row(_legacy_res(1, pickup_location=None), _maps())
+            etl.transform_row(_legacy_res(1, pickup_location=None), _maps(), _RUN)
         self.assertEqual(ctx.exception.reason, "pickup_location_null")
 
     def test_unknown_status_raises_reject(self):
         with self.assertRaises(etl.RejectRow) as ctx:
-            etl.transform_row(_legacy_res(1, status="Terminado"), _maps())
+            etl.transform_row(_legacy_res(1, status="Terminado"), _maps(), _RUN)
         self.assertEqual(ctx.exception.reason, "status_unmapped")
 
     def test_record_tuple_has_marker_columns(self):
-        rec = etl.transform_row(_legacy_res(42), _maps())
+        rec = etl.transform_row(_legacy_res(42), _maps(), _RUN)
         migrated_at = _rdt(2026, 5, 28)
         tup = etl._record_to_tuple(rec, migrated_at)
         # _legacy_id at the documented index, _legacy_migrated_at LAST.
@@ -905,6 +925,39 @@ class TestTransformRow(unittest.TestCase):
         # Column count of the tuple matches the INSERT_SQL column list.
         ncols = etl.INSERT_SQL.split("(", 2)[1].count(",") + 1
         self.assertEqual(len(tup), ncols)
+
+
+# --------------------------------------------------------------------------- #
+# FIX 1: a fallback-sentinel created_at/updated_at (datetime.min / year 1, from
+# _as_aware on a zero-date / NULL / unparseable legacy timestamp) must COALESCE
+# to the run-start stamp at transform time — never persist as year 1. The module
+# docstring promised this; transform_row now enforces it via the run_started arg.
+# --------------------------------------------------------------------------- #
+class TestTimestampSentinelCoalesce(unittest.TestCase):
+    def test_both_fallback_coalesce_to_run_started(self):
+        row = _legacy_res(
+            1, created=etl.FALLBACK_SENTINEL, updated=etl.FALLBACK_SENTINEL
+        )
+        rec = etl.transform_row(row, _maps(), _RUN)
+        self.assertEqual(rec.created_at, _RUN)
+        self.assertEqual(rec.updated_at, _RUN)
+        self.assertNotEqual(rec.created_at, etl.FALLBACK_SENTINEL)
+
+    def test_created_fallback_updated_real(self):
+        # created is the sentinel, updated is a real timestamp: created coalesces
+        # to run_started, updated passes through untouched.
+        real = _rdt(2024, 6, 2)
+        row = _legacy_res(1, created=etl.FALLBACK_SENTINEL, updated=real)
+        rec = etl.transform_row(row, _maps(), _RUN)
+        self.assertEqual(rec.created_at, _RUN)
+        self.assertEqual(rec.updated_at, real)
+
+    def test_real_timestamps_unchanged(self):
+        # No sentinel anywhere: both pass through, run_started never used.
+        c, u = _rdt(2024, 1, 1), _rdt(2024, 12, 31)
+        rec = etl.transform_row(_legacy_res(1, created=c, updated=u), _maps(), _RUN)
+        self.assertEqual(rec.created_at, c)
+        self.assertEqual(rec.updated_at, u)
 
 
 # --------------------------------------------------------------------------- #
@@ -1020,13 +1073,18 @@ class TestPipelineIdempotency(unittest.TestCase):
 # --------------------------------------------------------------------------- #
 class _SeqCursor:
     """A cursor whose successive execute() calls yield successive canned result
-    sets (FIFO), matching the order build_lookup_maps issues its queries."""
+    sets (FIFO), matching the order build_lookup_maps issues its queries.
+
+    Records every executed SQL string so tests can assert the destination
+    location/category lookups are scoped to localiza (FIX 2)."""
 
     def __init__(self, result_sets):
         self._queue = list(result_sets)
         self._current: list = []
+        self.executed: list[str] = []
 
     def execute(self, sql, params=None):
+        self.executed.append(sql)
         self._current = self._queue.pop(0) if self._queue else []
 
     def fetchall(self):
@@ -1090,6 +1148,64 @@ class TestBuildLookupMaps(unittest.TestCase):
         maps = etl.build_lookup_maps(legacy_cur, dest_cur)
         # resolve_referral keys by lower(trim(user)); the map must be lowercased.
         self.assertEqual(maps.referral_map, {"promoxyz": "uuid-ref-2"})
+
+    def test_dest_location_and_category_queries_scoped_to_localiza(self):
+        # FIX 2: uniqueness is (rental_company_id, code), so the dest location +
+        # category lookups MUST filter to localiza (design S3) — a bare `code`
+        # select is non-deterministic once a 2nd company shares a code.
+        legacy_cur = _SeqCursor([[], [], []])
+        dest_cur = _SeqCursor([[], [], [], [], [("uuid-localiza",)]])
+        etl.build_lookup_maps(legacy_cur, dest_cur)
+        location_q = etl.DEST_LOCATIONS_SELECT.lower()
+        category_q = etl.DEST_CATEGORY_CODES_SELECT.lower()
+        for q in (location_q, category_q):
+            self.assertIn("rental_companies", q)
+            self.assertIn("localiza", q)
+        # And the executed SQL carried those scoped queries.
+        self.assertIn(etl.DEST_LOCATIONS_SELECT, dest_cur.executed)
+        self.assertIn(etl.DEST_CATEGORY_CODES_SELECT, dest_cur.executed)
+
+    def test_localiza_absent_yields_none_rental_company_id(self):
+        # FIX 3 (buildable part): no localiza row -> rental_company_id is None.
+        # run() turns this into a fail-fast exit 3 BEFORE inserting 12,967 rows
+        # with a NULL NOT NULL FK.
+        legacy_cur = _SeqCursor([[], [], []])
+        dest_cur = _SeqCursor([[], [], [], [], []])  # last set empty -> no localiza
+        maps = etl.build_lookup_maps(legacy_cur, dest_cur)
+        self.assertIsNone(maps.rental_company_id)
+
+    def test_customer_key_collisions_counted(self):
+        # FIX 4: two stored identification_numbers that RE-NORMALIZE to the same
+        # key collapse onto one map entry (a #19 dedup escape). The collision is
+        # COUNTED (no-PII) instead of silently last-writer-wins.
+        legacy_cur = _SeqCursor([[], [], []])
+        dest_cur = _SeqCursor(
+            [
+                # '12.345.678' and '12345678' both normalize to '12345678'.
+                [("12.345.678", "uuid-a"), ("12345678", "uuid-b")],  # customers
+                [],  # locations
+                [],  # vehicle_categories
+                [],  # referrals
+                [("uuid-localiza",)],
+            ]
+        )
+        maps = etl.build_lookup_maps(legacy_cur, dest_cur)
+        self.assertEqual(len(maps.customer_map), 1)  # collapsed to one key.
+        self.assertEqual(maps.customer_key_collisions, 1)
+
+    def test_no_customer_key_collisions_when_distinct(self):
+        legacy_cur = _SeqCursor([[], [], []])
+        dest_cur = _SeqCursor(
+            [
+                [("12345678", "uuid-a"), ("87654321", "uuid-b")],  # customers
+                [],
+                [],
+                [],
+                [("uuid-localiza",)],
+            ]
+        )
+        maps = etl.build_lookup_maps(legacy_cur, dest_cur)
+        self.assertEqual(maps.customer_key_collisions, 0)
 
 
 if __name__ == "__main__":

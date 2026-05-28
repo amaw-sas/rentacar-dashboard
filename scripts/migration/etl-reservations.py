@@ -47,6 +47,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import sys
@@ -330,9 +331,12 @@ class LookupMaps:
     location_map: dict  # legacy branch id -> location uuid (pre-joined via code)
     category_map: dict  # legacy category id -> code (legacy.categories.identification)
     dest_category_codes: frozenset  # destination vehicle_categories.code set
-    franchise_map: dict  # legacy franchise id -> destination enum value
+    franchise_map: dict  # lower(franchise name) -> destination enum value
     referral_map: dict  # lower(referrals.code) -> referral uuid
     rental_company_id: str  # the single localiza rental_companies uuid
+    # Count of distinct stored identification_numbers that RE-NORMALIZE onto an
+    # already-seen key (a #19 dedup escape) — observability, never silent (FIX 4).
+    customer_key_collisions: int = 0
 
 
 @dataclass
@@ -463,7 +467,10 @@ def coerce_numeric(value):
         rounded = round(float(value), 2)
     except (TypeError, ValueError):
         raise RejectRow("numeric_overflow")
-    if abs(rounded) > NUMERIC_12_2_MAX:
+    # NaN/inf cannot be stored in numeric(12,2). inf already exceeds the ceiling,
+    # but NaN comparisons are ALWAYS False, so `abs(nan) > MAX` is False and NaN
+    # would slip through silently — guard it explicitly (FIX 5).
+    if not math.isfinite(rounded) or abs(rounded) > NUMERIC_12_2_MAX:
         raise RejectRow("numeric_overflow")
     return rounded
 
@@ -626,8 +633,20 @@ LEGACY_BRANCHES_SELECT = "SELECT id, code FROM branches"
 LEGACY_CATEGORIES_SELECT = "SELECT id, identification FROM categories"
 LEGACY_FRANCHISES_SELECT = "SELECT id, name FROM franchises"
 DEST_CUSTOMERS_SELECT = "SELECT identification_number, id FROM public.customers"
-DEST_LOCATIONS_SELECT = "SELECT code, id FROM public.locations"
-DEST_CATEGORY_CODES_SELECT = "SELECT code FROM public.vehicle_categories"
+# Location + category code uniqueness is (rental_company_id, code), not code
+# alone (migrations 003/004), and design S3 scopes resolution to localiza. JOIN
+# rental_companies + filter localiza so a future 2nd company with an overlapping
+# code can never make the lookup non-deterministic (FIX 2).
+DEST_LOCATIONS_SELECT = (
+    "SELECT l.code, l.id FROM public.locations l "
+    "JOIN public.rental_companies rc ON rc.id = l.rental_company_id "
+    "WHERE rc.code = 'localiza'"
+)
+DEST_CATEGORY_CODES_SELECT = (
+    "SELECT vc.code FROM public.vehicle_categories vc "
+    "JOIN public.rental_companies rc ON rc.id = vc.rental_company_id "
+    "WHERE rc.code = 'localiza'"
+)
 DEST_REFERRALS_SELECT = "SELECT code, id FROM public.referrals"
 DEST_RENTAL_COMPANY_SELECT = (
     "SELECT id FROM public.rental_companies WHERE code = 'localiza'"
@@ -659,12 +678,19 @@ def build_lookup_maps(legacy_cur, dest_cur) -> LookupMaps:
       * rental_company_id — dest single uuid WHERE code='localiza' (P6: all
         reservations -> localiza, 1:1).
     """
-    # --- customer_map (dest).
+    # --- customer_map (dest). Re-normalize each stored identification_number to
+    # the lookup key. If two distinct stored numbers normalize to the SAME key (a
+    # #19 dedup escape — e.g. '12.345.678' and '12345678' both stored), the map
+    # would silently keep the last writer. Count those collisions (FIX 4) so the
+    # operator sees them; the count carries NO PII (just an integer).
     dest_cur.execute(DEST_CUSTOMERS_SELECT)
-    customer_map = {
-        normalize_identification(number): uuid
-        for number, uuid in dest_cur.fetchall()
-    }
+    customer_map: dict = {}
+    customer_key_collisions = 0
+    for number, uuid in dest_cur.fetchall():
+        key = normalize_identification(number)
+        if key in customer_map:
+            customer_key_collisions += 1
+        customer_map[key] = uuid
 
     # --- location_map (compose legacy branch_id -> code with dest code -> id).
     legacy_cur.execute(LEGACY_BRANCHES_SELECT)
@@ -703,6 +729,15 @@ def build_lookup_maps(legacy_cur, dest_cur) -> LookupMaps:
     row = dest_cur.fetchone()
     rental_company_id = row[0] if row else None
 
+    if customer_key_collisions:
+        # NO PII: only the count. The colliding numbers live nowhere in output.
+        print(
+            f"WARNING: {customer_key_collisions} customer identification_number(s) "
+            "collapsed to an existing normalized key (a #19 dedup escape) — "
+            "last-writer-wins on the lookup; verify in the dry-run.",
+            file=sys.stderr,
+        )
+
     return LookupMaps(
         customer_map=customer_map,
         location_map=location_map,
@@ -711,6 +746,7 @@ def build_lookup_maps(legacy_cur, dest_cur) -> LookupMaps:
         franchise_map=franchise_map,
         referral_map=referral_map,
         rental_company_id=rental_company_id,
+        customer_key_collisions=customer_key_collisions,
     )
 
 
@@ -727,13 +763,23 @@ def _franchise_name_to_enum(name) -> str | None:
     return normalized if normalized in FRANCHISE_ENUM else None
 
 
-def transform_row(legacy_row: LegacyRow, maps: LookupMaps) -> ReservationRecord:
+def transform_row(
+    legacy_row: LegacyRow, maps: LookupMaps, run_started: datetime
+) -> ReservationRecord:
     """Resolve + transform one legacy row into a ReservationRecord, or RejectRow.
 
     Maps EVERY destination column per 03-mapping.md §D2. Any FK that cannot
     resolve raises RejectRow (the first failure short-circuits the whole row via
     the exception); the caller's per-row try/except turns it into one logged
-    disposition. Pure: no DB, no I/O — driven entirely by `maps`.
+    disposition. Pure: no DB, no I/O — driven entirely by `maps` + `run_started`.
+
+    `run_started` is the migration run-start stamp (== _legacy_migrated_at). It
+    is the COALESCE target for a created_at/updated_at that fell back to
+    FALLBACK_SENTINEL during extract (a zero-date / NULL / unparseable legacy
+    timestamp): the sentinel is datetime.min (year 1), which IS in Postgres range
+    and would otherwise commit silently as year 1. Coalescing here keeps the
+    promise in the module docstring — a fallback timestamp persists as the run
+    stamp, never year 1 (FIX 1).
 
     Resolution order (customer first so a cascade-rejected placeholder is the
     cheapest reject): customer -> pickup -> return -> category -> franchise ->
@@ -757,6 +803,16 @@ def transform_row(legacy_row: LegacyRow, maps: LookupMaps) -> ReservationRecord:
     total_insurance = bool(legacy_row.total_insurance)
     booking_type = derive_booking_type(monthly_mileage, total_insurance)
     referral_id, referral_raw = resolve_referral(legacy_row.user, maps.referral_map)
+
+    # FIX 1: coalesce a fallback-sentinel timestamp to the run-start stamp so a
+    # zero-date / NULL / unparseable legacy created_at/updated_at never persists
+    # as datetime.min (year 1). A real timestamp passes through untouched.
+    created_at = (
+        run_started if legacy_row.created_at == FALLBACK_SENTINEL else legacy_row.created_at
+    )
+    updated_at = (
+        run_started if legacy_row.updated_at == FALLBACK_SENTINEL else legacy_row.updated_at
+    )
 
     return ReservationRecord(
         legacy_id=legacy_row.row_id,
@@ -797,8 +853,8 @@ def transform_row(legacy_row: LegacyRow, maps: LookupMaps) -> ReservationRecord:
         ghl_last_sync=legacy_row.ghl_last_sync,
         status=status,
         nota=legacy_row.note,  # rename note -> nota.
-        created_at=legacy_row.created_at,
-        updated_at=legacy_row.updated_at,
+        created_at=created_at,
+        updated_at=updated_at,
         # Defaults with no legacy source (D5):
         reference_token=None,
         rate_qualifier=None,
@@ -1454,11 +1510,13 @@ def run_pipeline(
     Otherwise (commit mode) ROLLBACK the whole tx. In --dry-run always ROLLBACK.
     """
     # ---- Resolve + transform each legacy row (one disposition per row). ----
+    # `migrated_at` is the single run-start stamp, also the coalesce target for a
+    # fallback-sentinel created_at/updated_at (FIX 1).
     records: list[ReservationRecord] = []
     rejected: list[RejectedRow] = []
     for legacy_row in extract.rows:
         try:
-            records.append(transform_row(legacy_row, maps))
+            records.append(transform_row(legacy_row, maps, migrated_at))
         except RejectRow as exc:
             rejected.append(RejectedRow(legacy_row.row_id, exc.reason))
 
@@ -1738,6 +1796,21 @@ def run(dry_run: bool) -> int:
                     pass
         except Exception as exc:
             print(f"lookup map build failed: {type(exc).__name__}", file=sys.stderr)
+            try:
+                dest_conn.rollback()
+            except Exception:
+                pass
+            return EXIT_QUERY_ERROR
+
+        # ---- Fail fast if localiza is absent (FIX 3). ----
+        # rental_company_id is a NOT NULL destination FK. If it is None, every one
+        # of the 12,967 rows would carry NULL into it -> a flood of cryptic 23502
+        # batch_errors and a gate fail. Surface the real cause instead.
+        if maps.rental_company_id is None:
+            print(
+                "lookup map build failed: rental_companies code='localiza' not found",
+                file=sys.stderr,
+            )
             try:
                 dest_conn.rollback()
             except Exception:

@@ -202,30 +202,137 @@ class RejectRow(Exception):
 # --------------------------------------------------------------------------- #
 @dataclass
 class LegacyRow:
-    """One legacy reservations row (already string-coerced / sanitized).
+    """One legacy reservations row (free text already control-char sanitized).
 
-    SKELETON shape — only `row_id` (the legacy PK = the _legacy_id idempotency
-    key) is fixed here. The full legacy column set (fullname/identification/
-    status/locations/category/franchise/user/prices/dates/flags) is added in
-    steps 3-5 when extract + transform are implemented.
+    Full legacy column set used by transform_row (03-mapping.md §D2 / legacy
+    schema 01). FK columns (`category`/`pickup_location`/`return_location`/
+    `franchise`) carry the raw legacy BIGINT id (or None); transform_row resolves
+    each through the destination lookup maps. `user` is the referral column
+    (P12). Dates/hours are kept as the driver's native value (date/time/str) and
+    passed through unchanged — the destination columns are date/time and the
+    driver round-trips them; only created_at/updated_at parse via _as_aware.
     """
 
     row_id: int
+    fullname: str
+    identification: str
+    identification_type: str
+    status: str
+    category: int | None
+    pickup_location: int | None
+    return_location: int | None
+    franchise: int | None
+    user: str
+    reserve_code: str | None
+    note: str | None
+    pickup_date: object
+    pickup_hour: object
+    return_date: object
+    return_hour: object
+    selected_days: object
+    total_price: object
+    total_price_to_pay: object
+    total_price_localiza: object
+    tax_fee: object
+    iva_fee: object
+    coverage_days: object
+    coverage_price: object
+    return_fee: object
+    extra_hours: object
+    extra_hours_price: object
+    total_insurance: object
+    extra_driver: object
+    baby_seat: object
+    wash: object
+    aeroline: str | None
+    flight_number: str | None
+    monthly_mileage: str | None
+    ghl_contact_id: str | None
+    ghl_opportunity_id: str | None
+    ghl_last_sync: object
+    created_at: datetime
+    updated_at: datetime
 
 
 @dataclass
 class ReservationRecord:
     """A transformed reservation ready for insert (1:1 — no group collapse).
 
-    SKELETON shape — only `legacy_id` is fixed (it becomes _legacy_id on
-    insert). The full destination column set (customer_id/pickup_location_id/
-    return_location_id/rental_company_id/category_code/franchise/status/
-    booking_type/prices/dates/referral_id/referral_raw/flags) lands in steps
-    5-8. The insert engine below references `legacy_id` only, so it compiles now
-    and the tuple builder is completed alongside the transform.
+    `legacy_id` becomes `_legacy_id` on insert (the idempotency key). Every other
+    field is a destination column per 03-mapping.md §D2: resolved FKs
+    (customer_id/pickup_location_id/return_location_id/rental_company_id),
+    resolved enums/codes (franchise/category_code/status/booking_type), the
+    Phase-2 numeric/mileage transforms, and the direct passthroughs. Fields
+    without a legacy source carry their default here (reference_token /
+    rate_qualifier / created_by / notification_sent_at / notification_sent_by =
+    None; notification_required / notification_sent = False).
     """
 
     legacy_id: int
+    customer_id: str
+    rental_company_id: str
+    referral_id: str | None
+    referral_raw: str | None
+    pickup_location_id: str
+    return_location_id: str
+    franchise: str
+    booking_type: str
+    reservation_code: str | None
+    category_code: str
+    pickup_date: object
+    pickup_hour: object
+    return_date: object
+    return_hour: object
+    selected_days: object
+    total_price: object
+    total_price_to_pay: object
+    total_price_localiza: object
+    tax_fee: object
+    iva_fee: object
+    coverage_days: object
+    coverage_price: object
+    return_fee: object
+    extra_hours: object
+    extra_hours_price: object
+    total_insurance: object
+    extra_driver: object
+    baby_seat: object
+    wash: object
+    aeroline: str | None
+    flight_number: str | None
+    monthly_mileage: int | None
+    ghl_contact_id: str | None
+    ghl_opportunity_id: str | None
+    ghl_last_sync: object
+    status: str
+    nota: str | None
+    created_at: datetime
+    updated_at: datetime
+    reference_token: str | None = None
+    rate_qualifier: str | None = None
+    created_by: str | None = None
+    notification_required: bool = False
+    notification_sent: bool = False
+    notification_sent_at: object = None
+    notification_sent_by: str | None = None
+
+
+@dataclass
+class LookupMaps:
+    """The 6 destination lookup structures transform_row resolves FKs against.
+
+    Built once by build_lookup_maps (step 7) from the DESTINATION (+ legacy
+    branches/categories/franchises for the id->code/name composition), then
+    passed read-only into every transform_row call.
+    """
+
+    customer_map: dict  # normalize_identification(legacy.identification) -> customer uuid
+    location_map: dict  # legacy branch id -> location uuid (pre-joined via code)
+    category_map: dict  # legacy category id -> code (legacy.categories.identification)
+    dest_category_codes: frozenset  # destination vehicle_categories.code set
+    franchise_map: dict  # legacy franchise id -> destination enum value
+    referral_map: dict  # lower(referrals.code) -> referral uuid
+    rental_company_id: str  # the single localiza rental_companies uuid
 
 
 @dataclass
@@ -492,6 +599,218 @@ def resolve_referral(legacy_user, referral_map: dict) -> tuple[str | None, str |
 
 
 # --------------------------------------------------------------------------- #
+# Step 7 — build_lookup_maps + transform_row.
+#
+# The single legacy SELECT (the full reservations column set; FKs as raw BIGINTs
+# resolved later via the maps — no JOINs needed in extract because the maps
+# pre-join). ORDER BY id makes the read deterministic so a re-run processes rows
+# in the same order (idempotency is enforced by ON CONFLICT, but a stable order
+# keeps the report diffable).
+# --------------------------------------------------------------------------- #
+LEGACY_SELECT = (
+    "SELECT id, fullname, identification, identification_type, status, "
+    "category, pickup_location, return_location, franchise, user, reserve_code, "
+    "note, pickup_date, pickup_hour, return_date, return_hour, selected_days, "
+    "total_price, total_price_to_pay, total_price_localiza, tax_fee, iva_fee, "
+    "coverage_days, coverage_price, return_fee, extra_hours, extra_hours_price, "
+    "total_insurance, extra_driver, baby_seat, wash, aeroline, flight_number, "
+    "monthly_mileage, ghl_contact_id, ghl_opportunity_id, ghl_last_sync, "
+    "created_at, updated_at "
+    "FROM reservations ORDER BY id"
+)
+
+# Lookup queries. Each map is built with ONE query against the side named.
+# location/category/franchise COMPOSE a legacy id->code/name query with a
+# destination code->id / code-set / name->enum rule.
+LEGACY_BRANCHES_SELECT = "SELECT id, code FROM branches"
+LEGACY_CATEGORIES_SELECT = "SELECT id, identification FROM categories"
+LEGACY_FRANCHISES_SELECT = "SELECT id, name FROM franchises"
+DEST_CUSTOMERS_SELECT = "SELECT identification_number, id FROM public.customers"
+DEST_LOCATIONS_SELECT = "SELECT code, id FROM public.locations"
+DEST_CATEGORY_CODES_SELECT = "SELECT code FROM public.vehicle_categories"
+DEST_REFERRALS_SELECT = "SELECT code, id FROM public.referrals"
+DEST_RENTAL_COMPANY_SELECT = (
+    "SELECT id FROM public.rental_companies WHERE code = 'localiza'"
+)
+
+
+def build_lookup_maps(legacy_cur, dest_cur) -> LookupMaps:
+    """Build the 6 destination lookup structures FK resolution needs.
+
+    Source of each map (1 query each unless noted):
+      * customer_map      — dest `SELECT identification_number, id FROM customers`
+        keyed {identification_number -> id}. identification_number is already the
+        #19-normalized value; resolve_customer_id re-normalizes the legacy value
+        with the SAME normalize_identification so the join lands exactly.
+      * location_map      — COMPOSE legacy `branches` (id -> code) with dest
+        `locations` (code -> id) into {legacy_branch_id -> location_id}. A legacy
+        branch whose code has no destination location is simply absent from the
+        map -> resolve_location rejects `*_location_unmapped`.
+      * category_map      — legacy `categories` (id -> identification) keyed
+        {legacy_category_id -> code}. resolve_category_code validates the code
+        against dest_category_codes.
+      * dest_category_codes — dest `SELECT code FROM vehicle_categories` as a set.
+      * franchise_map     — COMPOSE legacy `franchises` (id -> name) with the
+        name->enum rule (the 3 names map 1:1 to the enum, lowercase exact, per
+        audit Q7) into {legacy_franchise_id -> enum}. A name outside the enum is
+        absent -> resolve_franchise rejects `franchise_unmapped`.
+      * referral_map      — dest `SELECT code, id FROM referrals` keyed
+        {lower(code) -> id} (resolve_referral keys by lower(trim(user))).
+      * rental_company_id — dest single uuid WHERE code='localiza' (P6: all
+        reservations -> localiza, 1:1).
+    """
+    # --- customer_map (dest).
+    dest_cur.execute(DEST_CUSTOMERS_SELECT)
+    customer_map = {
+        normalize_identification(number): uuid
+        for number, uuid in dest_cur.fetchall()
+    }
+
+    # --- location_map (compose legacy branch_id -> code with dest code -> id).
+    legacy_cur.execute(LEGACY_BRANCHES_SELECT)
+    branch_code_by_id = {bid: code for bid, code in legacy_cur.fetchall()}
+    dest_cur.execute(DEST_LOCATIONS_SELECT)
+    location_id_by_code = {code: uuid for code, uuid in dest_cur.fetchall()}
+    location_map = {
+        bid: location_id_by_code[code]
+        for bid, code in branch_code_by_id.items()
+        if code in location_id_by_code
+    }
+
+    # --- category_map (legacy id -> code) + dest code set.
+    legacy_cur.execute(LEGACY_CATEGORIES_SELECT)
+    category_map = {cid: code for cid, code in legacy_cur.fetchall()}
+    dest_cur.execute(DEST_CATEGORY_CODES_SELECT)
+    dest_category_codes = frozenset(row[0] for row in dest_cur.fetchall())
+
+    # --- franchise_map (compose legacy id -> name with name -> enum rule).
+    legacy_cur.execute(LEGACY_FRANCHISES_SELECT)
+    franchise_map = {
+        fid: enum
+        for fid, name in legacy_cur.fetchall()
+        for enum in (_franchise_name_to_enum(name),)
+        if enum is not None
+    }
+
+    # --- referral_map (dest, keyed lowercase).
+    dest_cur.execute(DEST_REFERRALS_SELECT)
+    referral_map = {
+        (code or "").strip().lower(): uuid for code, uuid in dest_cur.fetchall()
+    }
+
+    # --- rental_company_id (dest, single uuid).
+    dest_cur.execute(DEST_RENTAL_COMPANY_SELECT)
+    row = dest_cur.fetchone()
+    rental_company_id = row[0] if row else None
+
+    return LookupMaps(
+        customer_map=customer_map,
+        location_map=location_map,
+        category_map=category_map,
+        dest_category_codes=dest_category_codes,
+        franchise_map=franchise_map,
+        referral_map=referral_map,
+        rental_company_id=rental_company_id,
+    )
+
+
+def _franchise_name_to_enum(name) -> str | None:
+    """Map a legacy franchise name to the destination enum, or None.
+
+    The 3 franchise names map 1:1 to the enum {alquilatucarro, alquilame,
+    alquicarros} (lowercase exact, audit Q7). Normalize the legacy name to
+    lower+trim and accept only an exact enum member; anything else returns None
+    so the franchise is absent from the map and the row rejects
+    `franchise_unmapped` (never guessed).
+    """
+    normalized = (name or "").strip().lower()
+    return normalized if normalized in FRANCHISE_ENUM else None
+
+
+def transform_row(legacy_row: LegacyRow, maps: LookupMaps) -> ReservationRecord:
+    """Resolve + transform one legacy row into a ReservationRecord, or RejectRow.
+
+    Maps EVERY destination column per 03-mapping.md §D2. Any FK that cannot
+    resolve raises RejectRow (the first failure short-circuits the whole row via
+    the exception); the caller's per-row try/except turns it into one logged
+    disposition. Pure: no DB, no I/O — driven entirely by `maps`.
+
+    Resolution order (customer first so a cascade-rejected placeholder is the
+    cheapest reject): customer -> pickup -> return -> category -> franchise ->
+    status. booking_type / mileage / numerics / referral never reject the FK
+    path (booking_type + referral are total; numerics reject only on overflow).
+    """
+    customer_id = resolve_customer_id(legacy_row.identification, maps.customer_map)
+    pickup_location_id = resolve_location(
+        legacy_row.pickup_location, maps.location_map, "pickup"
+    )
+    return_location_id = resolve_location(
+        legacy_row.return_location, maps.location_map, "return"
+    )
+    category_code = resolve_category_code(
+        legacy_row.category, maps.category_map, maps.dest_category_codes
+    )
+    franchise = resolve_franchise(legacy_row.franchise, maps.franchise_map)
+    status = map_status(legacy_row.status)
+
+    monthly_mileage = map_monthly_mileage(legacy_row.monthly_mileage)
+    total_insurance = bool(legacy_row.total_insurance)
+    booking_type = derive_booking_type(monthly_mileage, total_insurance)
+    referral_id, referral_raw = resolve_referral(legacy_row.user, maps.referral_map)
+
+    return ReservationRecord(
+        legacy_id=legacy_row.row_id,
+        customer_id=customer_id,
+        rental_company_id=maps.rental_company_id,
+        referral_id=referral_id,
+        referral_raw=referral_raw,
+        pickup_location_id=pickup_location_id,
+        return_location_id=return_location_id,
+        franchise=franchise,
+        booking_type=booking_type,
+        reservation_code=legacy_row.reserve_code,  # preserve NULL.
+        category_code=category_code,
+        pickup_date=legacy_row.pickup_date,
+        pickup_hour=legacy_row.pickup_hour,
+        return_date=legacy_row.return_date,
+        return_hour=legacy_row.return_hour,
+        selected_days=coerce_smallint(legacy_row.selected_days),
+        total_price=coerce_numeric(legacy_row.total_price),
+        total_price_to_pay=coerce_numeric(legacy_row.total_price_to_pay),
+        total_price_localiza=coerce_numeric(legacy_row.total_price_localiza),
+        tax_fee=coerce_numeric(legacy_row.tax_fee),
+        iva_fee=coerce_numeric(legacy_row.iva_fee),
+        coverage_days=coerce_smallint(legacy_row.coverage_days),
+        coverage_price=coerce_numeric(legacy_row.coverage_price),
+        return_fee=coerce_return_fee(legacy_row.return_fee),
+        extra_hours=coerce_smallint(legacy_row.extra_hours),
+        extra_hours_price=coerce_numeric(legacy_row.extra_hours_price),
+        total_insurance=total_insurance,
+        extra_driver=bool(legacy_row.extra_driver),
+        baby_seat=bool(legacy_row.baby_seat),
+        wash=bool(legacy_row.wash),
+        aeroline=legacy_row.aeroline,
+        flight_number=legacy_row.flight_number,
+        monthly_mileage=monthly_mileage,
+        ghl_contact_id=legacy_row.ghl_contact_id,
+        ghl_opportunity_id=legacy_row.ghl_opportunity_id,
+        ghl_last_sync=legacy_row.ghl_last_sync,
+        status=status,
+        nota=legacy_row.note,  # rename note -> nota.
+        created_at=legacy_row.created_at,
+        updated_at=legacy_row.updated_at,
+        # Defaults with no legacy source (D5):
+        reference_token=None,
+        rate_qualifier=None,
+        created_by=None,
+        notification_required=False,
+        notification_sent=False,
+        notification_sent_at=None,
+        notification_sent_by=None,
+    )
+
+
+# --------------------------------------------------------------------------- #
 # Shared helpers (mask_db_url, validate_env, atomic write) — same contract as
 # etl-customers.py / preflight-check.py. Replicated here (not imported) because
 # the source modules have hyphenated filenames which are not legal Python module
@@ -705,24 +1024,158 @@ def _as_aware(value, fallback: datetime) -> tuple[datetime, bool]:
 # _sql_reason) is copied now so it is reviewed once and wired in step 8.
 # --------------------------------------------------------------------------- #
 
-# INSERT target column list + ON CONFLICT key. The full column set + the
-# _record_to_tuple builder are #20-specific (step 8). The skeleton documents the
-# idempotency contract (ON CONFLICT (_legacy_id) DO NOTHING) so the engine below
-# is unambiguous; the SQL itself is left to step 8.
-INSERT_SQL: str | None = None  # step 8: build from the design field map.
+# Destination INSERT column list (008_reservations.sql + ALTERs 019/027/032 +
+# marker migration 050). EVERY column is either populated by transform_row or is
+# a destination DEFAULT we deliberately re-specify (NULL / false). `id` is OMITTED
+# so the destination `default gen_random_uuid()` fires; created_at/updated_at are
+# supplied (we preserve the legacy timestamps, overriding the now() default). The
+# two marker columns are LAST: `_legacy_id` then `_legacy_migrated_at`. The order
+# here is the SINGLE SOURCE OF TRUTH for _record_to_tuple's element order.
+INSERT_COLUMNS: tuple[str, ...] = (
+    # Relations
+    "customer_id",
+    "rental_company_id",
+    "referral_id",
+    "referral_raw",
+    "pickup_location_id",
+    "return_location_id",
+    # Identity
+    "franchise",
+    "booking_type",
+    "reservation_code",
+    "reference_token",
+    "rate_qualifier",
+    # Booking
+    "category_code",
+    "pickup_date",
+    "pickup_hour",
+    "return_date",
+    "return_hour",
+    "selected_days",
+    # Pricing
+    "total_price",
+    "total_price_to_pay",
+    "total_price_localiza",
+    "tax_fee",
+    "iva_fee",
+    # Coverage
+    "coverage_days",
+    "coverage_price",
+    # Extras
+    "return_fee",
+    "extra_hours",
+    "extra_hours_price",
+    "total_insurance",
+    "extra_driver",
+    "baby_seat",
+    "wash",
+    # Flight
+    "aeroline",
+    "flight_number",
+    # Monthly
+    "monthly_mileage",
+    # Notification
+    "notification_required",
+    "notification_sent",
+    "notification_sent_at",
+    "notification_sent_by",
+    # GHL (migration 019)
+    "ghl_contact_id",
+    "ghl_opportunity_id",
+    "ghl_last_sync",
+    # Status
+    "status",
+    "created_by",
+    # nota (migration 027)
+    "nota",
+    "created_at",
+    "updated_at",
+    # Marker (migration 050) — MUST be the last two, in this order.
+    "_legacy_id",
+    "_legacy_migrated_at",
+)
+
+# Index of `_legacy_id` in the INSERT tuple (second-to-last). The fake-cursor
+# tests and the insert engine read the legacy id from this position.
+LEGACY_ID_INSERT_INDEX = len(INSERT_COLUMNS) - 2
+
+INSERT_SQL = (
+    "INSERT INTO public.reservations (" + ", ".join(INSERT_COLUMNS) + ") "
+    "VALUES %s "
+    "ON CONFLICT (_legacy_id) DO NOTHING "
+    "RETURNING _legacy_id"
+)
 
 
 def _record_to_tuple(rec: ReservationRecord, migrated_at: datetime) -> tuple:
     """Build the INSERT row tuple for a ReservationRecord.
 
-    SKELETON STUB. The full destination column set (FKs + business columns +
-    _legacy_id + _legacy_migrated_at) is the #20 field map; built in step 8
-    once the transform (steps 5) fixes ReservationRecord's shape. Not reachable
-    until run() wires insert_records.
+    Element order MUST match INSERT_COLUMNS exactly (the marker columns
+    `_legacy_id` + `_legacy_migrated_at` last). `migrated_at` is the single
+    run-start stamp applied to every inserted row.
     """
-    raise NotImplementedError(
-        "step 8: build the destination row tuple from ReservationRecord "
-        "(full field map + _legacy_id + _legacy_migrated_at)"
+    return (
+        # Relations
+        rec.customer_id,
+        rec.rental_company_id,
+        rec.referral_id,
+        rec.referral_raw,
+        rec.pickup_location_id,
+        rec.return_location_id,
+        # Identity
+        rec.franchise,
+        rec.booking_type,
+        rec.reservation_code,
+        rec.reference_token,
+        rec.rate_qualifier,
+        # Booking
+        rec.category_code,
+        rec.pickup_date,
+        rec.pickup_hour,
+        rec.return_date,
+        rec.return_hour,
+        rec.selected_days,
+        # Pricing
+        rec.total_price,
+        rec.total_price_to_pay,
+        rec.total_price_localiza,
+        rec.tax_fee,
+        rec.iva_fee,
+        # Coverage
+        rec.coverage_days,
+        rec.coverage_price,
+        # Extras
+        rec.return_fee,
+        rec.extra_hours,
+        rec.extra_hours_price,
+        rec.total_insurance,
+        rec.extra_driver,
+        rec.baby_seat,
+        rec.wash,
+        # Flight
+        rec.aeroline,
+        rec.flight_number,
+        # Monthly
+        rec.monthly_mileage,
+        # Notification
+        rec.notification_required,
+        rec.notification_sent,
+        rec.notification_sent_at,
+        rec.notification_sent_by,
+        # GHL
+        rec.ghl_contact_id,
+        rec.ghl_opportunity_id,
+        rec.ghl_last_sync,
+        # Status
+        rec.status,
+        rec.created_by,
+        # nota
+        rec.nota,
+        rec.created_at,
+        rec.updated_at,
+        # Marker
+        rec.legacy_id,
+        migrated_at,
     )
 
 
@@ -829,6 +1282,272 @@ def _sql_reason(exc: Exception) -> str:
     """Build a non-PII reject reason from a psycopg2 exception (class + sqlstate)."""
     sqlstate = getattr(exc, "pgcode", None)
     return f"{type(exc).__name__}:{sqlstate}" if sqlstate else type(exc).__name__
+
+
+# --------------------------------------------------------------------------- #
+# Skip classification (ON CONFLICT idempotent re-run).
+#
+# A computed record whose _legacy_id was NOT returned by the INSERT (and is not a
+# batch_error) hit ON CONFLICT (_legacy_id) DO NOTHING — the row already exists.
+# We re-read each skipped _legacy_id's marker to classify it (mirrors #19 by
+# identification_number, keyed on the int _legacy_id instead):
+#   * already_migrated  — existing row has _legacy_migrated_at NOT NULL (a prior
+#     ETL run inserted it; the idempotent re-run case, SCEN-007).
+#   * conflict_existing — existing row has _legacy_migrated_at NULL. For #20 this
+#     is near-impossible (a dashboard row would have NULL _legacy_id, so it could
+#     not collide on the _legacy_id key), but kept for symmetry / defense.
+#   * conflict_unknown  — ON CONFLICT fired yet the row is absent on re-read: an
+#     anomaly that FAILS the commit gate (never treated as explained).
+# --------------------------------------------------------------------------- #
+def classify_skips(conn, skipped_ids: list[int]) -> dict[int, str]:
+    """For ON-CONFLICT-skipped _legacy_ids, classify by the existing row's marker."""
+    classification: dict[int, str] = {}
+    if not skipped_ids:
+        return classification
+
+    cur = conn.cursor()
+    try:
+        for start in range(0, len(skipped_ids), INSERT_BATCH_SIZE):
+            chunk = skipped_ids[start : start + INSERT_BATCH_SIZE]
+            cur.execute(
+                "SELECT _legacy_id, _legacy_migrated_at "
+                "FROM public.reservations WHERE _legacy_id = ANY(%s)",
+                (chunk,),
+            )
+            found = {lid: marker for lid, marker in cur.fetchall()}
+            for lid in chunk:
+                if lid not in found:
+                    classification[lid] = "conflict_unknown"
+                elif found[lid] is not None:
+                    classification[lid] = "already_migrated"
+                else:
+                    classification[lid] = "conflict_existing"
+    finally:
+        try:
+            cur.close()
+        except Exception:
+            pass
+    return classification
+
+
+# Skip reasons that count as a legitimate idempotent-re-run outcome. A
+# conflict_unknown is DELIBERATELY excluded — it is an anomaly that must FAIL the
+# commit gate. A batch_error is also explained but is not a skip reason (handled
+# by the separate `lid in batch_errors` clause in the predicate below).
+EXPLAINED_SKIP_REASONS: frozenset[str] = frozenset(
+    {"already_migrated", "conflict_existing"}
+)
+
+
+def non_inserted_all_explained(
+    records: list[ReservationRecord],
+    inserted_ids: set[int],
+    batch_errors: dict[int, str],
+    skip_classification: dict[int, str],
+) -> bool:
+    """True iff every computed record is inserted, a batch_error, or an EXPLAINED skip.
+
+    On a clean first run all records insert. On a re-run, conflicts mean
+    inserted < computed; that is legitimate ONLY when each non-inserted record is
+    an already_migrated / conflict_existing skip (or a recorded batch_error). A
+    conflict_unknown is NOT explained -> the gate fails -> the whole tx rolls back.
+    """
+    return all(
+        rec.legacy_id in inserted_ids
+        or rec.legacy_id in batch_errors
+        or skip_classification.get(rec.legacy_id) in EXPLAINED_SKIP_REASONS
+        for rec in records
+    )
+
+
+def count_conflict_unknown(skip_classification: dict[int, str]) -> int:
+    """Count _legacy_ids classified `conflict_unknown` (gate-fail diagnostics)."""
+    return sum(1 for r in skip_classification.values() if r == "conflict_unknown")
+
+
+# --------------------------------------------------------------------------- #
+# Per-row JSONL report. NO PII (no identification / name / email / branch id) —
+# only the legacy id, the action, and the no-PII reason / non-PII metadata. The
+# JSONL is gitignored; the stdout summary is the no-PII evidence either way, but
+# the per-row lines are deliberately PII-free too (a reservation row carries no
+# identification once transformed — customer is a UUID).
+# --------------------------------------------------------------------------- #
+def build_report_lines(
+    *,
+    records: list[ReservationRecord],
+    inserted_ids: set[int],
+    skip_classification: dict[int, str],
+    batch_errors: dict[int, str],
+    rejected: list[RejectedRow],
+) -> list[dict]:
+    """Build the per-row JSONL report lines (one object per logged event)."""
+    lines: list[dict] = []
+
+    for rej in rejected:
+        lines.append(
+            {"action": "rejected", "reason": rej.reason, "legacy_id": rej.legacy_id}
+        )
+
+    for rec in records:
+        lid = rec.legacy_id
+        if lid in batch_errors:
+            lines.append(
+                {"action": "rejected", "reason": batch_errors[lid], "legacy_id": lid}
+            )
+        elif lid in inserted_ids:
+            lines.append(
+                {
+                    "action": "inserted",
+                    "legacy_id": lid,
+                    "status": rec.status,
+                    "booking_type": rec.booking_type,
+                    "franchise": rec.franchise,
+                }
+            )
+        else:
+            lines.append(
+                {
+                    "action": "skipped",
+                    "reason": skip_classification.get(lid, "conflict_unknown"),
+                    "legacy_id": lid,
+                }
+            )
+
+    return lines
+
+
+# --------------------------------------------------------------------------- #
+# Pipeline (post-extract): resolve+transform -> insert -> classify skips ->
+# commit gate. Factored out of run() so it is unit-testable with a fake dest
+# connection + the execute_values monkeypatch (SCEN-001 reconciliation /
+# SCEN-007 idempotency) WITHOUT a real DB. run() wraps it with the legacy/
+# destination connections + the report/summary write.
+# --------------------------------------------------------------------------- #
+@dataclass
+class PipelineOutcome:
+    """What run_pipeline computed: the disposition buckets + the gate decision."""
+
+    summary: dict
+    report_lines: list[dict]
+    committed: bool
+    gate_failed: bool
+
+
+def run_pipeline(
+    dest_conn,
+    maps: LookupMaps,
+    extract: ExtractResult,
+    migrated_at: datetime,
+    *,
+    dry_run: bool,
+    timestamp: str = "",
+    dest_masked: str = "",
+    elapsed_seconds: float = 0.0,
+    report_path: str | None = None,
+) -> PipelineOutcome:
+    """Resolve+transform every legacy row, insert, classify skips, gate the commit.
+
+    Mirrors #19's gate/rollback split: COMMIT only if (a) the reconciliation
+    invariant closes, (b) there are 0 UNEXPECTED rejects (only taxonomy reasons —
+    a batch_error is an unexpected SQL-level reject), and (c) every non-inserted
+    record is an EXPLAINED skip (already_migrated / conflict_existing) or inserted.
+    Otherwise (commit mode) ROLLBACK the whole tx. In --dry-run always ROLLBACK.
+    """
+    # ---- Resolve + transform each legacy row (one disposition per row). ----
+    records: list[ReservationRecord] = []
+    rejected: list[RejectedRow] = []
+    for legacy_row in extract.rows:
+        try:
+            records.append(transform_row(legacy_row, maps))
+        except RejectRow as exc:
+            rejected.append(RejectedRow(legacy_row.row_id, exc.reason))
+
+    # ---- Insert (SAVEPOINT-per-batch, row-by-row retry on batch failure). ----
+    inserted_ids, batch_error_list = insert_records(dest_conn, records, migrated_at)
+    batch_errors: dict[int, str] = dict(batch_error_list)
+
+    # ---- Classify ON CONFLICT skips (existing rows). ----
+    skipped_ids = [
+        rec.legacy_id
+        for rec in records
+        if rec.legacy_id not in inserted_ids and rec.legacy_id not in batch_errors
+    ]
+    skip_classification = classify_skips(dest_conn, skipped_ids)
+
+    # ---- Gate decision (mirror #19). ----
+    # Transform/FK rejects are EXPECTED (taxonomy). A batch_error is an
+    # UNEXPECTED SQL-level reject — its presence fails the gate.
+    unexpected_rejects = len(batch_errors)
+    all_non_inserted_explained = non_inserted_all_explained(
+        records, inserted_ids, batch_errors, skip_classification
+    )
+    summary = build_summary(
+        dry_run=dry_run,
+        committed=False,
+        extract=extract,
+        inserted_legacy_ids=inserted_ids,
+        skip_classification=skip_classification,
+        batch_errors=batch_errors,
+        rejected=rejected,
+        elapsed_seconds=elapsed_seconds,
+        timestamp=timestamp,
+        dest_masked=dest_masked,
+        report_path=report_path,
+    )
+    reconciles = summary["reconciliation"]["reconciles"]
+    gate_pass = (
+        unexpected_rejects == 0 and reconciles and all_non_inserted_explained
+    )
+
+    committed = False
+    gate_failed = False
+    if dry_run:
+        dest_conn.rollback()
+        print("DRY-RUN: transaction ROLLED BACK (nothing written).")
+    elif gate_pass:
+        dest_conn.commit()
+        committed = True
+        print(
+            f"COMMIT: gate passed (inserted={len(inserted_ids)}, "
+            f"skipped={len(skip_classification)}, "
+            f"rejected={len(rejected) + len(batch_errors)})."
+        )
+    else:
+        dest_conn.rollback()
+        gate_failed = True
+        reasons = []
+        if unexpected_rejects:
+            reasons.append(f"unexpected_rejects={unexpected_rejects}")
+        if not reconciles:
+            reasons.append(
+                f"reconciliation {summary['reconciliation']['sum']} != "
+                f"{extract.legacy_rows_total}"
+            )
+        if not all_non_inserted_explained:
+            reasons.append(
+                f"conflict_unknown={count_conflict_unknown(skip_classification)}"
+            )
+        print(
+            "GATE FAILED: ROLLED BACK whole transaction ("
+            + "; ".join(reasons)
+            + "). Nothing written.",
+            file=sys.stderr,
+        )
+
+    summary["committed"] = committed
+    report_lines = build_report_lines(
+        records=records,
+        inserted_ids=inserted_ids,
+        skip_classification=skip_classification,
+        batch_errors=batch_errors,
+        rejected=rejected,
+    )
+    return PipelineOutcome(
+        summary=summary,
+        report_lines=report_lines,
+        committed=committed,
+        gate_failed=gate_failed,
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -962,12 +1681,16 @@ def run(dry_run: bool) -> int:
     password byte) and no partial commit. Only AFTER a successful destination
     connection does execution reach the steps 3-8 pipeline stub.
     """
-    timestamp, _filename_stamp = _utc_stamps()
+    timestamp, filename_stamp = _utc_stamps()
     dest_masked = mask_db_url(os.environ["SUPABASE_DB_URL"])
     run_started = datetime.now(timezone.utc)
     migrated_at = run_started  # single run-start marker for every inserted row.
 
-    # ---- Extract + transform (legacy only; no destination connection yet). ----
+    # ---- Extract + capture legacy lookup tables (legacy only; no dest yet). ----
+    # The legacy connection is opened, the reservations rows + the three legacy
+    # lookup tables (branches/categories/franchises, captured into a replay
+    # cursor) are read, then the connection is RELEASED before the destination
+    # connect — so the Postgres session is never held idle during the long read.
     try:
         legacy_conn = connect_legacy()
     except Exception as exc:
@@ -979,6 +1702,7 @@ def run(dry_run: bool) -> int:
             legacy_cur = legacy_conn.cursor()
             try:
                 extract = extract_legacy_rows(legacy_cur)
+                legacy_lookup_cur = _capture_legacy_lookups(legacy_cur)
             finally:
                 try:
                     legacy_cur.close()
@@ -1000,42 +1724,187 @@ def run(dry_run: bool) -> int:
         )
         return EXIT_CONNECTION
 
+    outcome = None
     try:
-        # Only reachable AFTER a successful destination connection. SCEN-009's
-        # connection contract (exit 4 env / exit 2 unreachable, masked URL, no
-        # partial commit) is fully exercised before this point. Steps 3-8 replace
-        # this stub with: build FK maps from the destination -> resolve + transform
-        # each legacy row -> insert_records -> classify skips -> commit gate.
-        raise NotImplementedError(
-            "steps 3-8: extract/resolve/transform/insert pipeline"
-        )
-    finally:
-        # Never leave a partial transaction committed: the skeleton wrote nothing
-        # (autocommit=False, no commit() reachable), so roll back defensively.
+        # ---- Build the 6 FK lookup maps (legacy replay cursor + dest cursor). ----
         try:
-            dest_conn.rollback()
-        except Exception:
-            pass
+            dest_cur = dest_conn.cursor()
+            try:
+                maps = build_lookup_maps(legacy_lookup_cur, dest_cur)
+            finally:
+                try:
+                    dest_cur.close()
+                except Exception:
+                    pass
+        except Exception as exc:
+            print(f"lookup map build failed: {type(exc).__name__}", file=sys.stderr)
+            try:
+                dest_conn.rollback()
+            except Exception:
+                pass
+            return EXIT_QUERY_ERROR
+
+        # ---- Resolve + transform + insert + classify + gate (the pipeline). ----
+        try:
+            elapsed = (datetime.now(timezone.utc) - run_started).total_seconds()
+            outcome = run_pipeline(
+                dest_conn,
+                maps,
+                extract,
+                migrated_at,
+                dry_run=dry_run,
+                timestamp=timestamp,
+                dest_masked=dest_masked,
+                elapsed_seconds=elapsed,
+            )
+        except Exception as exc:
+            # Surface the ROOT cause type (a poison batch error followed by a
+            # failing SAVEPOINT rollback chains the real cause). Type names only.
+            root = exc.__cause__ or exc.__context__
+            detail = type(exc).__name__
+            if root is not None and type(root) is not type(exc):
+                detail += f" (caused by {type(root).__name__})"
+            print(f"destination insert failed: {detail}", file=sys.stderr)
+            try:
+                dest_conn.rollback()
+            except Exception:
+                pass
+            return EXIT_QUERY_ERROR
+    finally:
         _close(dest_conn)
+
+    # ---- Report (per-row JSONL + stdout summary). ----
+    report_path = write_jsonl_report(outcome.report_lines, filename_stamp)
+    summary = dict(outcome.summary)
+    summary["report_path"] = str(report_path) if report_path else None
+    print(json.dumps(summary, indent=2, ensure_ascii=False))
+
+    if report_path is None:
+        return EXIT_REPORT_FAILED
+    if outcome.gate_failed:
+        return EXIT_GATE_FAILED
+    return EXIT_OK
 
 
 def extract_legacy_rows(legacy_cur) -> ExtractResult:
     """Run the single legacy SELECT and coerce rows to LegacyRow with accounting.
 
-    SKELETON (step 3 fills the body). Will run the #20 legacy SELECT (the full
-    reservations column set + JOINs to branches/categories/franchises for
-    FK-source codes), sanitize free-text fields (_sanitize_text), parse
-    timestamps (_as_aware), and account every scanned legacy row for the
-    reconciliation invariant.
-
-    Returns an EMPTY ExtractResult on the skeleton — deliberately NOT a
-    NotImplementedError. The single pipeline stub belongs AFTER the destination
-    connection (see run()), so that SCEN-009's connection contract — including
-    the unreachable-destination exit-2-with-masked-URL path — is fully reachable
-    on the skeleton. Raising here would short-circuit run() before the
-    destination connect and make that path untestable.
+    Runs the #20 legacy SELECT (the full reservations column set; FKs as raw
+    BIGINTs, resolved later via the maps — no JOINs here). Free-text fields
+    (fullname/reserve_code/note/aeroline/flight_number/user/ghl ids) are
+    control-char sanitized so a NUL byte never reaches Postgres text; created_at/
+    updated_at parse via _as_aware (a zero-date / unparseable value falls back to
+    the synthetic sentinel and is counted in timestamp_fallback). Every scanned
+    row becomes exactly one LegacyRow (reservations are 1:1 — no pre-insert drop;
+    a row that cannot resolve becomes a REJECT downstream, not a silent skip).
     """
-    return ExtractResult()
+    legacy_cur.execute(LEGACY_SELECT)
+    result = ExtractResult()
+    for raw in legacy_cur.fetchall():
+        result.legacy_rows_total += 1
+        (
+            row_id, fullname, identification, id_type, status, category,
+            pickup_location, return_location, franchise, user, reserve_code, note,
+            pickup_date, pickup_hour, return_date, return_hour, selected_days,
+            total_price, total_price_to_pay, total_price_localiza, tax_fee, iva_fee,
+            coverage_days, coverage_price, return_fee, extra_hours, extra_hours_price,
+            total_insurance, extra_driver, baby_seat, wash, aeroline, flight_number,
+            monthly_mileage, ghl_contact_id, ghl_opportunity_id, ghl_last_sync,
+            created, updated,
+        ) = raw
+
+        created_at, created_fb = _as_aware(created, FALLBACK_SENTINEL)
+        updated_at, updated_fb = _as_aware(updated, FALLBACK_SENTINEL)
+        if created_fb or updated_fb:
+            result.timestamp_fallback += 1
+
+        result.rows.append(
+            LegacyRow(
+                row_id=int(row_id),
+                fullname=_sanitize_text(fullname),
+                identification=str(identification) if identification is not None else "",
+                identification_type=_sanitize_text(id_type),
+                status=status,
+                category=category,
+                pickup_location=pickup_location,
+                return_location=return_location,
+                franchise=franchise,
+                user=_sanitize_text(user),
+                reserve_code=_sanitize_text(reserve_code) if reserve_code is not None else None,
+                note=_sanitize_text(note) if note is not None else None,
+                pickup_date=pickup_date,
+                pickup_hour=pickup_hour,
+                return_date=return_date,
+                return_hour=return_hour,
+                selected_days=selected_days,
+                total_price=total_price,
+                total_price_to_pay=total_price_to_pay,
+                total_price_localiza=total_price_localiza,
+                tax_fee=tax_fee,
+                iva_fee=iva_fee,
+                coverage_days=coverage_days,
+                coverage_price=coverage_price,
+                return_fee=return_fee,
+                extra_hours=extra_hours,
+                extra_hours_price=extra_hours_price,
+                total_insurance=total_insurance,
+                extra_driver=extra_driver,
+                baby_seat=baby_seat,
+                wash=wash,
+                aeroline=_sanitize_text(aeroline) if aeroline is not None else None,
+                flight_number=_sanitize_text(flight_number) if flight_number is not None else None,
+                monthly_mileage=monthly_mileage,
+                ghl_contact_id=_sanitize_text(ghl_contact_id) if ghl_contact_id is not None else None,
+                ghl_opportunity_id=_sanitize_text(ghl_opportunity_id) if ghl_opportunity_id is not None else None,
+                ghl_last_sync=ghl_last_sync,
+                created_at=created_at,
+                updated_at=updated_at,
+            )
+        )
+    return result
+
+
+class _ReplayCursor:
+    """A cursor that replays pre-captured legacy lookup result sets by SQL key.
+
+    build_lookup_maps issues three legacy queries (branches / categories /
+    franchises). In run() the legacy connection is RELEASED before the
+    destination connect, so the three result sets are read EAGERLY during the
+    legacy window (_capture_legacy_lookups) and replayed here when
+    build_lookup_maps runs against the live destination cursor. Keyed by the SQL
+    string so order is irrelevant and a query with no captured rows yields [].
+    """
+
+    def __init__(self, by_sql: dict[str, list]):
+        self._by_sql = by_sql
+        self._current: list = []
+
+    def execute(self, sql, params=None):
+        self._current = self._by_sql.get(sql, [])
+
+    def fetchall(self):
+        return self._current
+
+    def close(self):
+        pass
+
+
+def _capture_legacy_lookups(legacy_cur) -> _ReplayCursor:
+    """Eagerly read the three legacy lookup tables into a replay cursor.
+
+    Called inside the legacy-connection window so the destination connect can be
+    deferred (pooler idle-reap). Returns a _ReplayCursor build_lookup_maps drives
+    exactly like a live legacy cursor.
+    """
+    captured: dict[str, list] = {}
+    for sql in (
+        LEGACY_BRANCHES_SELECT,
+        LEGACY_CATEGORIES_SELECT,
+        LEGACY_FRANCHISES_SELECT,
+    ):
+        legacy_cur.execute(sql)
+        captured[sql] = list(legacy_cur.fetchall())
+    return _ReplayCursor(captured)
 
 
 def main(argv: list[str] | None = None) -> int:

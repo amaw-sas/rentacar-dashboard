@@ -619,5 +619,478 @@ class TestDefensiveInputHardening(unittest.TestCase):
         self.assertEqual(raw, "12345")
 
 
+# --------------------------------------------------------------------------- #
+# Step 7-8 fixtures: a fully-populated LegacyRow + the destination lookup maps,
+# and a fake dest cursor/connection that records inserted `_legacy_id`s and
+# simulates ON CONFLICT (_legacy_id) DO NOTHING (the exact pattern #19's
+# test_etl_customers.py uses). NO real DB — the module imports lazily.
+# --------------------------------------------------------------------------- #
+from datetime import datetime, timezone  # noqa: E402
+
+
+def _rdt(year, month=1, day=1):
+    return datetime(year, month, day, tzinfo=timezone.utc)
+
+
+# Destination FK targets shared across the pipeline tests. Built once,
+# destination-side, exactly as build_lookup_maps would produce them.
+_LOCALIZA_ID = "00000000-0000-0000-0000-0000000000aa"
+_CUSTOMER_MAP = {
+    "12345678": "11111111-1111-1111-1111-111111111111",
+    "87654321": "33333333-3333-3333-3333-333333333333",
+}
+_LOCATION_MAP = {10: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", 20: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"}
+_CATEGORY_MAP = {1: "GR", 2: "VP"}
+_DEST_CODES = frozenset({"GR", "VP", "G", "LP"})
+_FRANCHISE_MAP = {1: "alquilatucarro", 2: "alquilame", 3: "alquicarros"}
+_REFERRAL_MAP = {"promo2024": "cccccccc-cccc-cccc-cccc-cccccccccccc"}
+
+
+def _maps():
+    """Return the 6-map bundle (the build_lookup_maps output shape)."""
+    return etl.LookupMaps(
+        customer_map=dict(_CUSTOMER_MAP),
+        location_map=dict(_LOCATION_MAP),
+        category_map=dict(_CATEGORY_MAP),
+        dest_category_codes=frozenset(_DEST_CODES),
+        franchise_map=dict(_FRANCHISE_MAP),
+        referral_map=dict(_REFERRAL_MAP),
+        rental_company_id=_LOCALIZA_ID,
+    )
+
+
+def _legacy_res(
+    row_id,
+    *,
+    identification="12345678",
+    status="Nueva",
+    category=1,
+    pickup_location=10,
+    return_location=20,
+    franchise=1,
+    user="",
+    reserve_code="RC-1",
+    note="",
+    monthly_mileage=None,
+    total_insurance=False,
+):
+    """A fully-populated, resolvable LegacyRow (every FK present in the maps)."""
+    return etl.LegacyRow(
+        row_id=row_id,
+        fullname="JUAN PEREZ",
+        identification=identification,
+        identification_type="Cedula Ciudadania",
+        status=status,
+        category=category,
+        pickup_location=pickup_location,
+        return_location=return_location,
+        franchise=franchise,
+        user=user,
+        reserve_code=reserve_code,
+        note=note,
+        pickup_date="2024-06-01",
+        pickup_hour="08:00:00",
+        return_date="2024-06-05",
+        return_hour="10:00:00",
+        selected_days=4,
+        total_price=100.0,
+        total_price_to_pay=100,
+        total_price_localiza=80.0,
+        tax_fee=5.0,
+        iva_fee=2.0,
+        coverage_days=4,
+        coverage_price=10.0,
+        return_fee=None,
+        extra_hours=0,
+        extra_hours_price=0.0,
+        total_insurance=total_insurance,
+        extra_driver=False,
+        baby_seat=False,
+        wash=False,
+        aeroline=None,
+        flight_number=None,
+        monthly_mileage=monthly_mileage,
+        ghl_contact_id=None,
+        ghl_opportunity_id=None,
+        ghl_last_sync=None,
+        created_at=_rdt(2024, 6, 1),
+        updated_at=_rdt(2024, 6, 2),
+    )
+
+
+class _FakeDestCursor:
+    """Records inserted `_legacy_id`s; simulates ON CONFLICT (_legacy_id) DO NOTHING.
+
+    Shared persistent state across runs (passed in) so a second run sees the
+    first run's rows already present and skips them (SCEN-007 idempotency).
+    The production code calls psycopg2.extras.execute_values(cur, sql, values,
+    fetch=True); the test monkeypatches execute_values to route INSERT through
+    insert_one and SELECT (classify_skips) through select_markers.
+
+    `values` row tuples put `_legacy_id` at the SECOND-TO-LAST position and
+    `_legacy_migrated_at` LAST (the INSERT_SQL column order). RETURNING is
+    `_legacy_id` first — matching `for legacy_id, *_ in returned`.
+    """
+
+    def __init__(self, existing_ids: dict[int, datetime]):
+        # existing_ids: {_legacy_id: _legacy_migrated_at} already in the dest.
+        self.existing = existing_ids
+        self._returning: list[tuple] = []
+        self._select_chunk: list[int] = []
+        self.executed: list[str] = []
+
+    # --- control statements (SAVEPOINT / RELEASE / ROLLBACK) + classify SELECT.
+    def execute(self, sql, params=None):
+        self.executed.append(sql)
+        self._returning = []
+        if sql.strip().upper().startswith("SELECT"):
+            # classify_skips SELECT ... WHERE _legacy_id = ANY(%s)
+            self._select_chunk = list(params[0]) if params else []
+            self._returning = [
+                (lid, self.existing.get(lid)) for lid in self._select_chunk
+            ]
+
+    def fetchall(self):
+        return self._returning
+
+    def close(self):
+        pass
+
+    # --- driven by the monkeypatched execute_values (INSERT path).
+    def insert_one(self, legacy_id: int, migrated_at: datetime):
+        if legacy_id in self.existing:
+            return []  # ON CONFLICT DO NOTHING — no RETURNING row.
+        self.existing[legacy_id] = migrated_at
+        return [(legacy_id,)]
+
+
+class _FakeDestConn:
+    def __init__(self, cur):
+        self._cur = cur
+        self.committed = False
+        self.rolled_back = False
+
+    def cursor(self):
+        return self._cur
+
+    def commit(self):
+        self.committed = True
+
+    def rollback(self):
+        self.rolled_back = True
+
+
+class _PipelineHarness:
+    """Monkeypatches psycopg2.extras.execute_values to drive a _FakeDestCursor.
+
+    INSERT  -> route each row through cur.insert_one(_legacy_id, migrated_at).
+    The _legacy_id sits at values[i][LEGACY_ID_IDX]; migrated_at at the LAST
+    position. ON CONFLICT skips return no RETURNING row, so the inserted set is
+    exactly the genuinely-new ids — the contract the engine + classify rely on.
+    """
+
+    def __enter__(self):
+        import types
+
+        legacy_idx = etl.LEGACY_ID_INSERT_INDEX
+
+        def fake_execute_values(cur, sql, values, fetch=False):
+            returned: list[tuple] = []
+            for row in values:
+                legacy_id = row[legacy_idx]
+                migrated_at = row[-1]
+                returned.extend(cur.insert_one(legacy_id, migrated_at))
+            return returned
+
+        fake_extras = types.SimpleNamespace(execute_values=fake_execute_values)
+        fake_psycopg2 = types.ModuleType("psycopg2")
+        fake_psycopg2.extras = fake_extras
+        self._saved = sys.modules.get("psycopg2")
+        sys.modules["psycopg2"] = fake_psycopg2
+        return self
+
+    def __exit__(self, *exc):
+        if self._saved is not None:
+            sys.modules["psycopg2"] = self._saved
+        else:
+            del sys.modules["psycopg2"]
+        return False
+
+
+# --------------------------------------------------------------------------- #
+# Step 7: transform_row maps EVERY destination column. Resolvable row -> a
+# ReservationRecord carrying resolved FKs + transforms + passthroughs + markers;
+# an unresolvable FK -> RejectRow with the taxonomy reason (short-circuit).
+# --------------------------------------------------------------------------- #
+class TestTransformRow(unittest.TestCase):
+    def test_resolvable_row_maps_all_columns(self):
+        rec = etl.transform_row(_legacy_res(7), _maps())
+        self.assertEqual(rec.legacy_id, 7)
+        self.assertEqual(rec.customer_id, _CUSTOMER_MAP["12345678"])
+        self.assertEqual(rec.rental_company_id, _LOCALIZA_ID)
+        self.assertEqual(rec.pickup_location_id, _LOCATION_MAP[10])
+        self.assertEqual(rec.return_location_id, _LOCATION_MAP[20])
+        self.assertEqual(rec.category_code, "GR")
+        self.assertEqual(rec.franchise, "alquilatucarro")
+        self.assertEqual(rec.status, "nueva")
+        self.assertEqual(rec.booking_type, "standard")
+        self.assertEqual(rec.reservation_code, "RC-1")
+        self.assertIsNone(rec.referral_id)
+        self.assertIsNone(rec.referral_raw)
+        # Defaults with no legacy source.
+        self.assertIsNone(rec.reference_token)
+        self.assertIsNone(rec.rate_qualifier)
+        self.assertIsNone(rec.created_by)
+        self.assertIsNone(rec.notification_sent_at)
+        self.assertIsNone(rec.notification_sent_by)
+        self.assertFalse(rec.notification_required)
+        self.assertFalse(rec.notification_sent)
+        # return_fee NULL -> 0.
+        self.assertEqual(rec.return_fee, 0.0)
+
+    def test_status_maps_to_destination(self):
+        rec = etl.transform_row(_legacy_res(1, status="Pendiente Pago"), _maps())
+        self.assertEqual(rec.status, "pendiente_pago")
+
+    def test_booking_type_monthly_when_mileage(self):
+        rec = etl.transform_row(_legacy_res(1, monthly_mileage="2k_kms"), _maps())
+        self.assertEqual(rec.booking_type, "monthly")
+        self.assertEqual(rec.monthly_mileage, 2000)
+
+    def test_booking_type_with_insurance(self):
+        rec = etl.transform_row(_legacy_res(1, total_insurance=True), _maps())
+        self.assertEqual(rec.booking_type, "standard_with_insurance")
+        self.assertTrue(rec.total_insurance)
+
+    def test_reservation_code_null_preserved(self):
+        rec = etl.transform_row(_legacy_res(1, reserve_code=None), _maps())
+        self.assertIsNone(rec.reservation_code)
+
+    def test_note_renamed_to_nota(self):
+        rec = etl.transform_row(_legacy_res(1, note="alergia gatos"), _maps())
+        self.assertEqual(rec.nota, "alergia gatos")
+
+    def test_referral_resolves_and_raw_preserved(self):
+        rec = etl.transform_row(_legacy_res(1, user="  PROMO2024 "), _maps())
+        self.assertEqual(rec.referral_id, _REFERRAL_MAP["promo2024"])
+        self.assertEqual(rec.referral_raw, "PROMO2024")
+
+    def test_referral_raw_preserved_when_unmatched(self):
+        rec = etl.transform_row(_legacy_res(1, user="  Diana  "), _maps())
+        self.assertIsNone(rec.referral_id)
+        self.assertEqual(rec.referral_raw, "Diana")
+
+    def test_missing_customer_raises_reject(self):
+        with self.assertRaises(etl.RejectRow) as ctx:
+            etl.transform_row(_legacy_res(1, identification="0000000"), _maps())
+        self.assertEqual(ctx.exception.reason, "customer_not_migrated")
+
+    def test_null_pickup_location_raises_reject(self):
+        with self.assertRaises(etl.RejectRow) as ctx:
+            etl.transform_row(_legacy_res(1, pickup_location=None), _maps())
+        self.assertEqual(ctx.exception.reason, "pickup_location_null")
+
+    def test_unknown_status_raises_reject(self):
+        with self.assertRaises(etl.RejectRow) as ctx:
+            etl.transform_row(_legacy_res(1, status="Terminado"), _maps())
+        self.assertEqual(ctx.exception.reason, "status_unmapped")
+
+    def test_record_tuple_has_marker_columns(self):
+        rec = etl.transform_row(_legacy_res(42), _maps())
+        migrated_at = _rdt(2026, 5, 28)
+        tup = etl._record_to_tuple(rec, migrated_at)
+        # _legacy_id at the documented index, _legacy_migrated_at LAST.
+        self.assertEqual(tup[etl.LEGACY_ID_INSERT_INDEX], 42)
+        self.assertEqual(tup[-1], migrated_at)
+        # Column count of the tuple matches the INSERT_SQL column list.
+        ncols = etl.INSERT_SQL.split("(", 2)[1].count(",") + 1
+        self.assertEqual(len(tup), ncols)
+
+
+# --------------------------------------------------------------------------- #
+# SCEN-001 (reconciliation): a synthetic legacy set (resolvable + missing
+# customer + null location) -> inserted + skipped + rejected == total; every
+# inserted row carries _legacy_id + the marker; every reject carries a taxonomy
+# reason. Fake dest cursor records inserted ids and simulates ON CONFLICT.
+# --------------------------------------------------------------------------- #
+class TestPipelineReconciliation(unittest.TestCase):
+    def _rows(self):
+        return [
+            _legacy_res(1),  # resolvable -> inserted
+            _legacy_res(2, identification="87654321"),  # resolvable -> inserted
+            _legacy_res(3, identification="0000000"),  # missing customer -> reject
+            _legacy_res(4, pickup_location=None),  # null location -> reject
+        ]
+
+    def test_reconciles_and_markers_present(self):
+        extract = etl.ExtractResult(rows=self._rows(), legacy_rows_total=4)
+        cur = _FakeDestCursor(existing_ids={})
+        conn = _FakeDestConn(cur)
+        migrated_at = _rdt(2026, 5, 28)
+        with _PipelineHarness():
+            outcome = etl.run_pipeline(
+                conn, _maps(), extract, migrated_at, dry_run=False
+            )
+        summary = outcome.summary
+        # 2 inserted + 0 skipped + 2 rejected == 4 total.
+        self.assertEqual(summary["inserted"], 2)
+        self.assertEqual(summary["skipped_total"], 0)
+        self.assertEqual(summary["rejected_total"], 2)
+        recon = summary["reconciliation"]
+        self.assertTrue(recon["reconciles"], recon)
+        self.assertEqual(recon["sum"], 4)
+        self.assertEqual(recon["legacy_rows_total"], 4)
+        # Each inserted _legacy_id is recorded with the marker timestamp.
+        self.assertEqual(set(cur.existing.keys()), {1, 2})
+        self.assertTrue(all(v == migrated_at for v in cur.existing.values()))
+        # Each reject carries a taxonomy reason.
+        self.assertEqual(
+            summary["rejected"],
+            {"customer_not_migrated": 1, "pickup_location_null": 1},
+        )
+        # Gate passed (only taxonomy rejects, reconciliation closes) -> commit.
+        self.assertTrue(conn.committed)
+        self.assertFalse(conn.rolled_back)
+        self.assertTrue(outcome.committed)
+
+    def test_report_lines_have_per_row_disposition(self):
+        extract = etl.ExtractResult(rows=self._rows(), legacy_rows_total=4)
+        cur = _FakeDestCursor(existing_ids={})
+        conn = _FakeDestConn(cur)
+        with _PipelineHarness():
+            outcome = etl.run_pipeline(
+                conn, _maps(), extract, _rdt(2026, 5, 28), dry_run=False
+            )
+        actions = sorted(line["action"] for line in outcome.report_lines)
+        self.assertEqual(actions, ["inserted", "inserted", "rejected", "rejected"])
+        # No PII (identification) anywhere in a report line: only legacy_id +
+        # reason + non-PII fields.
+        for line in outcome.report_lines:
+            self.assertNotIn("identification", line)
+            self.assertIn("legacy_id", line)
+
+
+# --------------------------------------------------------------------------- #
+# SCEN-007 (idempotency): run twice against the same fake cursor state; the
+# second run inserts 0, classifies every candidate `already_migrated`, and no
+# _legacy_id duplicates (the existing set is unchanged in size).
+# --------------------------------------------------------------------------- #
+class TestPipelineIdempotency(unittest.TestCase):
+    def _rows(self):
+        return [_legacy_res(1), _legacy_res(2, identification="87654321")]
+
+    def test_second_run_inserts_zero_all_already_migrated(self):
+        cur = _FakeDestCursor(existing_ids={})
+        conn = _FakeDestConn(cur)
+        migrated_at = _rdt(2026, 5, 28)
+
+        with _PipelineHarness():
+            first = etl.run_pipeline(
+                _FakeDestConn(cur), _maps(),
+                etl.ExtractResult(rows=self._rows(), legacy_rows_total=2),
+                migrated_at, dry_run=False,
+            )
+            self.assertEqual(first.summary["inserted"], 2)
+            ids_after_first = set(cur.existing.keys())
+
+            second = etl.run_pipeline(
+                _FakeDestConn(cur), _maps(),
+                etl.ExtractResult(rows=self._rows(), legacy_rows_total=2),
+                _rdt(2026, 5, 29), dry_run=False,  # later run stamp.
+            )
+
+        summary = second.summary
+        self.assertEqual(summary["inserted"], 0)
+        self.assertEqual(summary["skipped_total"], 2)
+        self.assertEqual(summary["skipped"], {"already_migrated": 2})
+        self.assertEqual(summary["rejected_total"], 0)
+        self.assertTrue(summary["reconciliation"]["reconciles"])
+        # No duplicate _legacy_id: the existing set is identical, not doubled.
+        self.assertEqual(set(cur.existing.keys()), ids_after_first)
+        self.assertEqual(len(cur.existing), 2)
+        # The original marker timestamps are NOT overwritten (no churn).
+        self.assertTrue(all(v == migrated_at for v in cur.existing.values()))
+        self.assertTrue(second.committed)
+
+
+# --------------------------------------------------------------------------- #
+# build_lookup_maps composition: the customer/referral maps come straight from
+# dest cursors; location/franchise/category COMPOSE legacy id->code/name with
+# the destination code->id / name->enum rule. Fake cursors return canned rows.
+# --------------------------------------------------------------------------- #
+class _SeqCursor:
+    """A cursor whose successive execute() calls yield successive canned result
+    sets (FIFO), matching the order build_lookup_maps issues its queries."""
+
+    def __init__(self, result_sets):
+        self._queue = list(result_sets)
+        self._current: list = []
+
+    def execute(self, sql, params=None):
+        self._current = self._queue.pop(0) if self._queue else []
+
+    def fetchall(self):
+        return self._current
+
+    def fetchone(self):
+        return self._current[0] if self._current else None
+
+    def close(self):
+        pass
+
+
+class TestBuildLookupMaps(unittest.TestCase):
+    def test_composes_six_maps(self):
+        # Legacy cursor: branches (id, code), categories (id, identification),
+        # franchises (id, name) — the order build_lookup_maps reads them.
+        legacy_cur = _SeqCursor(
+            [
+                [(10, "BOG01"), (20, "MDE01")],  # branches
+                [(1, "GR"), (2, "VP")],  # categories
+                [(1, "alquilatucarro"), (2, "alquilame"), (3, "alquicarros")],  # franchises
+            ]
+        )
+        # Dest cursor: customers, locations (code, id), vehicle_categories code,
+        # referrals (code, id), rental_companies localiza id.
+        dest_cur = _SeqCursor(
+            [
+                [("12345678", "uuid-cust-1")],  # customers
+                [("BOG01", "uuid-loc-10"), ("MDE01", "uuid-loc-20")],  # locations
+                [("GR",), ("VP",), ("G",), ("LP",)],  # vehicle_categories codes
+                [("promo2024", "uuid-ref-1")],  # referrals
+                [("uuid-localiza",)],  # rental_companies WHERE code='localiza'
+            ]
+        )
+        maps = etl.build_lookup_maps(legacy_cur, dest_cur)
+        self.assertEqual(maps.customer_map, {"12345678": "uuid-cust-1"})
+        # location_map composes legacy branch_id -> branch.code -> location.id.
+        self.assertEqual(
+            maps.location_map, {10: "uuid-loc-10", 20: "uuid-loc-20"}
+        )
+        self.assertEqual(maps.category_map, {1: "GR", 2: "VP"})
+        self.assertEqual(maps.dest_category_codes, frozenset({"GR", "VP", "G", "LP"}))
+        self.assertEqual(
+            maps.franchise_map,
+            {1: "alquilatucarro", 2: "alquilame", 3: "alquicarros"},
+        )
+        self.assertEqual(maps.referral_map, {"promo2024": "uuid-ref-1"})
+        self.assertEqual(maps.rental_company_id, "uuid-localiza")
+
+    def test_referral_keyed_lowercase(self):
+        legacy_cur = _SeqCursor([[], [], []])
+        dest_cur = _SeqCursor(
+            [
+                [],  # customers
+                [],  # locations
+                [],  # vehicle_categories
+                [("PromoXYZ", "uuid-ref-2")],  # referrals — mixed case
+                [("uuid-localiza",)],
+            ]
+        )
+        maps = etl.build_lookup_maps(legacy_cur, dest_cur)
+        # resolve_referral keys by lower(trim(user)); the map must be lowercased.
+        self.assertEqual(maps.referral_map, {"promoxyz": "uuid-ref-2"})
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -52,17 +52,46 @@ export async function resendNotification(
       return { error: "No se pudo determinar la franquicia" };
     }
 
-    if (log.channel === "email" && log.html_content) {
-      const { sendEmail } = await import("@/lib/email/send");
-      await sendEmail({
-        franchise: reservation.franchise,
-        to: log.recipient,
-        subject: log.subject ?? "Notificación",
-        html: log.html_content,
-        reservationId: log.reservation_id,
-        notificationType: log.notification_type + "_reenvio",
-      });
-      return {};
+    if (log.channel === "email") {
+      // Issue #87: re-render the requested type from CURRENT reservation data
+      // instead of replaying the frozen html snapshot. Only this type re-fires,
+      // so resending a client email never re-notifies Localiza siblings.
+      const { resendEmailNotification } = await import("@/lib/email/notifications");
+      const res = await resendEmailNotification(
+        log.reservation_id,
+        log.notification_type,
+        reservation.franchise,
+      );
+      if (res.ok) return {};
+
+      // Known type that cannot be re-rendered live (Localiza channel disabled or
+      // incomplete reservation data) → do NOT replay a stale snapshot. Surface a
+      // Spanish error so the operator knows nothing fresh went out.
+      if (res.reason === "not_renderable") {
+        return {
+          error:
+            "No se pudo reenviar: el canal está deshabilitado o faltan datos de la reserva.",
+        };
+      }
+
+      // Legacy/unknown type (no live renderer) → fall back to the stored snapshot.
+      if (log.html_content) {
+        const { sendEmail } = await import("@/lib/email/send");
+        await sendEmail({
+          franchise: reservation.franchise,
+          to: log.recipient,
+          subject: log.subject ?? "Notificación",
+          html: log.html_content,
+          reservationId: log.reservation_id,
+          notificationType: log.notification_type + "_reenvio",
+        });
+        console.warn(
+          `[resend] no live renderer for ${log.notification_type}; fell back to stored html`,
+        );
+        return {};
+      }
+
+      return { error: "No se puede reenviar esta notificación" };
     }
 
     if (log.channel === "whatsapp") {

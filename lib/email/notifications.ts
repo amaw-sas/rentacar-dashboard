@@ -55,29 +55,6 @@ function resolveReturnPair(loc: LocationFallback): { address: string; mapRaw: st
 }
 import { FRANCHISE_BRANDING } from "@/lib/constants/franchises";
 
-interface ReservationData {
-  id: string;
-  franchise: string;
-  reservation_code?: string | null;
-  customer_id: string;
-  category_code: string;
-  pickup_location_id: string;
-  pickup_date: string;
-  pickup_hour: string;
-  return_location_id: string;
-  return_date: string;
-  return_hour: string;
-  selected_days: number;
-  total_price: number;
-  total_price_to_pay: number;
-  tax_fee: number;
-  iva_fee: number;
-  total_insurance: boolean;
-  extra_driver: boolean;
-  baby_seat: boolean;
-  wash: boolean;
-}
-
 interface FranchiseBranding {
   franchiseName: string;
   franchiseColor: string;
@@ -207,55 +184,92 @@ function formatHour(hourStr: string): string {
   return h12 + ":" + m + " " + ampm;
 }
 
-export async function sendReservationNotifications(
-  reservationId: string,
-  status: ReservationStatus,
-  franchiseCode: string
-): Promise<void> {
-  try {
-    const reservation = await fetchReservationContext(reservationId);
-    const ctx = await getFranchiseContext(franchiseCode);
-    const { branding, attachments } = await prepareLogoForEmail(ctx.branding);
-    const localizaBccEmail = ctx.localizaBccEmail;
+// Single email notification type produced by the builder. Centralized here so
+// the send path (sendReservationNotifications / sendReservationRequestEmail) and
+// the resend path (resendEmailNotification) share ONE definition of recipient,
+// subject and rendered body per notification_type — issue #87. Resending now
+// re-renders from current reservation data instead of replaying frozen html.
+export type EmailNotificationType =
+  | "reservado_cliente"
+  | "pendiente_cliente"
+  | "pendiente_localiza"
+  | "sin_disponibilidad_cliente"
+  | "seguro_total_localiza"
+  | "extras_localiza"
+  | "mensualidad_cliente"
+  | "mensualidad_localiza"
+  | "solicitud_reserva";
 
-    const customer = reservation.customers as {
-      first_name: string;
-      last_name: string;
-      email: string;
-      phone: string;
-    };
-    const customerName = `${customer.first_name} ${customer.last_name}`;
-    const customerEmail = customer.email;
-    const pickupLoc = (reservation.pickup_location ?? {}) as {
-      name?: string;
-      code?: string;
-      pickup_address?: string;
-      pickup_map?: string;
-    };
-    const returnLoc = (reservation.return_location ?? {}) as {
-      name?: string;
-      code?: string;
-      pickup_address?: string;
-      pickup_map?: string;
-      return_address?: string | null;
-      return_map?: string | null;
-    };
-    const pickupLocation = pickupLoc.name ?? "";
-    const returnLocation = returnLoc.name ?? "";
-    const categoryName = reservation.category_code;
+interface EmailSpec {
+  to: string;
+  subject: string;
+  html: string;
+  bcc?: string;
+}
 
-    const rentalCompany = (reservation.rental_companies ?? {}) as {
-      extra_driver_day_price?: number | string;
-      wash_price?: number | string;
-      wash_onsite_price?: number | string;
-      wash_deep_price?: number | string;
-      wash_deep_upholstery_price?: number | string;
-    };
+// Reservation context returned by fetchReservationContext (admin `select *` plus
+// joined relations). Modeled loosely because the joined shape is not in the
+// generated DB types; the builder narrows the fields it reads.
+type ReservationContext = Awaited<ReturnType<typeof fetchReservationContext>>;
 
-    const localizaEmail = process.env.LOCALIZA_NOTIFICATION_EMAIL;
-    const localizaBcc = resolveLocalizaBcc(localizaBccEmail);
+interface BuilderContext {
+  reservation: ReservationContext;
+  branding: FranchiseBranding;
+  localizaEmail: string | undefined;
+  localizaBcc: string | undefined;
+}
 
-    if (status === "reservado") {
+// Builds the spec for ONE notification type from current data, or null when the
+// type does not apply (e.g. a Localiza type while LOCALIZA_NOTIFICATION_EMAIL is
+// unset). Pure render: never calls sendEmail. The render await happens inside so
+// callers always receive freshly rendered html.
+async function buildEmailSpec(
+  type: EmailNotificationType,
+  ctx: BuilderContext
+): Promise<EmailSpec | null> {
+  const { reservation, branding, localizaEmail, localizaBcc } = ctx;
+
+  const customer = reservation.customers as {
+    first_name: string;
+    last_name: string;
+    email: string;
+    phone: string;
+  } | null;
+  // Live data can be incomplete if the customer was hard-deleted after the
+  // original send. Without a customer there is no recipient/name to render —
+  // return null so resendEmailNotification reports "not_renderable" and the
+  // caller surfaces a Spanish error instead of throwing a raw TypeError.
+  if (!customer) return null;
+  const customerName = `${customer.first_name} ${customer.last_name}`;
+  const customerEmail = customer.email;
+  const pickupLoc = (reservation.pickup_location ?? {}) as {
+    name?: string;
+    code?: string;
+    pickup_address?: string;
+    pickup_map?: string;
+  };
+  const returnLoc = (reservation.return_location ?? {}) as {
+    name?: string;
+    code?: string;
+    pickup_address?: string;
+    pickup_map?: string;
+    return_address?: string | null;
+    return_map?: string | null;
+  };
+  const pickupLocation = pickupLoc.name ?? "";
+  const returnLocation = returnLoc.name ?? "";
+  const categoryName = reservation.category_code;
+
+  const rentalCompany = (reservation.rental_companies ?? {}) as {
+    extra_driver_day_price?: number | string;
+    wash_price?: number | string;
+    wash_onsite_price?: number | string;
+    wash_deep_price?: number | string;
+    wash_deep_upholstery_price?: number | string;
+  };
+
+  switch (type) {
+    case "reservado_cliente": {
       const pickupAddress = pickupLoc.pickup_address ?? "";
       const pickupMapUrl = safeMapUrlOrWarn(pickupLoc.pickup_map ?? "", pickupLoc.code);
       const returnPair = resolveReturnPair(returnLoc);
@@ -294,20 +308,11 @@ export async function sendReservationNotifications(
           washDeepUpholsteryPrice: Number(rentalCompany.wash_deep_upholstery_price ?? 0),
         })
       );
-
-      await sendEmail({
-        franchise: franchiseCode,
-        to: customerEmail,
-        subject: "Reserva Aprobada",
-        html,
-        reservationId,
-        notificationType: "reservado_cliente",
-        attachments,
-      });
+      return { to: customerEmail, subject: "Reserva Aprobada", html };
     }
 
-    if (status === "pendiente") {
-      const clientHtml = await renderEmail(
+    case "pendiente_cliente": {
+      const html = await renderEmail(
         PendingClientEmail({
           ...branding,
           customerName,
@@ -321,52 +326,39 @@ export async function sendReservationNotifications(
           selectedDays: reservation.selected_days,
         })
       );
-
-      await sendEmail({
-        franchise: franchiseCode,
-        to: customerEmail,
-        subject: "Reserva Pendiente",
-        html: clientHtml,
-        reservationId,
-        notificationType: "pendiente_cliente",
-        attachments,
-      });
-
-      if (localizaEmail) {
-        const localizaHtml = await renderEmail(
-          PendingLocalizaEmail({
-            ...branding,
-            customerName,
-            categoryName,
-            pickupLocation,
-            pickupDate: formatDate(reservation.pickup_date),
-            pickupHour: formatHour(reservation.pickup_hour),
-            returnLocation,
-            returnDate: formatDate(reservation.return_date),
-            returnHour: formatHour(reservation.return_hour),
-            selectedDays: reservation.selected_days,
-            reserveCode: reservation.reservation_code,
-            extraDriver: reservation.extra_driver,
-            babySeat: reservation.baby_seat,
-            wash: reservation.wash,
-            totalInsurance: reservation.total_insurance,
-          })
-        );
-
-        await sendEmail({
-          franchise: franchiseCode,
-          to: localizaEmail,
-          subject: "Notificación de reserva en espera",
-          html: localizaHtml,
-          bcc: localizaBcc,
-          reservationId,
-          notificationType: "pendiente_localiza",
-          attachments,
-        });
-      }
+      return { to: customerEmail, subject: "Reserva Pendiente", html };
     }
 
-    if (status === "sin_disponibilidad") {
+    case "pendiente_localiza": {
+      if (!localizaEmail) return null;
+      const html = await renderEmail(
+        PendingLocalizaEmail({
+          ...branding,
+          customerName,
+          categoryName,
+          pickupLocation,
+          pickupDate: formatDate(reservation.pickup_date),
+          pickupHour: formatHour(reservation.pickup_hour),
+          returnLocation,
+          returnDate: formatDate(reservation.return_date),
+          returnHour: formatHour(reservation.return_hour),
+          selectedDays: reservation.selected_days,
+          reserveCode: reservation.reservation_code,
+          extraDriver: reservation.extra_driver,
+          babySeat: reservation.baby_seat,
+          wash: reservation.wash,
+          totalInsurance: reservation.total_insurance,
+        })
+      );
+      return {
+        to: localizaEmail,
+        subject: "Notificación de reserva en espera",
+        html,
+        bcc: localizaBcc,
+      };
+    }
+
+    case "sin_disponibilidad_cliente": {
       const html = await renderEmail(
         FailedClientEmail({
           ...branding,
@@ -377,20 +369,11 @@ export async function sendReservationNotifications(
           pickupLocation,
         })
       );
-
-      await sendEmail({
-        franchise: franchiseCode,
-        to: customerEmail,
-        subject: "Reserva Sin Disponibilidad",
-        html,
-        reservationId,
-        notificationType: "sin_disponibilidad_cliente",
-        attachments,
-      });
+      return { to: customerEmail, subject: "Reserva Sin Disponibilidad", html };
     }
 
-    // Total insurance notification to Localiza (independent of status)
-    if (reservation.total_insurance && localizaEmail) {
+    case "seguro_total_localiza": {
+      if (!localizaEmail) return null;
       const html = await renderEmail(
         TotalInsuranceLocalizaEmail({
           ...branding,
@@ -409,22 +392,16 @@ export async function sendReservationNotifications(
           wash: reservation.wash,
         })
       );
-
-      await sendEmail({
-        franchise: franchiseCode,
+      return {
         to: localizaEmail,
         subject: "Notificación de reserva con seguro total",
         html,
         bcc: localizaBcc,
-        reservationId,
-        notificationType: "seguro_total_localiza",
-        attachments,
-      });
+      };
     }
 
-    // Extras notification to Localiza (extra_driver, baby_seat, wash — without total insurance)
-    const hasExtras = reservation.extra_driver || reservation.baby_seat || reservation.wash;
-    if (hasExtras && !reservation.total_insurance && localizaEmail) {
+    case "extras_localiza": {
+      if (!localizaEmail) return null;
       const html = await renderEmail(
         ExtrasLocalizaEmail({
           ...branding,
@@ -443,22 +420,16 @@ export async function sendReservationNotifications(
           wash: reservation.wash,
         })
       );
-
-      await sendEmail({
-        franchise: franchiseCode,
+      return {
         to: localizaEmail,
         subject: "Notificación de reserva con servicios adicionales",
         html,
         bcc: localizaBcc,
-        reservationId,
-        notificationType: "extras_localiza",
-        attachments,
-      });
+      };
     }
 
-    // Monthly reservation notification to client
-    if (status === "mensualidad") {
-      const clientHtml = await renderEmail(
+    case "mensualidad_cliente": {
+      const html = await renderEmail(
         MonthlyClientEmail({
           ...branding,
           customerName,
@@ -473,20 +444,15 @@ export async function sendReservationNotifications(
           monthlyMileage: reservation.monthly_mileage,
         })
       );
-
-      await sendEmail({
-        franchise: franchiseCode,
+      return {
         to: customerEmail,
         subject: "Solicitud de reserva mensual recibida",
-        html: clientHtml,
-        reservationId,
-        notificationType: "mensualidad_cliente",
-        attachments,
-      });
+        html,
+      };
     }
 
-    // Monthly reservation notification to Localiza
-    if (status === "mensualidad" && localizaEmail) {
+    case "mensualidad_localiza": {
+      if (!localizaEmail) return null;
       const html = await renderEmail(
         MonthlyLocalizaEmail({
           ...branding,
@@ -506,15 +472,99 @@ export async function sendReservationNotifications(
           totalInsurance: reservation.total_insurance,
         })
       );
-
-      await sendEmail({
-        franchise: franchiseCode,
+      return {
         to: localizaEmail,
         subject: "Notificación de reserva mensual",
         html,
         bcc: localizaBcc,
+      };
+    }
+
+    case "solicitud_reserva": {
+      const html = await renderEmail(
+        ReservationRequestEmail({
+          ...branding,
+          customerName,
+          customerEmail: customer.email,
+          customerPhone: customer.phone,
+          categoryName,
+          pickupLocation,
+          pickupDate: formatDate(reservation.pickup_date),
+          pickupHour: formatHour(reservation.pickup_hour),
+          returnLocation,
+          returnDate: formatDate(reservation.return_date),
+          returnHour: formatHour(reservation.return_hour),
+          selectedDays: reservation.selected_days,
+        })
+      );
+      return {
+        to: customer.email,
+        subject: "Solicitud de reserva en proceso",
+        html,
+      };
+    }
+  }
+}
+
+// Which email notification types fire for a given status + reservation flags.
+// This is the single place that gates types by status; both send and resend
+// rely on buildEmailSpec for the actual recipient/subject/body, so behavior
+// stays identical to the prior inline branches.
+function emailTypesForStatus(
+  status: ReservationStatus,
+  reservation: ReservationContext
+): EmailNotificationType[] {
+  const types: EmailNotificationType[] = [];
+
+  if (status === "reservado") types.push("reservado_cliente");
+  if (status === "pendiente") {
+    types.push("pendiente_cliente", "pendiente_localiza");
+  }
+  if (status === "sin_disponibilidad") types.push("sin_disponibilidad_cliente");
+
+  // Total insurance notification to Localiza (independent of status).
+  if (reservation.total_insurance) types.push("seguro_total_localiza");
+
+  // Extras notification to Localiza (extra_driver, baby_seat, wash — without total insurance).
+  const hasExtras =
+    reservation.extra_driver || reservation.baby_seat || reservation.wash;
+  if (hasExtras && !reservation.total_insurance) types.push("extras_localiza");
+
+  if (status === "mensualidad") {
+    types.push("mensualidad_cliente", "mensualidad_localiza");
+  }
+
+  return types;
+}
+
+export async function sendReservationNotifications(
+  reservationId: string,
+  status: ReservationStatus,
+  franchiseCode: string
+): Promise<void> {
+  try {
+    const reservation = await fetchReservationContext(reservationId);
+    const ctx = await getFranchiseContext(franchiseCode);
+    const { branding, attachments } = await prepareLogoForEmail(ctx.branding);
+
+    const builderCtx: BuilderContext = {
+      reservation,
+      branding,
+      localizaEmail: process.env.LOCALIZA_NOTIFICATION_EMAIL,
+      localizaBcc: resolveLocalizaBcc(ctx.localizaBccEmail),
+    };
+
+    for (const type of emailTypesForStatus(status, reservation)) {
+      const spec = await buildEmailSpec(type, builderCtx);
+      if (!spec) continue;
+      await sendEmail({
+        franchise: franchiseCode,
+        to: spec.to,
+        subject: spec.subject,
+        html: spec.html,
+        bcc: spec.bcc,
         reservationId,
-        notificationType: "mensualidad_localiza",
+        notificationType: type,
         attachments,
       });
     }
@@ -535,39 +585,20 @@ export async function sendReservationRequestEmail(
     const ctx = await getFranchiseContext(franchiseCode);
     const { branding, attachments } = await prepareLogoForEmail(ctx.branding);
 
-    const customer = reservation.customers as {
-      first_name: string;
-      last_name: string;
-      email: string;
-      phone: string;
-    };
-    const customerName = `${customer.first_name} ${customer.last_name}`;
-    const pickupLocation = (reservation.pickup_location as { name: string })?.name ?? "";
-    const returnLocation = (reservation.return_location as { name: string })?.name ?? "";
-    const categoryName = reservation.category_code;
-
-    const html = await renderEmail(
-      ReservationRequestEmail({
-        ...branding,
-        customerName,
-        customerEmail: customer.email,
-        customerPhone: customer.phone,
-        categoryName,
-        pickupLocation,
-        pickupDate: formatDate(reservation.pickup_date),
-        pickupHour: formatHour(reservation.pickup_hour),
-        returnLocation,
-        returnDate: formatDate(reservation.return_date),
-        returnHour: formatHour(reservation.return_hour),
-        selectedDays: reservation.selected_days,
-      })
-    );
+    const spec = await buildEmailSpec("solicitud_reserva", {
+      reservation,
+      branding,
+      localizaEmail: process.env.LOCALIZA_NOTIFICATION_EMAIL,
+      localizaBcc: resolveLocalizaBcc(ctx.localizaBccEmail),
+    });
+    if (!spec) return;
 
     await sendEmail({
       franchise: franchiseCode,
-      to: customer.email,
-      subject: "Solicitud de reserva en proceso",
-      html,
+      to: spec.to,
+      subject: spec.subject,
+      html: spec.html,
+      bcc: spec.bcc,
       reservationId,
       notificationType: "solicitud_reserva",
       attachments,
@@ -578,4 +609,66 @@ export async function sendReservationRequestEmail(
       error
     );
   }
+}
+
+const EMAIL_NOTIFICATION_TYPES: ReadonlySet<string> = new Set<EmailNotificationType>([
+  "reservado_cliente",
+  "pendiente_cliente",
+  "pendiente_localiza",
+  "sin_disponibilidad_cliente",
+  "seguro_total_localiza",
+  "extras_localiza",
+  "mensualidad_cliente",
+  "mensualidad_localiza",
+  "solicitud_reserva",
+]);
+
+// Discriminated result so the caller can distinguish a legacy/unknown type
+// (safe to replay the stored snapshot) from a known type that simply cannot be
+// re-rendered live right now — a disabled Localiza channel or incomplete
+// reservation data. Replaying a frozen snapshot in the latter case would
+// reintroduce exactly the staleness issue #87 set out to remove and bypass the
+// "Localiza disabled" gate, so the caller must NOT fall back for it.
+export type ResendEmailResult =
+  | { ok: true }
+  | { ok: false; reason: "unknown_type" | "not_renderable" };
+
+// Resend a SINGLE email notification type, re-rendered from CURRENT reservation
+// and franchise data (issue #87). Only the requested type is re-fired, so
+// resending a client email never re-notifies Localiza siblings. Recipient and
+// subject are re-derived live, not replayed from the frozen log.
+export async function resendEmailNotification(
+  reservationId: string,
+  notificationType: string,
+  franchiseCode: string
+): Promise<ResendEmailResult> {
+  if (!EMAIL_NOTIFICATION_TYPES.has(notificationType)) {
+    return { ok: false, reason: "unknown_type" };
+  }
+
+  const reservation = await fetchReservationContext(reservationId);
+  const ctx = await getFranchiseContext(franchiseCode);
+  const { branding, attachments } = await prepareLogoForEmail(ctx.branding);
+
+  const spec = await buildEmailSpec(notificationType as EmailNotificationType, {
+    reservation,
+    branding,
+    localizaEmail: process.env.LOCALIZA_NOTIFICATION_EMAIL,
+    localizaBcc: resolveLocalizaBcc(ctx.localizaBccEmail),
+  });
+  // Known type but no live spec → disabled Localiza channel or missing data.
+  if (!spec) return { ok: false, reason: "not_renderable" };
+
+  await sendEmail({
+    franchise: franchiseCode,
+    to: spec.to,
+    subject: spec.subject,
+    html: spec.html,
+    bcc: spec.bcc,
+    reservationId,
+    notificationType: notificationType + "_reenvio",
+    attachments,
+  });
+
+  return { ok: true };
 }

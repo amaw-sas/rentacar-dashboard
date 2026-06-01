@@ -73,9 +73,9 @@ describe("resendNotification (issue #87)", () => {
     expect(sendEmail).not.toHaveBeenCalled();
   });
 
-  // SCEN-6 at the resendNotification level: unknown/legacy email type → live
-  // renderer reports ok:false → fall back to the stored html snapshot.
-  it("email channel: falls back to stored html when no live renderer (ok:false)", async () => {
+  // SCEN-6 at the resendNotification level: unknown/legacy email type
+  // (reason unknown_type) → fall back to the stored html snapshot.
+  it("email channel: falls back to stored html for unknown_type", async () => {
     setupMock({
       id: "log-2",
       reservation_id: "res-123",
@@ -85,7 +85,10 @@ describe("resendNotification (issue #87)", () => {
       subject: "Asunto viejo",
       html_content: "<html>frozen-snapshot</html>",
     });
-    vi.mocked(resendEmailNotification).mockResolvedValue({ ok: false });
+    vi.mocked(resendEmailNotification).mockResolvedValue({
+      ok: false,
+      reason: "unknown_type",
+    });
 
     const result = await resendNotification("log-2");
 
@@ -101,7 +104,7 @@ describe("resendNotification (issue #87)", () => {
     );
   });
 
-  it("email channel: ok:false with no stored html returns an error", async () => {
+  it("email channel: unknown_type with no stored html returns an error", async () => {
     setupMock({
       id: "log-3",
       reservation_id: "res-123",
@@ -111,9 +114,36 @@ describe("resendNotification (issue #87)", () => {
       subject: "Asunto viejo",
       html_content: null,
     });
-    vi.mocked(resendEmailNotification).mockResolvedValue({ ok: false });
+    vi.mocked(resendEmailNotification).mockResolvedValue({
+      ok: false,
+      reason: "unknown_type",
+    });
 
     const result = await resendNotification("log-3");
+
+    expect(result.error).toBeTruthy();
+    expect(sendEmail).not.toHaveBeenCalled();
+  });
+
+  // HIGH finding (issue #87 review): a known type that cannot be re-rendered
+  // live (Localiza channel disabled / incomplete data) must NOT replay a stale
+  // snapshot — even when html_content exists. It returns a Spanish error.
+  it("email channel: not_renderable returns Spanish error without replaying snapshot", async () => {
+    setupMock({
+      id: "log-5",
+      reservation_id: "res-123",
+      channel: "email",
+      notification_type: "mensualidad_localiza",
+      recipient: "old-localiza@example.com",
+      subject: "Notificación de reserva mensual",
+      html_content: "<html>frozen-localiza-snapshot</html>",
+    });
+    vi.mocked(resendEmailNotification).mockResolvedValue({
+      ok: false,
+      reason: "not_renderable",
+    });
+
+    const result = await resendNotification("log-5");
 
     expect(result.error).toBeTruthy();
     expect(sendEmail).not.toHaveBeenCalled();

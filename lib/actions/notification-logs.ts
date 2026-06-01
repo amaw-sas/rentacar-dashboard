@@ -64,7 +64,17 @@ export async function resendNotification(
       );
       if (res.ok) return {};
 
-      // Legacy/unknown type → fall back to the stored snapshot so resend still works.
+      // Known type that cannot be re-rendered live (Localiza channel disabled or
+      // incomplete reservation data) → do NOT replay a stale snapshot. Surface a
+      // Spanish error so the operator knows nothing fresh went out.
+      if (res.reason === "not_renderable") {
+        return {
+          error:
+            "No se pudo reenviar: el canal está deshabilitado o faltan datos de la reserva.",
+        };
+      }
+
+      // Legacy/unknown type (no live renderer) → fall back to the stored snapshot.
       if (log.html_content) {
         const { sendEmail } = await import("@/lib/email/send");
         await sendEmail({

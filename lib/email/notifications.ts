@@ -234,7 +234,12 @@ async function buildEmailSpec(
     last_name: string;
     email: string;
     phone: string;
-  };
+  } | null;
+  // Live data can be incomplete if the customer was hard-deleted after the
+  // original send. Without a customer there is no recipient/name to render —
+  // return null so resendEmailNotification reports "not_renderable" and the
+  // caller surfaces a Spanish error instead of throwing a raw TypeError.
+  if (!customer) return null;
   const customerName = `${customer.first_name} ${customer.last_name}`;
   const customerEmail = customer.email;
   const pickupLoc = (reservation.pickup_location ?? {}) as {
@@ -618,19 +623,27 @@ const EMAIL_NOTIFICATION_TYPES: ReadonlySet<string> = new Set<EmailNotificationT
   "solicitud_reserva",
 ]);
 
+// Discriminated result so the caller can distinguish a legacy/unknown type
+// (safe to replay the stored snapshot) from a known type that simply cannot be
+// re-rendered live right now — a disabled Localiza channel or incomplete
+// reservation data. Replaying a frozen snapshot in the latter case would
+// reintroduce exactly the staleness issue #87 set out to remove and bypass the
+// "Localiza disabled" gate, so the caller must NOT fall back for it.
+export type ResendEmailResult =
+  | { ok: true }
+  | { ok: false; reason: "unknown_type" | "not_renderable" };
+
 // Resend a SINGLE email notification type, re-rendered from CURRENT reservation
 // and franchise data (issue #87). Only the requested type is re-fired, so
 // resending a client email never re-notifies Localiza siblings. Recipient and
-// subject are re-derived live, not replayed from the frozen log. Returns
-// { ok: false } for unknown/legacy types so the caller can fall back to the
-// stored html snapshot.
+// subject are re-derived live, not replayed from the frozen log.
 export async function resendEmailNotification(
   reservationId: string,
   notificationType: string,
   franchiseCode: string
-): Promise<{ ok: boolean }> {
+): Promise<ResendEmailResult> {
   if (!EMAIL_NOTIFICATION_TYPES.has(notificationType)) {
-    return { ok: false };
+    return { ok: false, reason: "unknown_type" };
   }
 
   const reservation = await fetchReservationContext(reservationId);
@@ -643,7 +656,8 @@ export async function resendEmailNotification(
     localizaEmail: process.env.LOCALIZA_NOTIFICATION_EMAIL,
     localizaBcc: resolveLocalizaBcc(ctx.localizaBccEmail),
   });
-  if (!spec) return { ok: false };
+  // Known type but no live spec → disabled Localiza channel or missing data.
+  if (!spec) return { ok: false, reason: "not_renderable" };
 
   await sendEmail({
     franchise: franchiseCode,

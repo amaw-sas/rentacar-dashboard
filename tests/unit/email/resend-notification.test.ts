@@ -187,8 +187,9 @@ describe("resendEmailNotification (issue #87)", () => {
     );
   });
 
-  // SCEN-6: unknown/legacy type returns { ok: false } and never sends.
-  it("SCEN-6: unknown/legacy notification_type returns ok:false without sending", async () => {
+  // SCEN-6: unknown/legacy type → reason "unknown_type" (caller may replay the
+  // stored snapshot), never sends from the live path.
+  it("SCEN-6: unknown/legacy notification_type returns reason unknown_type without sending", async () => {
     setupMock();
 
     const res = await resendEmailNotification(
@@ -197,13 +198,14 @@ describe("resendEmailNotification (issue #87)", () => {
       "alquilatucarro"
     );
 
-    expect(res).toEqual({ ok: false });
+    expect(res).toEqual({ ok: false, reason: "unknown_type" });
     expect(sendEmail).not.toHaveBeenCalled();
   });
 
-  // A localiza type returns ok:false (no send) when LOCALIZA_NOTIFICATION_EMAIL
-  // is unset — the builder cannot produce a recipient, so resend falls back.
-  it("returns ok:false for a localiza type when LOCALIZA_NOTIFICATION_EMAIL is unset", async () => {
+  // A known localiza type with LOCALIZA_NOTIFICATION_EMAIL unset → reason
+  // "not_renderable" (NOT unknown_type): the caller must surface an error, not
+  // replay a stale snapshot to the old Localiza address.
+  it("returns reason not_renderable for a localiza type when LOCALIZA_NOTIFICATION_EMAIL is unset", async () => {
     delete process.env.LOCALIZA_NOTIFICATION_EMAIL;
     setupMock();
 
@@ -213,7 +215,22 @@ describe("resendEmailNotification (issue #87)", () => {
       "alquilatucarro"
     );
 
-    expect(res).toEqual({ ok: false });
+    expect(res).toEqual({ ok: false, reason: "not_renderable" });
+    expect(sendEmail).not.toHaveBeenCalled();
+  });
+
+  // Live data incomplete (customer hard-deleted) → reason "not_renderable",
+  // never throws a raw TypeError, never sends.
+  it("returns reason not_renderable when the customer relation is null", async () => {
+    setupMock({ ...baseReservation, customers: null });
+
+    const res = await resendEmailNotification(
+      "res-123",
+      "reservado_cliente",
+      "alquilatucarro"
+    );
+
+    expect(res).toEqual({ ok: false, reason: "not_renderable" });
     expect(sendEmail).not.toHaveBeenCalled();
   });
 });

@@ -52,17 +52,36 @@ export async function resendNotification(
       return { error: "No se pudo determinar la franquicia" };
     }
 
-    if (log.channel === "email" && log.html_content) {
-      const { sendEmail } = await import("@/lib/email/send");
-      await sendEmail({
-        franchise: reservation.franchise,
-        to: log.recipient,
-        subject: log.subject ?? "Notificación",
-        html: log.html_content,
-        reservationId: log.reservation_id,
-        notificationType: log.notification_type + "_reenvio",
-      });
-      return {};
+    if (log.channel === "email") {
+      // Issue #87: re-render the requested type from CURRENT reservation data
+      // instead of replaying the frozen html snapshot. Only this type re-fires,
+      // so resending a client email never re-notifies Localiza siblings.
+      const { resendEmailNotification } = await import("@/lib/email/notifications");
+      const res = await resendEmailNotification(
+        log.reservation_id,
+        log.notification_type,
+        reservation.franchise,
+      );
+      if (res.ok) return {};
+
+      // Legacy/unknown type → fall back to the stored snapshot so resend still works.
+      if (log.html_content) {
+        const { sendEmail } = await import("@/lib/email/send");
+        await sendEmail({
+          franchise: reservation.franchise,
+          to: log.recipient,
+          subject: log.subject ?? "Notificación",
+          html: log.html_content,
+          reservationId: log.reservation_id,
+          notificationType: log.notification_type + "_reenvio",
+        });
+        console.warn(
+          `[resend] no live renderer for ${log.notification_type}; fell back to stored html`,
+        );
+        return {};
+      }
+
+      return { error: "No se puede reenviar esta notificación" };
     }
 
     if (log.channel === "whatsapp") {

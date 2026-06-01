@@ -49,7 +49,9 @@ export default async function ReservationDetailPage({
 
   const [notificationLogs, franchiseLogoUrl] = await Promise.all([
     getNotificationLogs(id),
-    getFranchiseLogoUrl(reservation.franchise),
+    // Logo is cosmetic — a lookup failure must not blank the whole page; it
+    // degrades to the transparent-pixel fallback in the preview instead.
+    getFranchiseLogoUrl(reservation.franchise).catch(() => null),
   ]);
 
   const customerName = reservation.customers

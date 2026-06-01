@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { NotificationPreviewDialog } from "./notification-preview-dialog";
+import { inlineLogoForPreview } from "@/lib/email/preview";
 import { resendNotification } from "@/lib/actions/notification-logs";
 import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
@@ -49,16 +50,23 @@ interface NotificationLog {
 
 interface NotificationLogTimelineProps {
   logs: NotificationLog[];
+  // Franchise https logo URL. The stored email HTML references the logo as
+  // cid:franchise-logo, which a browser iframe can't resolve; the preview
+  // rewrites it to this URL. Null when the franchise has no logo configured.
+  logoUrl: string | null;
 }
 
-export function NotificationLogTimeline({ logs }: NotificationLogTimelineProps) {
+export function NotificationLogTimeline({
+  logs,
+  logoUrl,
+}: NotificationLogTimelineProps) {
   const [previewHtml, setPreviewHtml] = useState("");
   const [previewSubject, setPreviewSubject] = useState("");
   const [previewOpen, setPreviewOpen] = useState(false);
   const [resendingId, setResendingId] = useState<string | null>(null);
 
   function openPreview(html: string, subject: string) {
-    setPreviewHtml(html);
+    setPreviewHtml(inlineLogoForPreview(html, logoUrl));
     setPreviewSubject(subject);
     setPreviewOpen(true);
   }

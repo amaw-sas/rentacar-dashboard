@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getReservation } from "@/lib/queries/reservations";
 import { getNotificationLogs } from "@/lib/queries/notification-logs";
+import { getFranchiseLogoUrl } from "@/lib/queries/franchises";
 import { NotificationLogTimeline } from "@/components/layout/notification-log-timeline";
 import { BOOKING_TYPE_LABELS, type ReservationStatus } from "@/lib/schemas/reservation";
 import { Button } from "@/components/ui/button";
@@ -46,7 +47,10 @@ export default async function ReservationDetailPage({
     notFound();
   }
 
-  const notificationLogs = await getNotificationLogs(id);
+  const [notificationLogs, franchiseLogoUrl] = await Promise.all([
+    getNotificationLogs(id),
+    getFranchiseLogoUrl(reservation.franchise),
+  ]);
 
   const customerName = reservation.customers
     ? `${reservation.customers.first_name} ${reservation.customers.last_name}`
@@ -207,7 +211,7 @@ export default async function ReservationDetailPage({
       </Card>
 
       {/* Notification History */}
-      <NotificationLogTimeline logs={notificationLogs} />
+      <NotificationLogTimeline logs={notificationLogs} logoUrl={franchiseLogoUrl} />
     </div>
   );
 }

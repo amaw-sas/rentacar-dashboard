@@ -2,6 +2,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { sendEmail, type SendAttachment } from "./send";
 import { renderEmail } from "./render";
 import { fetchLogoAttachment } from "./fetch-logo";
+import { LOGO_CONTENT_ID } from "./constants";
 import { ReservedClientEmail } from "./templates/reserved-confirmation";
 import { PendingClientEmail } from "./templates/pending-client";
 import { FailedClientEmail } from "./templates/failed-client";
@@ -166,7 +167,8 @@ function resolveLocalizaBcc(perFranchise: string | null): string | undefined {
 // that the invocation dispatches (1-4 emails), avoiding redundant fetches.
 // On fetch failure, franchiseLogo becomes undefined and the layout
 // renders the franchise name as text — graceful fallback.
-const LOGO_CONTENT_ID = "franchise-logo";
+// LOGO_CONTENT_ID is shared with the preview (lib/email/preview.ts) via
+// ./constants so the cid: reference never drifts between send and preview.
 
 async function prepareLogoForEmail(branding: FranchiseBranding): Promise<{
   branding: FranchiseBranding;

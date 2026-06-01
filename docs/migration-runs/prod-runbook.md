@@ -40,11 +40,27 @@ secuencia no pasa por `db push`.
 
 ## Checklist previo a la ventana (no técnico — responsabilidad de producto)
 
-- [ ] **Firma de producto** del 4.03 % de reservas que no migran (perfil y verificación en
-  `docs/migration-runs/dry-run-2026-05-29.md`: 97 % histórico 2024–2025, 15 de prueba de 2026
-  verificadas una a una, cero clientes reales perdidos).
-- [ ] **Ventana de bajo tráfico acordada** — miércoles o jueves según los operadores.
-- [ ] **Snapshot manual de Supabase tomado** justo antes de empezar (dashboard del proyecto).
+- [ ] **Firma de producto** del 4.03 % de reservas que no migran. Solicitud lista para enviar en
+  `docs/migration-runs/sign-off-request.md`; evidencia completa en `docs/migration-runs/dry-run-2026-05-29.md`
+  (97 % histórico 2024–2025, 15 de prueba de 2026 verificadas una a una, cero clientes reales perdidos).
+- [ ] **Ventana de bajo tráfico** — ver "Elegir la ventana" abajo. La operación dura ~30 s y
+  el tráfico es bajísimo (~5 reservas/día), así que la ventana es flexible; basta con un momento
+  de actividad suave. **Gate: no disparar el commit hasta tener la firma de producto + el snapshot.**
+- [ ] **Snapshot tomado** justo antes de empezar — ver "1 · Snapshot" (pg_dump dirigido, prod no tiene PITR).
+
+## Elegir la ventana
+
+El riesgo de la corrida es la escritura concurrente, no la carga operativa. El escritor que no
+se puede pausar es la **API pública de reservas**, y su tráfico (90 días, hora Colombia) lo dice
+claro: las franjas **01:00–05:00 COT están muertas** (0–1 reserva en 90 días) y el pico arranca
+a las 08:00. Por día, domingo (2.6/día) y lunes (3.7) son los más bajos; sábado/viernes los más
+altos. La anécdota de "miércoles/jueves" venía de la carga operativa (recogidas, llamadas), no de
+la escritura — por eso medimos.
+
+Dicho eso, con ~5 reservas/día y una operación de ~30 s, la probabilidad de una reserva
+concurrente es ~4 %, y aun así sería una fila distinta sin conflicto. **La ventana es flexible:**
+óptimo es día bajo + temprano (~06:00–07:00 COT, antes del surge), pero cualquier momento de
+actividad suave sirve. Lo que NO es flexible: la firma de producto y el snapshot van primero.
 
 ## Pasos de la ventana
 
@@ -55,11 +71,21 @@ el session pooler (5432) rechazó auth de forma intermitente en el dry-run de #2
 las 5 variables: `LEGACY_DB_HOST`, `LEGACY_DB_USER`, `LEGACY_DB_PASSWORD`, `LEGACY_DB_NAME`,
 `SUPABASE_DB_URL`.
 
-### 1 · Snapshot manual
+### 1 · Snapshot
 
-Tomar el snapshot manual de Supabase desde el dashboard del proyecto de prod. Anotar la hora.
-El snapshot es la red de seguridad; el rollback por marcador es el bisturí para deshacer solo
-lo que esta corrida insertó.
+Prod **no tiene PITR**, así que el "snapshot" no es un botón del dashboard: es un `pg_dump`
+dirigido de la única tabla que #23 muta con filas nuevas (`reservations`). El pase de customers
+es idempotente (`ON CONFLICT DO NOTHING`, solo agrega) y no se revierte, así que no necesita dump.
+
+```bash
+pg_dump "$SUPABASE_DB_URL" -t public.reservations --data-only \
+  -f docs/migration-runs/prod-reservations-pre23-$(date -u +%Y%m%dT%H%M%SZ).sql
+# NO commitear este archivo — puede contener PII. Guardarlo fuera del repo o borrarlo tras la firma.
+```
+
+El dump es la red de seguridad de respaldo; el **rollback por marcador** (paso de rollback) es el
+bisturí real, y borra solo lo que esta corrida insertó. `--snapshot-confirmed` en el launcher es
+tu atestación de que este `pg_dump` corrió.
 
 ### 2 · Verificar el esquema (ya aplicado)
 

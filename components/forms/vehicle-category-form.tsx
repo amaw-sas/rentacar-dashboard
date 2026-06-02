@@ -64,6 +64,7 @@ export function VehicleCategoryForm({
       luggage_count: 0,
       extra_km_charge: 0,
       has_ac: true,
+      picoyplaca_exempt: false,
       transmission: "manual",
       status: "active",
       ...defaultValues,
@@ -74,6 +75,7 @@ export function VehicleCategoryForm({
   const transmission = watch("transmission");
   const status = watch("status");
   const hasAc = watch("has_ac");
+  const picoyplacaExempt = watch("picoyplaca_exempt");
   const imageUrl = watch("image_url");
 
   async function onSubmit(data: VehicleCategoryFormData) {
@@ -245,6 +247,19 @@ export function VehicleCategoryForm({
             />
             <Label htmlFor="has_ac" className="cursor-pointer">
               Aire Acondicionado
+            </Label>
+          </div>
+
+          <div className="flex items-center gap-2 sm:col-span-2">
+            <Checkbox
+              id="picoyplaca_exempt"
+              checked={picoyplacaExempt}
+              onCheckedChange={(checked) =>
+                setValue("picoyplaca_exempt", checked === true)
+              }
+            />
+            <Label htmlFor="picoyplaca_exempt" className="cursor-pointer">
+              Exenta de pico y placa
             </Label>
           </div>
 

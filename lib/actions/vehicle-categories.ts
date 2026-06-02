@@ -11,6 +11,7 @@ export async function createVehicleCategory(
   const parsed = vehicleCategorySchema.safeParse({
     ...raw,
     has_ac: raw.has_ac === "true",
+    picoyplaca_exempt: raw.picoyplaca_exempt === "true",
   });
 
   if (!parsed.success) {
@@ -42,6 +43,7 @@ export async function updateVehicleCategory(
   const parsed = vehicleCategorySchema.safeParse({
     ...raw,
     has_ac: raw.has_ac === "true",
+    picoyplaca_exempt: raw.picoyplaca_exempt === "true",
   });
 
   if (!parsed.success) {

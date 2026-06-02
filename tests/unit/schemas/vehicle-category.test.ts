@@ -59,6 +59,15 @@ describe("vehicleCategorySchema", () => {
       expect(result.data.transmission).toBe("manual");
       expect(result.data.has_ac).toBe(true);
       expect(result.data.extra_km_charge).toBe(0);
+      // Issue #28 Ola B2: defaults to NOT exempt — a new gama pays pico y placa
+      // unless operations marks it otherwise.
+      expect(result.data.picoyplaca_exempt).toBe(false);
     }
+  });
+
+  it("accepts picoyplaca_exempt = true (issue #28 Ola B2)", () => {
+    const result = vehicleCategorySchema.safeParse({ ...valid, picoyplaca_exempt: true });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.picoyplaca_exempt).toBe(true);
   });
 });

@@ -10,6 +10,9 @@ export const vehicleCategorySchema = z.object({
   luggage_count: z.coerce.number().int().min(0).default(0),
   extra_km_charge: z.coerce.number().min(0).default(0),
   has_ac: z.boolean().default(true),
+  // Issue #28 Ola B2: true = exempt from pico y placa (web shows the
+  // "sin pico y placa" badge). Source of truth, replaces the web hardcoded list.
+  picoyplaca_exempt: z.boolean().default(false),
   transmission: z.enum(["automatic", "manual"]).default("manual"),
   status: z.enum(["active", "inactive"]).default("active"),
 });

@@ -6,6 +6,7 @@ import {
   resolveReferral,
 } from "@/lib/api/resolve-references";
 import { normalizeIdentificationType } from "@/lib/api/normalize-identification-type";
+import { snapshotFromCustomer } from "@/lib/queries/customers";
 import { sendReservationNotifications } from "@/lib/email/notifications";
 import { sendStatusWhatsApp } from "@/lib/wati/notifications";
 import { syncReservationToGhl } from "@/lib/ghl/sync";
@@ -249,10 +250,16 @@ export async function POST(request: Request) {
     // 8. Save reservation to DB
     const supabase = createAdminClient();
 
+    // Freeze the booker's identity from the STORED customer row the FK points
+    // to (issue #26). Sourced from customer_id, never the raw body, so a #25
+    // lenient CC-collision snapshots the resolved customer faithfully.
+    const customerSnapshot = await snapshotFromCustomer(supabase, customerId);
+
     const { data: inserted, error: insertError } = await supabase
       .from("reservations")
       .insert({
         customer_id: customerId,
+        ...customerSnapshot,
         rental_company_id: pickupLocation.rental_company_id,
         referral_id: referralId,
         referral_raw: referralRaw,

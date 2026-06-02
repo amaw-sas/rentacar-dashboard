@@ -110,3 +110,21 @@ X actualizado.
 
 Razón observable: la corrección explícita sobre R se refleja; las otras reservas de X
 quedan protegidas (no es una edición global).
+
+## SCEN-010: customer_id que no resuelve → la action retorna {error}, no lanza
+
+**Given**: el form de creación envía un `customer_id` UUID válido que ya no resuelve a
+una fila de `customers` (hard-delete TOCTOU, o form viejo/cacheado).
+**When**: `createReservation` corre y la lectura del snapshot no halla el cliente.
+**Then**: la action retorna `{ error }` (mostrable como toast); NO lanza al cliente; el
+insert de la reserva nunca se ejecuta.
+
+Razón observable: regresión descubierta en Step 2-4 (edge-case-detector, conf 0.88).
+Pre-#26 un `customer_id` inexistente caía al FK error y se devolvía gracioso; la lectura
+del snapshot (que lanza en `.single()` sin fila) debe preservar el contrato de actions
+(`conventions.md`: "lib/actions/ retorna {error} — nunca throw al cliente"). El caller
+(`reservation-form.tsx`) chequea `result.error`; un rejection se tragaría sin toast.
+La ruta pública API ya está protegida por su try/catch externo (no necesita fix).
+
+**Evidence**: test `returns { error } (does not throw) when the customer row is missing`
+en `tests/unit/actions/reservations.test.ts`; `sb.insert` verificado `not.toHaveBeenCalled()`.

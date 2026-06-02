@@ -47,13 +47,30 @@ function makeUpdateClient(eqResult: { error: DbError }) {
   return { client: { from } as unknown, from, update, eq };
 }
 
+// Default stored customer row served for from("customers") reads. Distinct
+// values per field so a snapshot assertion proves the source is the customer
+// row, not the form payload.
+const CUSTOMER_ROW = {
+  first_name: "Stored",
+  last_name: "Owner",
+  email: "stored@example.com",
+  phone: "+573001112233",
+  identification_type: "CC",
+  identification_number: "123456",
+};
+
 /**
- * Chainable Supabase stub for create path:
- *   from(table).insert(payload)
- * After insert, the action fires a select chain to fetch the inserted id —
- * stub that too so the post-insert path doesn't throw.
+ * Chainable Supabase stub for create path. createReservation now reads the
+ * customers row (issue #26 snapshot) BEFORE inserting the reservation, so the
+ * stub dispatches by table:
+ *   from("customers").select(cols).eq("id", id).single()  → customer row
+ *   from("reservations").insert(payload)                  → insert result
+ *   from("reservations").select(...).eq×3.order.limit.single() → inserted id
  */
-function makeInsertClient(insertResult: { error: DbError }) {
+function makeInsertClient(
+  insertResult: { error: DbError },
+  customerRow: typeof CUSTOMER_ROW | null = CUSTOMER_ROW,
+) {
   const insert = vi.fn().mockResolvedValue(insertResult);
   // select(...).eq(...).eq(...).eq(...).order(...).limit(...).single()
   const single = vi.fn().mockResolvedValue({ data: null, error: null });
@@ -62,8 +79,19 @@ function makeInsertClient(insertResult: { error: DbError }) {
   const eq3 = vi.fn().mockReturnValue({ order });
   const eq2 = vi.fn().mockReturnValue({ eq: eq3 });
   const eq1 = vi.fn().mockReturnValue({ eq: eq2 });
-  const select = vi.fn().mockReturnValue({ eq: eq1 });
-  const from = vi.fn().mockImplementation(() => ({ insert, select }));
+  const reservationSelect = vi.fn().mockReturnValue({ eq: eq1 });
+
+  // customers read: select(cols).eq("id", id).single()
+  const customerSingle = vi
+    .fn()
+    .mockResolvedValue({ data: customerRow, error: customerRow ? null : { message: "not found" } });
+  const customerEq = vi.fn().mockReturnValue({ single: customerSingle });
+  const customerSelect = vi.fn().mockReturnValue({ eq: customerEq });
+
+  const from = vi.fn().mockImplementation((table: string) => {
+    if (table === "customers") return { select: customerSelect };
+    return { insert, select: reservationSelect };
+  });
   return { client: { from } as unknown, from, insert };
 }
 
@@ -165,6 +193,49 @@ describe("createReservation", () => {
     const payload = sb.insert.mock.calls[0][0];
     expect(payload.referral_id).toBe(REFERRAL_ID);
     expect(payload.referral_raw).toBe("rentacar-web-attribution");
+  });
+
+  // SCEN-003: the dashboard create path freezes the customer snapshot onto the
+  // reservation (issue #26), sourced from the customers row that customer_id
+  // points to — not from the form fields.
+  it("writes the 5 snapshot fields sourced from the customer row on create", async () => {
+    const { createClient } = await import("@/lib/supabase/server");
+    const sb = makeInsertClient({ error: null });
+    vi.mocked(createClient).mockResolvedValue(
+      sb.client as Awaited<ReturnType<typeof createClient>>,
+    );
+
+    const { createReservation } = await import("@/lib/actions/reservations");
+    const result = await createReservation(validReservationForm());
+
+    expect(result).toEqual({});
+    expect(sb.from).toHaveBeenCalledWith("customers");
+
+    const payload = sb.insert.mock.calls[0][0];
+    expect(payload.customer_id).toBe(CUSTOMER_ID);
+    expect(payload.customer_name_at_booking).toBe("Stored Owner");
+    expect(payload.customer_email_at_booking).toBe("stored@example.com");
+    expect(payload.customer_phone_at_booking).toBe("+573001112233");
+    expect(payload.customer_identification_type_at_booking).toBe("CC");
+    expect(payload.customer_identification_number_at_booking).toBe("123456");
+  });
+
+  // SCEN-010: a customer_id that no longer resolves (TOCTOU hard-delete, stale
+  // form) must return { error } — never throw — so the form shows a toast. The
+  // snapshot read throws on a missing row; createReservation must catch it and
+  // preserve the action contract (conventions.md). Insert must never run.
+  it("returns { error } (does not throw) when the customer row is missing", async () => {
+    const { createClient } = await import("@/lib/supabase/server");
+    const sb = makeInsertClient({ error: null }, null); // customers read → no row
+    vi.mocked(createClient).mockResolvedValue(
+      sb.client as Awaited<ReturnType<typeof createClient>>,
+    );
+
+    const { createReservation } = await import("@/lib/actions/reservations");
+    const result = await createReservation(validReservationForm());
+
+    expect(result.error).toBeTruthy();
+    expect(sb.insert).not.toHaveBeenCalled();
   });
 });
 

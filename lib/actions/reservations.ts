@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { snapshotFromCustomer } from "@/lib/queries/customers";
 import {
   reservationSchema,
   VALID_TRANSITIONS,
@@ -60,7 +61,26 @@ export async function createReservation(
   }
 
   const supabase = await createClient();
-  const { error } = await supabase.from("reservations").insert(parsed.data);
+
+  // Freeze the booker's identity from the stored customers row (issue #26).
+  // Sourced from customer_id, never the form fields, so the snapshot reflects
+  // who the FK actually points to. The read throws on a missing row; catch it so
+  // a customer_id that no longer resolves returns { error } instead of throwing
+  // to the client (action contract, conventions.md). Pre-#26 this surfaced as a
+  // graceful FK error — preserve that.
+  let snapshot;
+  try {
+    snapshot = await snapshotFromCustomer(supabase, parsed.data.customer_id);
+  } catch {
+    return {
+      error:
+        "No se pudo cargar el cliente de la reserva. Recarga la página e intenta de nuevo.",
+    };
+  }
+
+  const { error } = await supabase
+    .from("reservations")
+    .insert({ ...parsed.data, ...snapshot });
 
   if (error) {
     return { error: error.message };

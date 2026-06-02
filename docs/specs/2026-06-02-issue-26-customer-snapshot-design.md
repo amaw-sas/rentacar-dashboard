@@ -75,7 +75,11 @@ resolved to — the customer row — not the submitted-but-discarded values. Oth
 snapshot would display values that never matched any customer record. (This is exactly
 why SCEN-2 includes a CC-collision variant.)
 
-A single helper centralizes this:
+Two mechanisms, each chosen for its race profile:
+
+**(a) INSERT — read-then-insert helper.** For the two write paths (which INSERT a new
+row), a server-only helper reads the customer and the caller spreads the result into
+the insert payload:
 
 ```ts
 // lib/queries/customers.ts (server-only read)
@@ -92,8 +96,39 @@ async function snapshotFromCustomer(
 ): Promise<CustomerSnapshot>
 ```
 
-**Client scoping (boundary rule).** The helper takes the Supabase client as a
-parameter and never imports one itself. The public API passes the **admin** client;
+INSERT is not guarded (trigger is `BEFORE UPDATE`), so the read-then-insert window is
+harmless: the snapshot reflects a near-current customer value, which is exactly the
+booking truth.
+
+**(b) UPDATE re-snapshot — single-statement RPC (race-free).** The two sanctioned
+re-snapshots (reassign, inline-edit) are UPDATEs, and they ARE guarded. A
+read-then-update via supabase-js would open a race: a concurrent global edit between
+the helper's read and the guarded write could make the guard's own re-read disagree
+with the captured value → **spurious rejection** (operator's save fails). PostgREST
+cannot express `SET col = (SELECT ...)`, so re-snapshot goes through a Postgres RPC
+that does the read and write in **one statement**:
+
+```sql
+CREATE FUNCTION resnapshot_reservation(p_id uuid) RETURNS void
+LANGUAGE sql AS $$
+  UPDATE reservations r SET
+    customer_name_at_booking                  = c.first_name || ' ' || c.last_name,
+    customer_email_at_booking                 = c.email,
+    customer_phone_at_booking                 = c.phone,
+    customer_identification_type_at_booking   = c.identification_type,
+    customer_identification_number_at_booking = c.identification_number
+  FROM customers c
+  WHERE r.id = p_id AND c.id = r.customer_id;
+$$;
+```
+
+Because the subquery join and the `BEFORE UPDATE` guard both read `customers` under
+the same statement's MVCC snapshot, the guard validates against the exact row the
+UPDATE used — no race, no spurious rejection. `SECURITY INVOKER` (default): runs under
+the caller's RLS. Callers invoke `supabase.rpc("resnapshot_reservation", { p_id })`.
+
+**Client scoping (boundary rule).** `snapshotFromCustomer` takes the Supabase client as
+a parameter and never imports one itself. The public API passes the **admin** client;
 the dashboard server actions pass the **RLS** client (`createClient()`). The RLS read
 relies on the customers SELECT policy (`007_customers.sql:17-20`, readable by any
 authenticated user). The helper must NEVER import `lib/supabase/admin` — that would
@@ -112,11 +147,14 @@ violate `architecture.md` (admin client is API-route-only).
 `customer_id`, so an edit can reassign the customer.
 
 - Read the reservation's current `customer_id` server-side (do not trust the client).
-- If `payload.customer_id !== current.customer_id` → `snapshotFromCustomer(rls, new)`
-  and include the 5 columns in the update. **Sanctioned re-snapshot #1.**
-- Otherwise → do **not** include snapshot columns in the payload. The snapshot stays
-  frozen even if the customer record mutated in between. This is the anti-corruption
-  invariant (SCEN-5).
+- If `payload.customer_id !== current.customer_id` → update the reservation **without**
+  snapshot columns (this UPDATE changes `customer_id` but leaves snapshot = OLD, so the
+  guard's `IS DISTINCT FROM OLD` check skips and allows it), then call
+  `resnapshot_reservation(id)` to align the snapshot with the new customer in one
+  guarded, race-free statement. **Sanctioned re-snapshot #1.**
+- Otherwise → do **not** include snapshot columns and do **not** call the RPC. The
+  snapshot stays frozen even if the customer record mutated in between. This is the
+  anti-corruption invariant (SCEN-5).
 
 ### Inline customer-contact edit — re-snapshot THIS reservation only
 
@@ -130,11 +168,24 @@ correction of *that* reservation. So after the customer update succeeds, re-snap
 reservations stay frozen (protected). UX: what you edit on the screen is what you see.
 
 Implementation: `updateCustomerContact(id, formData, reservationId?)` — when
-`reservationId` is provided (edit mode only; create mode has no row yet), after the
-customer `UPDATE` the action re-snapshots that single reservation via
-`snapshotFromCustomer(rls, id)`. **Sanctioned re-snapshot #2.** `customer_id` is
-unchanged here, so the trigger (below) is the mechanism that must allow it — which it
-does, because the new snapshot matches the just-updated customer row.
+`reservationId` is provided, after the customer `UPDATE` the action calls
+`resnapshot_reservation(reservationId)`. **Sanctioned re-snapshot #2.** `customer_id`
+is unchanged here, so the guard allows it because the new snapshot matches the
+just-updated customer row.
+
+- The form already holds the reservation id in edit mode (`reservation-form.tsx`
+  `isEditing = !!id`, and the existing `reservationId={id}` pattern at line ~490). The
+  call site at `reservation-form.tsx:272` (`updateCustomerContact(customerId, fd)`)
+  must be changed to pass `id` when editing. Create mode passes no id — the snapshot is
+  set at INSERT instead.
+- **Accepted residual race**: the customer UPDATE and the RPC are two separate
+  PostgREST transactions. If a *concurrent global edit of the same customer* lands
+  between them, the RPC re-reads the newer customer state and the reservation shows
+  that value rather than what the operator just typed. No guard rejection occurs (the
+  RPC is internally consistent); the only effect is the displayed value reflects the
+  concurrent edit. Two surfaces editing the same customer within milliseconds is
+  vanishingly rare and the result is still a real customer value — accepted, not
+  mitigated.
 
 ### Trigger — snapshot match-guard (defense in depth)
 
@@ -241,37 +292,55 @@ ALTER TABLE reservations
   ALTER COLUMN customer_name_at_booking SET NOT NULL, ... (5 cols);
 
 -- 4. create the guard function + trigger (LAST, after backfill)
+-- 5. create resnapshot_reservation(uuid) RPC (single-statement re-snapshot)
 ```
 
 Note: ETL placeholder last names are `'.'` (issue #19 Q1), so backfill yields
 `"Jose ."` for those — display-consistent with the existing live concatenation, just
-permanently frozen. Not a NULL hazard.
+permanently frozen. Not a NULL hazard. `phone` is `not null default ''`: an empty
+phone backfills `''` (a real value, not NULL), so the `*_at_booking ?? customers.*`
+render fallback returns `''` (frozen), never the live value — desired.
 
-After the migration: **`pnpm db:types`** to regenerate `lib/types/database.ts` (needs
-a running local Supabase), or TypeScript won't see the new columns.
+**Apply via MCP `apply_migration`, never `supabase db push`.** Migrations 049/051 are
+unapplied drop-marker rollback companions (memory `issue_23_preconditions_state`); a
+`db push` would drag those drops into prod. Rename the local file to
+`<timestamp>_053_<name>.sql` to match remote `schema_migrations`
+(memory `feedback_supabase_migration_naming`).
+
+After the migration: run **`pnpm db:types`** to regenerate `lib/types/database.ts`
+(needs a running local Supabase). Run it **after** the NOT NULL step is applied
+locally — otherwise the generated columns are typed `string | null` and the render
+fallback types end up looser than intended.
 
 ## Risks
 
-- `pnpm db:types` not run → compile blind to new columns.
+- `pnpm db:types` not run (or run before NOT NULL) → compile blind / looser nullable
+  types.
 - Inline-edit / reassign accidentally re-snapshots on every edit → re-introduces
   corruption. Guarded by the trigger (snapshot must match customer) + SCEN-5.
 - Trigger created before backfill → blocks the population UPDATE. Order above prevents
   this.
 - Force-cast types (`as unknown as`) hide field errors → rely on runtime/SCEN-1.
+- **Accepted concurrent-edit race** (inline-edit only): a global customer edit landing
+  between `updateCustomerContact` and `resnapshot_reservation` makes the snapshot
+  reflect the concurrent value, not the typed one. Rare; result is still a real
+  customer value; not mitigated. The single-statement RPC eliminates the in-statement
+  read/write race that would otherwise cause spurious guard rejections.
 
 ## Validation strategy
 
 ### Unit tests
 - `snapshotFromCustomer` maps the 5 fields from a customer row (incl. `"first ."`).
-- `updateReservation`: customer_id unchanged → payload excludes snapshot; changed →
-  payload includes re-snapshot.
-- `updateCustomerContact` with `reservationId` → re-snapshots that reservation.
+- `updateReservation`: customer_id unchanged → no snapshot write, no RPC call;
+  changed → reservation updated without snapshot cols + `resnapshot_reservation` called.
+- `updateCustomerContact` with `reservationId` → calls `resnapshot_reservation`;
+  without → does not.
 
 ### Integration (Supabase branch)
-- Trigger: rejects snapshot drift to non-matching values; allows reassign re-snapshot;
-  allows inline-edit re-snapshot (customer_id unchanged, matches updated customer);
-  allows status-only UPDATE (no snapshot change). Backfill populates every row;
-  NOT NULL holds.
+- `resnapshot_reservation` RPC: single-statement, sets snapshot = current customer row.
+- Trigger: rejects snapshot drift to non-matching values; allows the RPC re-snapshot
+  (reassign + inline-edit); allows status-only UPDATE (no snapshot change). Backfill
+  populates every row; NOT NULL holds.
 
 ### Runtime verification (`/agent-browser` on Vercel preview)
 - Create reservation → snapshot persisted. Edit customer from global Customers section

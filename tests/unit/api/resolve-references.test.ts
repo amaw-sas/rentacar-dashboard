@@ -94,7 +94,7 @@ describe("findOrCreateCustomer", () => {
     expect(spies.insert).not.toHaveBeenCalled();
   });
 
-  it("updates contact fields when identification matches but data differs (policy A)", async () => {
+  it("returns existing id WITHOUT mutating when identification matches but contact data differs (issue #25)", async () => {
     const { client, spies } = createMockSupabase({
       existing: {
         id: "existing-id",
@@ -110,18 +110,14 @@ describe("findOrCreateCustomer", () => {
     vi.mocked(createAdminClient).mockReturnValue(client as unknown as ReturnType<typeof createAdminClient>);
 
     const { findOrCreateCustomer } = await import("@/lib/api/resolve-references");
+    // Same CC, different name/email/phone — must NOT rewrite the existing record.
+    // A CC collision would otherwise rewrite the apparent owner of every past
+    // reservation tied to this customer (reservations only hold an FK).
     const id = await findOrCreateCustomer(INPUT);
 
     expect(id).toBe("existing-id");
-    expect(spies.update).toHaveBeenCalledTimes(1);
-    expect(spies.update).toHaveBeenCalledWith({
-      first_name: INPUT.first_name,
-      last_name: INPUT.last_name,
-      identification_type: INPUT.identification_type,
-      phone: INPUT.phone,
-      email: INPUT.email,
-    });
-    expect(spies.updateEq).toHaveBeenCalledWith("id", "existing-id");
+    expect(spies.update).not.toHaveBeenCalled();
+    expect(spies.updateEq).not.toHaveBeenCalled();
     expect(spies.insert).not.toHaveBeenCalled();
   });
 
@@ -154,24 +150,37 @@ describe("findOrCreateCustomer", () => {
     expect(spies.selectEq).toHaveBeenCalledWith("identification_number", INPUT.identification_number);
   });
 
-  it("throws when update fails", async () => {
-    const { client } = createMockSupabase({
-      existing: {
-        id: "existing-id",
-        first_name: "Otro",
-        last_name: "Nombre",
-        identification_type: INPUT.identification_type,
-        phone: INPUT.phone,
-        email: INPUT.email,
-      },
-      updateError: { message: "constraint violation" },
-    });
+  it("regression: real-on-test CC collision returns test customer id untouched (incident 2026-05-12)", async () => {
+    // Reproduces the incident: a real person (JOSE CHIACHIO) booked with CC 123456,
+    // which collided with the test customer 0c91b776 (test90/test90). The old code
+    // overwrote the test row with JOSE's data, retroactively rewriting the owner of
+    // every past reservation tied to it. The fix must leave the matched row untouched.
+    const testCustomer = {
+      id: "0c91b776",
+      first_name: "test90",
+      last_name: "test90",
+      identification_type: "CC",
+      phone: "+570000000000",
+      email: "test90@example.com",
+    };
+    const { client, spies } = createMockSupabase({ existing: testCustomer });
 
     const { createAdminClient } = await import("@/lib/supabase/admin");
     vi.mocked(createAdminClient).mockReturnValue(client as unknown as ReturnType<typeof createAdminClient>);
 
     const { findOrCreateCustomer } = await import("@/lib/api/resolve-references");
-    await expect(findOrCreateCustomer(INPUT)).rejects.toThrow(/Error al actualizar cliente/);
+    const id = await findOrCreateCustomer({
+      first_name: "JOSE",
+      last_name: "CHIACHIO",
+      identification_type: "CC",
+      identification_number: "123456",
+      phone: "+573009998877",
+      email: "jose@example.com",
+    });
+
+    expect(id).toBe("0c91b776");
+    expect(spies.update).not.toHaveBeenCalled();
+    expect(spies.insert).not.toHaveBeenCalled();
   });
 
   it("throws when insert fails", async () => {

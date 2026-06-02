@@ -30,9 +30,19 @@ export async function resolveLocationByCode(
 }
 
 /**
- * Find a customer by identification_number (canonical key).
- * If found, refresh contact fields from the reservation input (name, phone, email, identification_type).
- * If not found, create a new customer.
+ * Find a customer by identification_number (canonical key, matches the
+ * `customers_identification_number_key` UNIQUE constraint).
+ *
+ * On match: return the existing id WITHOUT writing. This endpoint is public
+ * (rentacar-web → POST /api/reservations) and must never mutate a customer
+ * record from booking input — a CC collision (real-on-real typo, or real-on-test)
+ * would otherwise silently rewrite the apparent owner of every past reservation
+ * tied to that customer, since `reservations` only holds an FK to `customer_id`.
+ * See issue #25 (incident 2026-05-12). Historical accuracy of the NEW reservation
+ * is handled by the paired snapshot-at-booking fix (#26).
+ *
+ * On no match: create a new customer.
+ *
  * Returns the customer id.
  */
 export async function findOrCreateCustomer(
@@ -42,36 +52,12 @@ export async function findOrCreateCustomer(
 
   const { data: existing } = await supabase
     .from("customers")
-    .select("id, first_name, last_name, identification_type, phone, email")
+    .select("id")
     .eq("identification_number", input.identification_number)
     .limit(1)
     .single();
 
   if (existing) {
-    const needsUpdate =
-      existing.first_name !== input.first_name ||
-      existing.last_name !== input.last_name ||
-      existing.identification_type !== input.identification_type ||
-      existing.phone !== input.phone ||
-      existing.email !== input.email;
-
-    if (needsUpdate) {
-      const { error: updateError } = await supabase
-        .from("customers")
-        .update({
-          first_name: input.first_name,
-          last_name: input.last_name,
-          identification_type: input.identification_type,
-          phone: input.phone,
-          email: input.email,
-        })
-        .eq("id", existing.id);
-
-      if (updateError) {
-        throw new Error(`Error al actualizar cliente: ${updateError.message}`);
-      }
-    }
-
     return existing.id;
   }
 

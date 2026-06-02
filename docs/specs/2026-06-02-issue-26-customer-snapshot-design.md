@@ -321,6 +321,10 @@ fallback types end up looser than intended.
 - Trigger created before backfill → blocks the population UPDATE. Order above prevents
   this.
 - Force-cast types (`as unknown as`) hide field errors → rely on runtime/SCEN-1.
+- **RLS no-op for `employee` role** (pre-existing, inherited): reservations UPDATE
+  policies are admin-only (`008_reservations.sql:81-86`), so both `updateReservation`
+  and `resnapshot_reservation` silently no-op for employee users. Not introduced by
+  #26 — noted so a silent no-op isn't mistaken for a snapshot bug.
 - **Accepted concurrent-edit race** (inline-edit only): a global customer edit landing
   between `updateCustomerContact` and `resnapshot_reservation` makes the snapshot
   reflect the concurrent value, not the typed one. Rare; result is still a real

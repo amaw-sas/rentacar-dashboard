@@ -64,7 +64,8 @@ export async function updateCustomer(
 // Only the 6 contact columns are written — notes/status stay untouched.
 export async function updateCustomerContact(
   id: string,
-  formData: FormData
+  formData: FormData,
+  reservationId?: string
 ): Promise<{ error?: string }> {
   if (!id) {
     return { error: "Cliente no seleccionado" };
@@ -89,6 +90,20 @@ export async function updateCustomerContact(
       return { error: "Ya existe un cliente con ese número de identificación" };
     }
     return { error: error.message };
+  }
+
+  // Inline contact edit from a reservation form re-snapshots ONLY that
+  // reservation (issue #26, SCEN-009): the explicit correction is reflected on
+  // R while the customer's other reservations stay frozen. The RPC reads the
+  // just-updated customers row, so the match-guard trigger accepts the write.
+  // Without a reservationId (edit from the customers page) nothing re-snapshots.
+  if (reservationId) {
+    const { error: rpcError } = await supabase.rpc("resnapshot_reservation", {
+      p_id: reservationId,
+    });
+    if (rpcError) {
+      return { error: rpcError.message };
+    }
   }
 
   revalidatePath("/customers");

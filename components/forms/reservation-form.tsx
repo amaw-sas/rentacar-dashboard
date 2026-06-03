@@ -269,7 +269,10 @@ export function ReservationForm({
       for (const [key, value] of Object.entries(parsed.data)) {
         fd.append(key, value);
       }
-      const result = await updateCustomerContact(customerId, fd);
+      // When editing an existing reservation, pass its id so the inline contact
+      // edit re-snapshots ONLY this reservation (issue #26, SCEN-009). On a new
+      // reservation `id` is undefined → no re-snapshot (no row exists yet).
+      const result = await updateCustomerContact(customerId, fd, id);
 
       if (result.error) {
         setCustomerError(result.error);

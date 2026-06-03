@@ -40,11 +40,43 @@ type DbError = { code?: string; message: string } | null;
  * The `update` spy captures the payload so tests can assert exactly which
  * columns will be written.
  */
-function makeUpdateClient(eqResult: { error: DbError }) {
-  const eq = vi.fn().mockResolvedValue(eqResult);
-  const update = vi.fn().mockReturnValue({ eq });
-  const from = vi.fn().mockReturnValue({ update });
-  return { client: { from } as unknown, from, update, eq };
+/**
+ * Chainable Supabase stub for the update path. updateReservation now reads the
+ * stored customer_id BEFORE updating (issue #26): a reassignment re-snapshots
+ * via the resnapshot RPC, a normal edit does not. The stub dispatches:
+ *   from("reservations").select("customer_id").eq("id", id).single() → current
+ *   from("reservations").update(payload).eq("id", id)                → result
+ *   rpc("resnapshot_reservation", { p_id })                          → result
+ */
+function makeUpdateClient(
+  eqResult: { error: DbError },
+  opts: {
+    currentCustomerId?: string;
+    fetchError?: DbError;
+    rpcError?: DbError;
+  } = {},
+) {
+  const {
+    currentCustomerId = CUSTOMER_ID,
+    fetchError = null,
+    rpcError = null,
+  } = opts;
+
+  // read: select("customer_id").eq("id", id).single()
+  const single = vi.fn().mockResolvedValue({
+    data: fetchError ? null : { customer_id: currentCustomerId },
+    error: fetchError,
+  });
+  const selectEq = vi.fn().mockReturnValue({ single });
+  const select = vi.fn().mockReturnValue({ eq: selectEq });
+
+  // write: update(payload).eq("id", id)
+  const updateEq = vi.fn().mockResolvedValue(eqResult);
+  const update = vi.fn().mockReturnValue({ eq: updateEq });
+
+  const from = vi.fn().mockReturnValue({ select, update });
+  const rpc = vi.fn().mockResolvedValue({ error: rpcError });
+  return { client: { from, rpc } as unknown, from, update, eq: updateEq, rpc, select };
 }
 
 // Default stored customer row served for from("customers") reads. Distinct
@@ -166,6 +198,98 @@ describe("updateReservation", () => {
     // Same precedent as issue #10 — status is stripped on update too.
     expect("status" in payload).toBe(false);
     expect(sb.eq).toHaveBeenCalledWith("id", "res-1");
+  });
+
+  // SCEN-004: changing customer_id reassigns the reservation; the snapshot must
+  // follow the NEW customer. The plain UPDATE leaves the snapshot columns frozen
+  // on the old customer, so the action calls the resnapshot RPC to refresh them.
+  it("re-snapshots via RPC when customer_id changes (reassign)", async () => {
+    const { createClient } = await import("@/lib/supabase/server");
+    // Stored owner differs from the form's customer_id → reassignment.
+    const OTHER_CUSTOMER = "55555555-5555-4555-8555-555555555555";
+    const sb = makeUpdateClient(
+      { error: null },
+      { currentCustomerId: OTHER_CUSTOMER },
+    );
+    vi.mocked(createClient).mockResolvedValue(
+      sb.client as Awaited<ReturnType<typeof createClient>>,
+    );
+
+    const { updateReservation } = await import("@/lib/actions/reservations");
+    const result = await updateReservation("res-1", validReservationForm());
+
+    expect(result).toEqual({});
+    // The UPDATE payload must NOT carry snapshot columns — the RPC owns them.
+    const payload = sb.update.mock.calls[0][0];
+    expect("customer_name_at_booking" in payload).toBe(false);
+    expect(sb.rpc).toHaveBeenCalledWith("resnapshot_reservation", {
+      p_id: "res-1",
+    });
+  });
+
+  // SCEN-005: editing a reservation WITHOUT changing customer_id must not touch
+  // the snapshot — the RPC is never called, so a concurrently-mutated customer
+  // row cannot re-corrupt the frozen identity.
+  it("does NOT re-snapshot when customer_id is unchanged (normal edit)", async () => {
+    const { createClient } = await import("@/lib/supabase/server");
+    // Stored owner equals the form's customer_id → no reassignment.
+    const sb = makeUpdateClient(
+      { error: null },
+      { currentCustomerId: CUSTOMER_ID },
+    );
+    vi.mocked(createClient).mockResolvedValue(
+      sb.client as Awaited<ReturnType<typeof createClient>>,
+    );
+
+    const { updateReservation } = await import("@/lib/actions/reservations");
+    const result = await updateReservation("res-1", validReservationForm());
+
+    expect(result).toEqual({});
+    expect(sb.rpc).not.toHaveBeenCalled();
+  });
+
+  // The RPC failing on reassign must surface as { error } (action contract).
+  it("returns { error } when the reassign RPC fails", async () => {
+    const { createClient } = await import("@/lib/supabase/server");
+    const sb = makeUpdateClient(
+      { error: null },
+      {
+        currentCustomerId: "55555555-5555-4555-8555-555555555555",
+        rpcError: { message: "resnapshot failed" },
+      },
+    );
+    vi.mocked(createClient).mockResolvedValue(
+      sb.client as Awaited<ReturnType<typeof createClient>>,
+    );
+
+    const { updateReservation } = await import("@/lib/actions/reservations");
+    const result = await updateReservation("res-1", validReservationForm());
+
+    expect(result).toEqual({ error: "resnapshot failed" });
+  });
+
+  // If the pre-read of the stored customer_id fails (e.g. the reservation was
+  // hard-deleted between page load and save), the action returns a friendly
+  // Spanish message — not the raw PostgREST error — and never proceeds to write.
+  it("returns a friendly { error } when the reservation pre-read fails", async () => {
+    const { createClient } = await import("@/lib/supabase/server");
+    const sb = makeUpdateClient(
+      { error: null },
+      { fetchError: { message: "PGRST116: no rows returned" } },
+    );
+    vi.mocked(createClient).mockResolvedValue(
+      sb.client as Awaited<ReturnType<typeof createClient>>,
+    );
+
+    const { updateReservation } = await import("@/lib/actions/reservations");
+    const result = await updateReservation("res-1", validReservationForm());
+
+    expect(result).toEqual({
+      error:
+        "No se pudo cargar la reserva. Recarga la página e intenta de nuevo.",
+    });
+    // Must not attempt the UPDATE after a failed pre-read.
+    expect(sb.update).not.toHaveBeenCalled();
   });
 });
 

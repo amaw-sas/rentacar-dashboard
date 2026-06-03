@@ -17,13 +17,15 @@ type EqResult = { error: { code?: string; message: string } | null };
 /**
  * Builds a chainable Supabase stub: from(table).update(payload).eq(col, val)
  * The update spy captures the payload so tests can assert exactly which
- * columns are written.
+ * columns are written. `rpc` stubs the resnapshot RPC (issue #26) so the
+ * inline-edit re-snapshot path (SCEN-009) can be asserted.
  */
-function makeSupabase(eqResult: EqResult) {
+function makeSupabase(eqResult: EqResult, rpcResult: EqResult = { error: null }) {
   const eq = vi.fn().mockResolvedValue(eqResult);
   const update = vi.fn().mockReturnValue({ eq });
   const from = vi.fn().mockReturnValue({ update });
-  return { client: { from } as unknown, from, update, eq };
+  const rpc = vi.fn().mockResolvedValue(rpcResult);
+  return { client: { from, rpc } as unknown, from, update, eq, rpc };
 }
 
 const validContact = {
@@ -152,5 +154,72 @@ describe("updateCustomerContact", () => {
     expect(result).toEqual({
       error: "permission denied for table customers",
     });
+  });
+
+  // SCEN-009: an inline contact edit from a reservation form re-snapshots ONLY
+  // that reservation. After the customers UPDATE, the action calls the RPC with
+  // the reservation id so R reflects the correction while X's other reservations
+  // stay frozen. The trigger accepts the matching write (RPC reads the same row).
+  it("re-snapshots only the given reservation after an inline contact edit (reservationId passed)", async () => {
+    const { createClient } = await import("@/lib/supabase/server");
+    const sb = makeSupabase({ error: null });
+    vi.mocked(createClient).mockResolvedValue(
+      sb.client as Awaited<ReturnType<typeof createClient>>,
+    );
+
+    const { updateCustomerContact } = await import("@/lib/actions/customers");
+    const result = await updateCustomerContact(
+      "cust-1",
+      formDataOf(validContact),
+      "res-1",
+    );
+
+    expect(result).toEqual({});
+    expect(sb.from).toHaveBeenCalledWith("customers");
+    expect(sb.rpc).toHaveBeenCalledWith("resnapshot_reservation", {
+      p_id: "res-1",
+    });
+  });
+
+  // SCEN-009 (companion): without a reservationId (e.g. editing a customer from
+  // the customers page, not from a reservation form), no re-snapshot fires — the
+  // global edit must NOT rewrite any reservation's frozen snapshot.
+  it("does NOT re-snapshot when no reservationId is given", async () => {
+    const { createClient } = await import("@/lib/supabase/server");
+    const sb = makeSupabase({ error: null });
+    vi.mocked(createClient).mockResolvedValue(
+      sb.client as Awaited<ReturnType<typeof createClient>>,
+    );
+
+    const { updateCustomerContact } = await import("@/lib/actions/customers");
+    const result = await updateCustomerContact(
+      "cust-1",
+      formDataOf(validContact),
+    );
+
+    expect(result).toEqual({});
+    expect(sb.rpc).not.toHaveBeenCalled();
+  });
+
+  // The RPC failing must surface as { error } (action contract) — not a silent
+  // success that leaves R's display stale relative to the just-saved contact.
+  it("returns { error } when the re-snapshot RPC fails", async () => {
+    const { createClient } = await import("@/lib/supabase/server");
+    const sb = makeSupabase(
+      { error: null },
+      { error: { message: "resnapshot failed" } },
+    );
+    vi.mocked(createClient).mockResolvedValue(
+      sb.client as Awaited<ReturnType<typeof createClient>>,
+    );
+
+    const { updateCustomerContact } = await import("@/lib/actions/customers");
+    const result = await updateCustomerContact(
+      "cust-1",
+      formDataOf(validContact),
+      "res-1",
+    );
+
+    expect(result).toEqual({ error: "resnapshot failed" });
   });
 });

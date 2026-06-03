@@ -46,7 +46,7 @@ The legacy schema (`docs/audit-workspace/01-legacy-schema-snapshot.md`) shows
 
 | Issue's proposed query | Real cost on this table |
 |---|---|
-| `SELECT COUNT(*)` | InnoDB **PK-index scan** — does NOT read the heavy `longText`/JSON columns, so far lighter than `SELECT *`, but still O(rows). |
+| `SELECT COUNT(*)` | InnoDB scans the clustered (PK) index — it walks the pages but does **not transfer or materialize** the heavy `longText`/JSON columns to the client, so far lighter than `SELECT *`, but still O(rows). |
 | `information_schema` bytes | Metadata only — **instant, zero table access**. |
 | `MIN/MAX(created_at)` | `created_at` is **unindexed** → **full table scan**. This is the dangerous one, not the COUNT. |
 
@@ -56,9 +56,19 @@ table-touching query with a server-side time budget.
 ## 4. Approach (A — tiered metadata-first + kill-switch)
 
 Run queries from least to most invasive, all under a **server-side
-`SET SESSION max_statement_time=15`** (MariaDB) that makes the *server* abort any
-query that overruns. This is the hard non-blocking guarantee — not a client-side
-promise. The session is also `SET SESSION TRANSACTION READ ONLY`.
+`SET SESSION max_statement_time=15`** (MariaDB, units = seconds, needs MariaDB
+≥10.1) that makes the *server* abort any query that overruns. This is the hard
+non-blocking guarantee — not a client-side promise. The session is also `SET
+SESSION TRANSACTION READ ONLY`.
+
+**Verify the kill-switch took effect.** Immediately after the SET, the script
+reads `SELECT @@max_statement_time` and records it in the report. If the server is
+too old (or the variable did not stick) and it reads back `0`/unsupported, the
+kill-switch is a silent no-op — which would defeat the whole non-blocking
+guarantee. In that case the script must **abort before any table-touching tier**
+(tiers 1–2 metadata/PK are still safe; tiers 3–4 are skipped and flagged
+`skipped: kill_switch_unconfirmed`) rather than run an unprotected `COUNT(*)`. The
+read-back also confirms `TRANSACTION READ ONLY` is in force.
 
 | Tier | Query | Cost | Always run? |
 |---|---|---|---|
@@ -185,11 +195,17 @@ finding, not an error.
   still complete, and the run **exits 0** with the timeout flagged in the summary.
 - **SCEN-005 — read-only.** The script issues only `SELECT` and `SET SESSION`
   statements and runs in a `TRANSACTION READ ONLY` session; it never writes to
-  legacy. (Verifiable: no `INSERT`/`UPDATE`/`DELETE` in the source; session is
+  legacy. (Verifiable both statically — no `INSERT`/`UPDATE`/`DELETE` in the
+  source — and at runtime: the post-SET read-back confirms the session is
   read-only.)
 - **SCEN-006 — report is PII-free and atomic.** The JSON report's keys are
   metadata/counts/timestamps only — no `request_parameters`, `processed_data`,
   `source_ip`, or any row payload — and it is written atomically (temp + rename).
+- **SCEN-007 — kill-switch unconfirmed.** If `SELECT @@max_statement_time`
+  reads back `0`/unsupported after the SET, the script runs ONLY the safe metadata
+  + PK tiers, **skips** the table-scanning tiers (3–4) with
+  `skipped: kill_switch_unconfirmed`, flags it loudly in the summary, and still
+  exits 0 — it never runs an unprotected `COUNT(*)` against prod legacy.
 
 ## 9. Test strategy
 

@@ -147,7 +147,7 @@ already-reviewed security and robustness:
 |---|---|---|
 | Exit-code contract (0/2/3/4/5/6) | `:46-53` | No commit/gate → no `7` |
 | `validate_env()` | `:539-541` | `REQUIRED_ENV` = the **4 `LEGACY_DB_*` vars only** (no `SUPABASE_DB_URL` — destination is never touched) |
-| `mask_db_url()` | `:496-536` | Security boundary — reused so connection errors never echo a credential |
+| credential-masking posture | `mask_db_url()` `:496-536` | The ETL masks a Postgres URL; this script has no `SUPABASE_DB_URL`, so it uses a small `mask_host()` helper instead and prints only `type(exc).__name__` on connect failure — same boundary (never echo a credential byte), different surface |
 | `connect_legacy()` (lazy `pymysql`, `connect_timeout=10`) | `:602-613` | Plus optional `LEGACY_DB_PORT` (default 3306, for the SSH tunnel), `max_statement_time`, and read-only session SETs right after connect |
 | `_atomic_write` / `report_paths` / report writer | `:544-596` | Atomic JSON + `/tmp` fallback |
 | Pure / lazy-driver split | whole file | `build_summary()` is a pure function so unit tests run on bare Python with no `pymysql` |

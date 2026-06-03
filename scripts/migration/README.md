@@ -440,3 +440,116 @@ gitignored, untracked `lib/types/database.ts` from the local stack — the
 generated types are not committed and no tracked code imports them, so the
 marker columns require no committed type change (same as #19's migration 048).
 Run it locally when applying the migration if you use the typed client.
+
+---
+
+# Sizing: legacy log_veh (issue #45, Phase 1)
+
+`size-log-veh.py` is a **read-only** script that dimensions the legacy
+`log_veh_available_rates_queries` table **before** anyone commits to an extraction
+method. It is the next concrete step of issue #45 (analytics extraction of the
+legacy search history, **outside** the productive ETL — it writes nothing to
+`public.search_logs` or anywhere else).
+
+Why it exists: a prior `SELECT *` against this prod table crashed the server, and
+the >3-month prune never ran, so the real volume is unknown. The script answers
+"how big, how deep" **without** risking a blocking scan.
+
+## Non-blocking by construction
+
+Every table-touching query runs under a server-side
+`SET SESSION max_statement_time=<budget>` (MariaDB, seconds) that the **server**
+aborts if it overruns — not a client-side promise. The script first verifies the
+budget took effect (`SELECT @@max_statement_time`); if it did not (e.g. the server
+is not MariaDB ≥10.1), it runs ONLY the safe tiers and **skips** the scanning
+tiers rather than run an unprotected `COUNT(*)`. The session is also
+`SET SESSION TRANSACTION READ ONLY`; the source issues only `SELECT` and
+`SET SESSION`.
+
+Two more guards back the server-side kill-switch: a **client-side `read_timeout`**
+(`max(2·budget, 30)s`) bounds any single statement even if the server does not
+honor `max_statement_time`, and `--budget` is **clamped to [1, 300]s** in code
+(MariaDB treats `max_statement_time = 0` as *unlimited*, so a 0/negative budget is
+rejected, not silently disarming). The first time you run tier 2 against a given
+server, confirm the PK span really is a seek:
+`EXPLAIN SELECT id, created_at FROM \`log_veh_available_rates_queries\` ORDER BY id DESC LIMIT 1`
+should show `key: PRIMARY`, `rows: 1`, `Backward index scan`.
+
+Tiers, least-invasive first:
+
+| Tier | Query | Cost |
+|---|---|---|
+| 1. metadata | `information_schema.TABLES` → approx rows + bytes | zero table access |
+| 2. temporal span | first/last row by PK (`ORDER BY id ASC/DESC LIMIT 1`) | two PK seeks, O(1) |
+| 3. exact count | `COUNT(*)` (time-boxed) | PK-index scan |
+| 4. exact range | `MIN/MAX(created_at)` — opt-in `--exact-range`, time-boxed | full scan |
+
+(`created_at` is unindexed in the legacy schema, so the exact range is a full
+scan — that is why tier 2 uses the auto-increment PK as an O(1) span proxy and the
+exact range is opt-in.)
+
+## Setup — SSH tunnel through the legacy app server
+
+Prod legacy MySQL is reachable only from the `rentacar` EC2 (the legacy
+`rentacar-admin` app server). Bring up a tunnel, then point the script at its local
+end:
+
+```bash
+# operator: forward a local port through the app server to the MySQL host
+ssh -fN -L 3307:<mysql-host>:3306 rentacar
+```
+
+Use the same venv as the ETL (`pymysql` + `python-dotenv` are enough). In
+`scripts/migration/.env` (gitignored) set:
+
+```
+LEGACY_DB_HOST=127.0.0.1
+LEGACY_DB_PORT=3307          # the tunnel's local port; optional, defaults to 3306
+LEGACY_DB_USER=<from the EC2 Laravel .env DB_USERNAME>
+LEGACY_DB_PASSWORD=<from the EC2 Laravel .env DB_PASSWORD>
+LEGACY_DB_NAME=<from the EC2 Laravel .env DB_DATABASE>
+```
+
+`SUPABASE_DB_URL` is **not** needed — this script never touches the destination.
+
+## Running
+
+```bash
+cd scripts/migration
+set -a && . ./.env && set +a
+python size-log-veh.py                 # tiers 1-3 (metadata + PK span + exact count)
+python size-log-veh.py --exact-range   # also tier 4 (exact MIN/MAX created_at)
+python size-log-veh.py --budget 30     # raise the server-side time budget (default 15s)
+echo $?
+```
+
+## Output
+
+- **JSON report** (PII-free, committable) at
+  `docs/migration-runs/size-log-veh-<UTC-stamp>.json` — atomic write, `/tmp`
+  fallback. It holds ONLY metadata, counts, and timestamps; never
+  `request_parameters` / `processed_data` / `source_ip` / any row payload.
+- **stdout summary** table (approx rows, exact rows or timed-out/skipped, byte
+  sizes, temporal span, kill-switch state).
+- Transcribe the numbers into
+  `docs/data-ops/2026-06-03-issue-45-size-log-veh/run-summary.md` and attach to #45;
+  that evidence selects the Phase-2 extraction method.
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| `0` | Run completed (a scanning tier the server time-boxed, or skipped because the kill-switch was unconfirmed, is still `0` — it is a finding, not an error) |
+| `2` | Legacy connection failure (host masked, no credentials echoed, no report) |
+| `3` | A query failed for a reason **other** than the time budget (real SQL/schema error) |
+| `4` | A required `LEGACY_DB_*` var missing or empty (no connection opened, no report) |
+| `5` | Report not persisted to ANY path (canonical AND `/tmp`) |
+| `6` | Unexpected/uncaught error (sanitized) |
+
+## Scenarios
+
+The holdout contract is
+`docs/specs/2026-06-03-issue-45-size-log-veh/scenarios/size-log-veh.scenarios.md`
+(SCEN-001 happy path, 002 env-missing, 003 connection-failure, 004 time-budget
+abort, 005 read-only, 006 PII-free + atomic, 007 kill-switch-unconfirmed). Pure
+functions are unit-tested in `test_size_log_veh.py` (bare Python, no driver).

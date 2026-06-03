@@ -42,9 +42,11 @@ export default async function ReferralDetailPage({
     pickup_hour: r.pickup_hour,
     total_price: r.total_price,
     tax_fee: r.tax_fee,
-    customer_name: r.customers
-      ? `${r.customers.first_name} ${r.customers.last_name}`.trim()
-      : null,
+    customer_name:
+      r.customer_name_at_booking ??
+      (r.customers
+        ? `${r.customers.first_name} ${r.customers.last_name}`.trim()
+        : null),
   }));
 
   return (

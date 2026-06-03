@@ -47,17 +47,24 @@ interface ReservationsTableProps {
 
 export const ALL_CITIES = ALL;
 
-function matchesSearch(row: ReservationRow, term: string) {
+// Search keys off the booking-time snapshot (issue #26) so an operator can find
+// a reservation by the identity the UI actually shows them. A global customer
+// edit changes the live join but not the snapshot, so the displayed name and the
+// searchable name stay in sync. Falls back to the live join defensively.
+export function matchesSearch(row: ReservationRow, term: string) {
   if (!term) return true;
   const needle = term.trim().toLowerCase();
   if (!needle) return true;
   const fields = [
-    row.customers
-      ? `${row.customers.first_name} ${row.customers.last_name}`
-      : "",
-    row.customers?.identification_number ?? "",
-    row.customers?.email ?? "",
-    row.customers?.phone ?? "",
+    row.customer_name_at_booking ??
+      (row.customers
+        ? `${row.customers.first_name} ${row.customers.last_name}`
+        : ""),
+    row.customer_identification_number_at_booking ??
+      row.customers?.identification_number ??
+      "",
+    row.customer_email_at_booking ?? row.customers?.email ?? "",
+    row.customer_phone_at_booking ?? row.customers?.phone ?? "",
     row.reservation_code ?? "",
   ];
   return fields.some((f) => f.toLowerCase().includes(needle));

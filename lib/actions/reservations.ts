@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { snapshotFromCustomer } from "@/lib/queries/customers";
 import {
   reservationSchema,
   VALID_TRANSITIONS,
@@ -60,7 +61,26 @@ export async function createReservation(
   }
 
   const supabase = await createClient();
-  const { error } = await supabase.from("reservations").insert(parsed.data);
+
+  // Freeze the booker's identity from the stored customers row (issue #26).
+  // Sourced from customer_id, never the form fields, so the snapshot reflects
+  // who the FK actually points to. The read throws on a missing row; catch it so
+  // a customer_id that no longer resolves returns { error } instead of throwing
+  // to the client (action contract, conventions.md). Pre-#26 this surfaced as a
+  // graceful FK error — preserve that.
+  let snapshot;
+  try {
+    snapshot = await snapshotFromCustomer(supabase, parsed.data.customer_id);
+  } catch {
+    return {
+      error:
+        "No se pudo cargar el cliente de la reserva. Recarga la página e intenta de nuevo.",
+    };
+  }
+
+  const { error } = await supabase
+    .from("reservations")
+    .insert({ ...parsed.data, ...snapshot });
 
   if (error) {
     return { error: error.message };
@@ -117,6 +137,27 @@ export async function updateReservation(
   } = parsed.data;
 
   const supabase = await createClient();
+
+  // Read the stored owner BEFORE the update to detect a reassignment (issue #26).
+  // The update payload never carries snapshot columns, so a plain UPDATE leaves
+  // them frozen on the old customer. On reassignment we refresh them via the
+  // single-statement RPC (race-free: the guard validates against the same
+  // customers row the RPC reads). An unchanged customer_id skips the RPC so a
+  // concurrently-mutated customer row cannot re-corrupt the frozen identity
+  // (SCEN-005).
+  const { data: current, error: fetchError } = await supabase
+    .from("reservations")
+    .select("customer_id")
+    .eq("id", id)
+    .single();
+
+  if (fetchError) {
+    return {
+      error:
+        "No se pudo cargar la reserva. Recarga la página e intenta de nuevo.",
+    };
+  }
+
   const { error } = await supabase
     .from("reservations")
     .update(updatePayload)
@@ -124,6 +165,15 @@ export async function updateReservation(
 
   if (error) {
     return { error: error.message };
+  }
+
+  if (current.customer_id !== updatePayload.customer_id) {
+    const { error: rpcError } = await supabase.rpc("resnapshot_reservation", {
+      p_id: id,
+    });
+    if (rpcError) {
+      return { error: rpcError.message };
+    }
   }
 
   revalidatePath("/reservations");

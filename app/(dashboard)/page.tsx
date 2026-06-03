@@ -173,6 +173,11 @@ export default async function DashboardPage() {
                         ? rawCustomer[0]
                         : rawCustomer;
                       const status = r.status as string;
+                      const customerName =
+                        r.customer_name_at_booking ??
+                        (customer
+                          ? `${customer.first_name} ${customer.last_name}`
+                          : "—");
 
                       return (
                         <tr key={r.id} className="border-b last:border-0">
@@ -185,9 +190,7 @@ export default async function DashboardPage() {
                             </Link>
                           </td>
                           <td className="py-2 truncate max-w-[140px]">
-                            {customer
-                              ? `${customer.first_name} ${customer.last_name}`
-                              : "—"}
+                            {customerName}
                           </td>
                           <td className="py-2">
                             <Badge

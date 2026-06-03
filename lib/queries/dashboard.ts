@@ -102,7 +102,7 @@ export async function getRecentReservations(limit = 5) {
   const { data, error } = await supabase
     .from("reservations")
     .select(
-      "id, reservation_code, status, total_price, pickup_date, created_at, customers(first_name, last_name)"
+      "id, reservation_code, status, total_price, pickup_date, created_at, customer_name_at_booking, customers(first_name, last_name)"
     )
     .order("created_at", { ascending: false })
     .limit(limit);

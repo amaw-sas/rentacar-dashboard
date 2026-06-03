@@ -149,9 +149,10 @@ export default async function CommissionDetailPage({
                 <dd>{copFormat.format(reservation.total_price)}</dd>
                 <dt className="text-muted-foreground">Cliente</dt>
                 <dd>
-                  {reservation.customers
-                    ? `${reservation.customers.first_name} ${reservation.customers.last_name}`
-                    : "—"}
+                  {reservation.customer_name_at_booking ??
+                    (reservation.customers
+                      ? `${reservation.customers.first_name} ${reservation.customers.last_name}`
+                      : "—")}
                 </dd>
               </dl>
             </div>

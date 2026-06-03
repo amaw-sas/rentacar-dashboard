@@ -28,6 +28,11 @@ export type ReservationRow = {
   total_price_localiza: number;
   referral_id: string | null;
   referral_raw: string | null;
+  customer_name_at_booking?: string | null;
+  customer_email_at_booking?: string | null;
+  customer_phone_at_booking?: string | null;
+  customer_identification_type_at_booking?: string | null;
+  customer_identification_number_at_booking?: string | null;
   customers: {
     first_name: string;
     last_name: string;
@@ -133,14 +138,17 @@ export const columns: ColumnDef<ReservationRow, unknown>[] = [
   {
     id: "customer",
     accessorFn: (row) =>
-      row.customers
+      row.customer_name_at_booking ??
+      (row.customers
         ? `${row.customers.first_name} ${row.customers.last_name}`
-        : "",
+        : ""),
     header: "Nombre",
     cell: ({ row }) => {
       const c = row.original.customers;
-      if (!c) return "—";
-      const fullName = `${c.first_name} ${c.last_name}`;
+      const fullName =
+        row.original.customer_name_at_booking ??
+        (c ? `${c.first_name} ${c.last_name}` : null);
+      if (!fullName) return "—";
       return (
         <Link
           href={`/reservations/${row.original.id}`}
@@ -154,7 +162,10 @@ export const columns: ColumnDef<ReservationRow, unknown>[] = [
   },
   {
     id: "identification",
-    accessorFn: (row) => row.customers?.identification_number ?? "",
+    accessorFn: (row) =>
+      row.customer_identification_number_at_booking ??
+      row.customers?.identification_number ??
+      "",
     header: "ID",
     cell: ({ getValue }) => (
       <CopyableText value={getValue<string>()} label="ID" maxLength={ID_MAX} />
@@ -162,7 +173,8 @@ export const columns: ColumnDef<ReservationRow, unknown>[] = [
   },
   {
     id: "phone",
-    accessorFn: (row) => row.customers?.phone ?? "",
+    accessorFn: (row) =>
+      row.customer_phone_at_booking ?? row.customers?.phone ?? "",
     header: "Teléfono",
     cell: ({ getValue }) => (
       <CopyableText
@@ -174,7 +186,8 @@ export const columns: ColumnDef<ReservationRow, unknown>[] = [
   },
   {
     id: "email",
-    accessorFn: (row) => row.customers?.email ?? "",
+    accessorFn: (row) =>
+      row.customer_email_at_booking ?? row.customers?.email ?? "",
     header: "Email",
     cell: ({ getValue }) => (
       <CopyableText

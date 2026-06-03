@@ -12,6 +12,13 @@
 -- block the initial population.
 -- See docs/specs/2026-06-02-issue-26-customer-snapshot-design.md
 
+-- Apply-time safety: the backfill UPDATE and the SET NOT NULL (full-table validate,
+-- ACCESS EXCLUSIVE) rewrite/scan every reservations row (~12k in prod). Bound the lock
+-- and statement so a slow prod apply fails fast and rolls back cleanly instead of hanging
+-- the migration session or blocking a concurrent booking / cron. Both are transaction-local.
+set local lock_timeout = '5s';
+set local statement_timeout = '120s';
+
 -- 1. snapshot columns (nullable so the backfill can populate before NOT NULL)
 alter table public.reservations
   add column customer_name_at_booking                  text,

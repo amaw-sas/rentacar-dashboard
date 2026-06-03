@@ -2,7 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 
 const COMMISSION_SELECT = `
   *,
-  reservations(id, reservation_code, status, total_price, customers(first_name, last_name))
+  reservations(id, reservation_code, status, total_price, customer_name_at_booking, customers(first_name, last_name))
 `;
 
 export async function getCommissions(filters?: {

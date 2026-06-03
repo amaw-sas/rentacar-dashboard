@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { matchesCity, ALL_CITIES } from "@/app/(dashboard)/reservations/reservations-table";
+import {
+  matchesCity,
+  matchesSearch,
+  ALL_CITIES,
+} from "@/app/(dashboard)/reservations/reservations-table";
 import type { ReservationRow } from "@/app/(dashboard)/reservations/columns";
 
 const baseRow: ReservationRow = {
@@ -63,5 +67,59 @@ describe("matchesCity predicate", () => {
       pickup_location: { name: "Sin ciudad", city_id: null, cities: null },
     };
     expect(matchesCity(row, "city-bog")).toBe(false);
+  });
+});
+
+// SCEN-001 (search divergence): search must key off the booking-time snapshot,
+// not the live join. After a global edit "Jose"→"test90", the row still DISPLAYS
+// "Jose" (snapshot), so searching "Jose" must find it; searching "test90" (a
+// value shown nowhere on this row) must NOT match. Otherwise the operator cannot
+// find a reservation by the identity the UI shows them.
+describe("matchesSearch predicate — snapshot-aware (issue #26)", () => {
+  // Row whose snapshot froze "Jose" while the live customer was later edited to
+  // "test90". Same divergence for id/email/phone.
+  const frozenRow: ReservationRow = {
+    ...baseRow,
+    customer_name_at_booking: "Jose Perez",
+    customer_identification_number_at_booking: "111111",
+    customer_email_at_booking: "jose@example.com",
+    customer_phone_at_booking: "+57 300 1110000",
+    customers: {
+      first_name: "test90",
+      last_name: "X",
+      identification_number: "999999",
+      phone: "+57 300 9999999",
+      email: "test90@example.com",
+    },
+  };
+
+  it("matches the booking-time name shown in the UI", () => {
+    expect(matchesSearch(frozenRow, "jose")).toBe(true);
+  });
+
+  it("does NOT match the live (post-edit) name that is shown nowhere on the row", () => {
+    expect(matchesSearch(frozenRow, "test90")).toBe(false);
+  });
+
+  it("matches the booking-time identification, email and phone", () => {
+    expect(matchesSearch(frozenRow, "111111")).toBe(true);
+    expect(matchesSearch(frozenRow, "jose@example.com")).toBe(true);
+    expect(matchesSearch(frozenRow, "1110000")).toBe(true);
+  });
+
+  it("does NOT match the live identification/email shown nowhere on the row", () => {
+    expect(matchesSearch(frozenRow, "999999")).toBe(false);
+    expect(matchesSearch(frozenRow, "test90@example.com")).toBe(false);
+  });
+
+  it("falls back to the live join when no snapshot is present (defensive)", () => {
+    // A row with no snapshot (theoretical — columns are NOT NULL in prod) must
+    // still be searchable by its live join values.
+    expect(matchesSearch(baseRow, "daniela")).toBe(true);
+    expect(matchesSearch(baseRow, "1007489090")).toBe(true);
+  });
+
+  it("still matches the reservation_code regardless of snapshot", () => {
+    expect(matchesSearch(frozenRow, "av6oxgxgp")).toBe(true);
   });
 });

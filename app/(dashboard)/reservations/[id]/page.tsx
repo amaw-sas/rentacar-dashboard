@@ -54,9 +54,11 @@ export default async function ReservationDetailPage({
     getFranchiseLogoUrl(reservation.franchise).catch(() => null),
   ]);
 
-  const customerName = reservation.customers
-    ? `${reservation.customers.first_name} ${reservation.customers.last_name}`
-    : "—";
+  const customerName =
+    reservation.customer_name_at_booking ??
+    (reservation.customers
+      ? `${reservation.customers.first_name} ${reservation.customers.last_name}`
+      : "—");
 
   const bookingTypeLabel =
     BOOKING_TYPE_LABELS[

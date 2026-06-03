@@ -13,6 +13,7 @@ type ReservationResult = {
   reservation_code: string | null;
   status: string;
   total_price: number;
+  customer_name_at_booking: string | null;
   customers: { first_name: string; last_name: string }[] | null;
 };
 
@@ -44,7 +45,7 @@ export function CommissionLinkForm({
     const { data, error: searchError } = await supabase
       .from("reservations")
       .select(
-        "id, reservation_code, status, total_price, customers(first_name, last_name)"
+        "id, reservation_code, status, total_price, customer_name_at_booking, customers(first_name, last_name)"
       )
       .ilike("reservation_code", `%${searchCode.trim()}%`)
       .limit(10);
@@ -117,9 +118,10 @@ export function CommissionLinkForm({
                   {reservation.reservation_code}
                 </span>
                 {" — "}
-                {reservation.customers?.[0]
-                  ? `${reservation.customers[0].first_name} ${reservation.customers[0].last_name}`
-                  : "Sin cliente"}
+                {reservation.customer_name_at_booking ??
+                  (reservation.customers?.[0]
+                    ? `${reservation.customers[0].first_name} ${reservation.customers[0].last_name}`
+                    : "Sin cliente")}
                 {" — "}
                 {copFormat.format(reservation.total_price)}
                 {" — "}

@@ -128,3 +128,26 @@ La ruta pública API ya está protegida por su try/catch externo (no necesita fi
 
 **Evidence**: test `returns { error } (does not throw) when the customer row is missing`
 en `tests/unit/actions/reservations.test.ts`; `sb.insert` verificado `not.toHaveBeenCalled()`.
+
+## SCEN-011: read paths adyacentes (búsqueda + comisiones) también muestran el snapshot
+
+**Given**: una reserva cuyo cliente "Jose" fue editado globalmente a "test90".
+**When**: (a) un operador busca "Jose" en el filtro del listado de reservas;
+(b) abre el detalle de una comisión vinculada a esa reserva;
+(c) busca esa reserva en el form de vinculación de comisiones.
+**Then**: (a) el filtro la encuentra por "Jose" (lo que muestra la UI) y NO por "test90";
+(b) el detalle de comisión muestra "Jose"; (c) el picker muestra "Jose".
+
+Razón observable: extensión de scope aprobada por el usuario (2026-06-03). Adyacentes a
+los 5 surfaces de SCEN-001 pero misma clase de bug anti-corrupción: todo read path
+atado a la reserva debe seguir el snapshot, no el join vivo. El filtro de búsqueda es la
+misma superficie del listado — si buscara por el join vivo, el operador no podría hallar
+la reserva por la identidad que la UI le muestra. Notificaciones y el perfil del cliente
+quedan FUERA (viven por diseño, ver SCEN-007 / SCEN-001).
+
+**Evidence**: tests `matchesSearch predicate — snapshot-aware` en
+`tests/unit/components/reservations-table-filters.test.tsx` (red-green verificado:
+4 fallos con lógica join-vivo, 12/12 con snapshot); selects con `customer_name_at_booking`
+en `lib/queries/commissions.ts` (COMMISSION_SELECT) y `commission-link-form.tsx`; renders
+con fallback `customer_name_at_booking ?? <join>` en `commissions/[id]/page.tsx` y
+`commission-link-form.tsx`. Detalle de comisión + picker: QA runtime en Step 11.

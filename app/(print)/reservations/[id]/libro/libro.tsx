@@ -29,6 +29,7 @@ type LibroReservation = {
   baby_seat: boolean;
   wash: boolean;
   extra_driver: boolean;
+  customer_name_at_booking?: string | null;
   customers: { first_name: string; last_name: string } | null;
   pickup_location: {
     name: string;
@@ -110,9 +111,11 @@ export function Libro({
   const vehicleImage = pickVehicleImage(category, models);
   const companyName = reservation.rental_companies?.name ?? "";
   const reservationCode = reservation.reservation_code ?? "";
-  const customerName = reservation.customers
-    ? `${reservation.customers.first_name} ${reservation.customers.last_name}`.trim()
-    : "";
+  const customerName =
+    reservation.customer_name_at_booking ??
+    (reservation.customers
+      ? `${reservation.customers.first_name} ${reservation.customers.last_name}`.trim()
+      : "");
 
   return (
     <div className="libro mx-auto flex min-h-screen w-full max-w-[1280px] flex-col bg-white text-neutral-900">

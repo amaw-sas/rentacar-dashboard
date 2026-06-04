@@ -79,11 +79,15 @@ for each [lo, hi] PK window of size CHUNK_ROWS:
     if chunk present AND status=="verified" in manifest: skip            # resume
     ( mysqldump --defaults-extra-file=<tmp> --single-transaction --quick \
                 --no-tablespaces --skip-lock-tables --hex-blob \
-                --default-character-set=<charset> \
+                --skip-extended-insert --default-character-set=<charset> \
                 --where="id BETWEEN lo AND hi" DB TABLE \
         | gzip > chunk-NNNNN-<lo>-<hi>.sql.gz.partial )                  # under per-chunk watchdog (§4, I4)
     gzip -t                                                              # integrity
-    rows_in_chunk = (count INSERT tuples) ; range_count = COUNT(*) WHERE id BETWEEN lo AND hi
+    # --skip-extended-insert => exactly ONE `INSERT INTO` statement per row, so the
+    # row count is an unambiguous O(1)-memory line count, immune to `),(` appearing
+    # inside response_raw (which would break any extended-insert tuple split) (N1):
+    rows_in_chunk = count of lines matching ^INSERT INTO `TABLE` in the gunzip stream
+    range_count   = COUNT(*) WHERE id BETWEEN lo AND hi
     assert rows_in_chunk == range_count                                 # EXACT, per range
     if rows_in_chunk == 0: assert range_count == 0                      # empty-range vs failed-dump (M9)
     sha256, atomic rename .partial -> final, append manifest entry status="verified"
@@ -231,6 +235,7 @@ copied into the run-summary):
   "rows_arrived_during_run": 48,
   "chunk_rows": 25000,
   "expected_rows_approx": 657984,
+  "_comment_expected_rows_approx": "Phase-1 sizing ESTIMATE only — NOT part of the complete:true gate; only total_rows == reconciled_count matters",
   "append_only_precondition": {"rows_updated_after_insert": 0},
   "consistency": "point-in-time",
   "chunks": [
@@ -273,7 +278,12 @@ moves this directory to durable secure storage afterward (out of scope here).
   preserve verified chunks, write `complete:false`, exit 5 (resumable).
 - **Mid-run interruption** (kill / crash / wake) → re-invocation reads the manifest
   and resumes; a chunk counts as verified only by
-  `(range present + sha256 match + gzip -t ok + rows == range_count)`.
+  `(range present + sha256 match + gzip -t ok + rows == range_count)`. The manifest
+  is the **sole source of verified-ness** (the recorded sha256 is what "match" is
+  against). If the manifest is absent or corrupt, resume treats **no** chunk as
+  verified and cold-starts — every range is re-dumped via `.partial` + atomic
+  rename (safe overwrite). No chunk is ever trusted on `gzip -t`/presence alone
+  without its manifest sha256 (N2).
 - **Completeness verdict** (end of run): `complete:true` requires the exact
   three-part reconciliation in §3 (all ranges verified · partition with no
   gap/overlap · `sum(rows) == reconciled_count` EXACTLY). Any shortfall →

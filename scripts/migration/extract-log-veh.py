@@ -413,27 +413,30 @@ def parse_legacy_env(env_blob: str) -> dict:
     return out
 
 
-def build_defaults_extra_file_content(creds: dict) -> str:
+def build_defaults_extra_file_content(creds: dict, *, local_port: int = 3307) -> str:
     """Build the `[mysqldump]` ini for `--defaults-extra-file` (written 0600).
 
     The password reaches `mysqldump` ONLY through this file — NEVER as `-p<pass>`
-    on argv (which `ps` would expose). Emits user/password (and host/port/database
-    when present). Values are not quoted: a MySQL option file reads the rest of
-    the line verbatim, so a `#` or space in the password is preserved (quoting
-    would corrupt it). `host`/`port` point at the local tunnel end.
+    on argv (which `ps` would expose). Values are not quoted: a MySQL option file
+    reads the rest of the line verbatim, so a `#` or space in the password is
+    preserved (quoting would corrupt it).
+
+    host/port are pinned to the LOCAL tunnel end (`127.0.0.1:<local_port>`), NEVER
+    `creds["DB_HOST"]` — that is the remote RDS endpoint (the tunnel TARGET used by
+    `ensure_tunnel`), unreachable from the workstation, and `127.0.0.1` also avoids
+    the `localhost`→Unix-socket bypass from Phase 1.
     """
     user = creds.get("DB_USERNAME") or creds.get("user") or ""
     password = creds.get("DB_PASSWORD")
     if password is None:
         password = creds.get("password", "")
-    lines = ["[mysqldump]", f"user={user}", f"password={password}"]
-    host = creds.get("DB_HOST") or creds.get("host")
-    port = creds.get("DB_PORT") or creds.get("port")
-    if host:
-        lines.append(f"host={host}")
-    if port:
-        lines.append(f"port={port}")
-    return "\n".join(lines) + "\n"
+    return "\n".join([
+        "[mysqldump]",
+        f"user={user}",
+        f"password={password}",
+        "host=127.0.0.1",
+        f"port={int(local_port)}",
+    ]) + "\n"
 
 
 # =========================================================================== #
@@ -691,7 +694,7 @@ def run_dir_for(stamp: str, repo_root: Path | None = None) -> Path:
 # =========================================================================== #
 # Thin IO wrappers — LAZY imports; validated live in Step 10, not in unit tests.
 # =========================================================================== #
-def fetch_legacy_creds(ssh_host: str = "rentacar", env_path: str = "/home/rentacar/.env") -> dict:
+def fetch_legacy_creds(ssh_host: str = "rentacar", env_path: str = "/home/rentacar/rentacar-admin/.env") -> dict:
     """Fetch the 5 DB_* creds via `ssh <host> 'sudo cat <env_path>'`. SSH IO.
 
     Runs the remote `sudo cat`, pipes the WHOLE .env over stdout, and immediately
@@ -938,7 +941,9 @@ def run(args) -> int:
         return EXIT_CONNECTION
 
     defaults_path = run_dir / ".defaults-extra.cnf"
-    _atomic_write(defaults_path, build_defaults_extra_file_content(creds), mode=0o600)
+    _atomic_write(defaults_path,
+                  build_defaults_extra_file_content(creds, local_port=int(args.local_port)),
+                  mode=0o600)
     # The 0600 creds file carries the live DB password. Design §4.1 mandates it be
     # unlinked on exit. Register an atexit hook as belt-and-suspenders (covers a
     # hard process exit); the `finally` below is the primary path (fix #2).

@@ -396,11 +396,24 @@ class EmptyTableDisposition(unittest.TestCase):
 # SCEN-006 — secrets hygiene: no password on argv, defaults-file builder, status.
 # =========================================================================== #
 class DefaultsExtraFile(unittest.TestCase):
+    def test_routes_to_local_tunnel_not_remote_rds(self):
+        # creds["DB_HOST"] is the REMOTE RDS endpoint — the tunnel TARGET used by
+        # ensure_tunnel. mysqldump must connect to the LOCAL tunnel end
+        # (127.0.0.1:local_port), NEVER the RDS endpoint directly (unreachable from
+        # the workstation). The creds host/port must not leak into the dump routing.
+        content = elv.build_defaults_extra_file_content({
+            "DB_USERNAME": "legacyuser", "DB_PASSWORD": "s3cr3t#pw",
+            "DB_HOST": "rentacar-admin.cg06abcd.us-west-2.rds.amazonaws.com",
+            "DB_PORT": "3306",
+        }, local_port=3307)
+        self.assertIn("host=127.0.0.1", content)
+        self.assertIn("port=3307", content)
+        self.assertNotIn("rds.amazonaws.com", content)
+
     def test_password_under_mysqldump_section(self):
         content = elv.build_defaults_extra_file_content({
             "DB_USERNAME": "legacyuser", "DB_PASSWORD": "s3cr3t#pw",
-            "DB_HOST": "127.0.0.1", "DB_PORT": "3307",
-        })
+        }, local_port=3307)
         self.assertIn("[mysqldump]", content)
         self.assertIn("user=legacyuser", content)
         self.assertIn("password=s3cr3t#pw", content)  # hash preserved, not stripped
@@ -408,7 +421,7 @@ class DefaultsExtraFile(unittest.TestCase):
     def test_password_with_space_preserved_unquoted(self):
         content = elv.build_defaults_extra_file_content({
             "DB_USERNAME": "u", "DB_PASSWORD": "two words",
-        })
+        }, local_port=3307)
         self.assertIn("password=two words", content)
 
 

@@ -433,6 +433,12 @@ class MysqldumpArgv(unittest.TestCase):
                      "--skip-lock-tables", "--hex-blob", "--skip-extended-insert"):
             self.assertIn(flag, self.argv)
 
+    def test_compress_flag_present(self):
+        # --compress compresses the client<->server protocol over the SSH tunnel
+        # (~5-6x less wire bytes for this JSON/text data). Transport-only: it does
+        # NOT alter the dumped bytes, so SCEN-005a byte fidelity is unaffected.
+        self.assertIn("--compress", self.argv)
+
     def test_runtime_charset_not_hardcoded(self):
         self.assertIn("--default-character-set=utf8mb4", self.argv)
         # A different detected charset flows through verbatim.

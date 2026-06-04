@@ -79,7 +79,7 @@ for each [lo, hi] PK window of size CHUNK_ROWS:
     if chunk present AND status=="verified" in manifest: skip            # resume
     ( mysqldump --defaults-extra-file=<tmp> --single-transaction --quick \
                 --no-tablespaces --skip-lock-tables --hex-blob \
-                --skip-extended-insert --default-character-set=<charset> \
+                --skip-extended-insert --compress --default-character-set=<charset> \
                 --where="id BETWEEN lo AND hi" DB TABLE \
         | gzip > chunk-NNNNN-<lo>-<hi>.sql.gz.partial )                  # under per-chunk watchdog (§4, I4)
     gzip -t                                                              # integrity
@@ -124,6 +124,13 @@ rows with id > max_id_frozen -> reported as rows_arrived_during_run, NEVER folde
    explicitly — it does NOT assume `utf8mb4`. `json` columns in MariaDB are
    `longtext` + a `json_valid()` CHECK; the round-trip claim is **byte-equality**
    of `response_raw`/`processed_data` (see SCEN-005a), not JSON re-canonicalization.
+4. **Transport speed (`--compress`).** mysqldump runs locally and streams the raw
+   result set over the SSH tunnel *uncompressed* by default — the wire carries the
+   full ~28.7 GiB, NOT the ~5 GiB gzipped output (gzip happens after the wire).
+   Measured channel ≈ 12 MiB/s → ~40–90 min uncompressed. `--compress` compresses
+   the MySQL client↔server protocol (~5–6× fewer wire bytes for this JSON/text
+   data) → ~15–25 min. Transport-only: the dumped bytes are unchanged, so 1:1
+   fidelity holds. (MariaDB 10.11 client supports `--compress`.)
 
 ### Why NOT a server-side `max_statement_time` kill-switch here
 

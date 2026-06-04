@@ -449,7 +449,10 @@ def build_mysqldump_argv(
     `--no-tablespaces --skip-lock-tables --hex-blob`, `--skip-extended-insert`
     (one INSERT per row -> the unambiguous N1 row count), and the RUNTIME
     `--default-character-set=<charset>` (no utf8mb4 assumption — byte fidelity for
-    response_raw/json). The password is supplied only via
+    response_raw/json). `--compress` compresses the client<->server protocol over
+    the SSH tunnel (~5-6x fewer wire bytes for this JSON/text data, measured
+    ~12 MiB/s channel) — transport-only, the dumped bytes are unchanged so byte
+    fidelity (SCEN-005a) holds. The password is supplied only via
     `--defaults-extra-file=<path>`, placed FIRST so it parses before any option
     it overrides.
     """
@@ -462,6 +465,7 @@ def build_mysqldump_argv(
         "--skip-lock-tables",
         "--hex-blob",
         "--skip-extended-insert",
+        "--compress",
         f"--default-character-set={charset}",
         f"--where=id BETWEEN {int(id_lo)} AND {int(id_hi)}",
         database,

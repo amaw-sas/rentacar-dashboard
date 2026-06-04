@@ -604,7 +604,7 @@ Each chunk is dumped with:
 ```
 mysqldump --defaults-extra-file=<0600 file> \
           --single-transaction --quick --no-tablespaces --skip-lock-tables \
-          --hex-blob --skip-extended-insert \
+          --hex-blob --skip-extended-insert --compress \
           --default-character-set=<charset detected from SHOW CREATE TABLE> \
           --where="id BETWEEN <lo> AND <hi>" <db> log_veh_available_rates_queries \
   | gzip > chunk-NNNNN-<lo>-<hi>.sql.gz.partial
@@ -617,6 +617,10 @@ statement per row, which makes the row count an unambiguous anchored line count
 immune to a `),(` or a quoted `INSERT INTO` substring inside `response_raw`. The
 charset is read at runtime (`--default-character-set=<actual>`, **no utf8mb4
 assumption**) so `response_raw`/`json` payloads round-trip byte-for-byte.
+`--compress` compresses the client↔server protocol so the SSH tunnel carries
+~5-6× fewer bytes (the raw result set crosses the wire *uncompressed* otherwise —
+gzip only runs locally after the wire; measured channel ≈ 12 MiB/s, so this cuts
+the run from ~40-90 min to ~15-25 min). Transport-only: dumped bytes unchanged.
 
 ### Read-only / no-lock grep (SCEN-005b)
 

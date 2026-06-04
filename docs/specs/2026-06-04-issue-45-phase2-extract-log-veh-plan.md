@@ -150,8 +150,10 @@ A stubbed dump whose status file stops advancing for an injected `--stall-minute
 triggers the stall kill (SIGKILL in-flight chunk, discard `.partial`, count as
 chunk failure → retry under M). The built `mysqldump` command (pure string-builder,
 no subprocess) includes `--single-transaction --quick --skip-lock-tables
---hex-blob --skip-extended-insert --default-character-set=<detected>` — this is a
-**flag-construction guard only**, NOT SCEN-005b. (Fake clock + fake chunk runner
+--hex-blob --skip-extended-insert --compress --default-character-set=<detected>` —
+this is a **flag-construction guard only**, NOT SCEN-005b. (`--compress` =
+transport-only protocol compression to cut the ~28.7 GiB uncompressed wire ~5-6×;
+does not alter dumped bytes.) (Fake clock + fake chunk runner
 keep this step at M, no real DB.)
 
 ### Step 9 — README + run-summary scaffold | Size: S | Deps: 8

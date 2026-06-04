@@ -155,18 +155,23 @@ real gap from a silently-failed dump that emitted DDL but no `INSERT`s).
 
 ## 4. Autonomy — the driver owns its dependencies
 
-Verified during brainstorming (2026-06-04): non-interactive SSH to `rentacar`
-works (`BatchMode=yes`, no passphrase), and `sudo -n` is passwordless. The app
-runs as user `rentacar` under `/home/rentacar/` (nginx root
-`/home/rentacar/public_html/`), readable only via sudo.
+Verified during brainstorming + a live smoke test (2026-06-04): non-interactive
+SSH to `rentacar` works (`BatchMode=yes`, no passphrase), and `sudo -n` is
+passwordless. The Laravel app root is **`/home/rentacar/rentacar-admin/`**
+(`artisan` + `.env` there; `/home/rentacar/public_html/` is only the nginx web
+root), readable only via sudo.
 
 The driver therefore provisions everything itself, no human input mid-run:
 
-1. **Credentials (no argv/log leak).** `ssh rentacar 'sudo cat /home/rentacar/.env'`
-   returns the whole secrets file over stdout; the driver extracts only the 5
-   `DB_*` keys and **discards the rest immediately** — the blob is never logged,
-   never written whole. The password reaches `mysqldump` ONLY via a
-   `--defaults-extra-file=<tmp>` written `0600` inside the gitignored run dir
+1. **Credentials (no argv/log leak).**
+   `ssh rentacar 'sudo -n cat /home/rentacar/rentacar-admin/.env'` returns the
+   whole secrets file over stdout; the driver extracts only the 5 `DB_*` keys and
+   **discards the rest immediately** — the blob is never logged, never written
+   whole. The fetched `DB_HOST` is the **remote RDS endpoint** (the tunnel TARGET,
+   used by `ensure_tunnel`); `mysqldump`/pymysql connect to the **local tunnel end
+   `127.0.0.1:<local_port>`**, never that endpoint directly. The password reaches
+   `mysqldump` ONLY via a `--defaults-extra-file=<tmp>` written `0600` in the
+   gitignored run dir
    (or `MYSQL_PWD` env) — **never** as `-p<pass>` on argv (visible in `ps`). The
    temp creds file is `unlink`ed in a `finally`/`atexit`; on SIGKILL its residue
    stays inside the gitignored dir (documented, acceptable). The driver runs with

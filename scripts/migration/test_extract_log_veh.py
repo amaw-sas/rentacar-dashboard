@@ -889,5 +889,15 @@ class ManifestPiiFree(unittest.TestCase):
             self.assertEqual(self.PII_KEYS & set(c), set())
 
 
+class CliArgs(unittest.TestCase):
+    """--run-dir is accepted (enables launcher resume). The --chunk-rows<1 guard
+    fires after argparse, before any DB/SSH IO — so this proves parsing without a
+    live connection."""
+
+    def test_run_dir_arg_parses(self):
+        rc = elv.main(["--run-dir", "/tmp/does-not-matter", "--chunk-rows", "0"])
+        self.assertEqual(rc, elv.EXIT_TUNNEL_OR_QUERY)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

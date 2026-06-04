@@ -930,7 +930,10 @@ def run(args) -> int:
 
     now = datetime.now(timezone.utc)
     stamp = now.strftime("%Y-%m-%dT%H-%M-%S-%fZ")
-    run_dir = run_dir_for(stamp)
+    # A fixed --run-dir lets an external launcher RESUME after a crash/kill (the
+    # driver merges the persisted manifest's verified chunks below); without it,
+    # each invocation gets a fresh UTC-stamped dir and re-dumps from scratch.
+    run_dir = Path(args.run_dir) if getattr(args, "run_dir", None) else run_dir_for(stamp)
     run_dir.mkdir(parents=True, exist_ok=True)
 
     # --- credentials (exit 2 on ssh/sudo failure) ---
@@ -1163,6 +1166,10 @@ def main(argv=None) -> int:
                         help="per-chunk dump retries before leaving the range unverified")
     parser.add_argument("--local-port", type=int, default=3307,
                         help="local end of the SSH tunnel (default 3307)")
+    parser.add_argument("--run-dir", default=None,
+                        help="reuse a FIXED run directory so a re-invocation RESUMES "
+                             "(skips verified chunks via the persisted manifest); "
+                             "default is a fresh UTC-stamped dir under docs/migration-runs/")
     args = parser.parse_args(argv)
 
     if args.chunk_rows < 1:

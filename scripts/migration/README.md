@@ -735,3 +735,42 @@ under an injected clock + fake chunk-runner) are unit-tested in
 DB/subprocess surface (SCEN-001 happy path, 003 tunnel relaunch, 005a byte
 fidelity, 005b no-lock) is validated by the real Step-10 run and documented in the
 run-summary.
+
+### Unattended run (`run-log-veh-extraction.sh`)
+
+`run-log-veh-extraction.sh` runs the extraction with **zero human interaction**:
+the driver fetches creds (`sudo cat /home/rentacar/rentacar-admin/.env`) and owns
+its tunnel itself, so the launcher only needs to invoke it, retry on resumable
+exits, and record the outcome.
+
+- **Fixed `--run-dir`** (`docs/migration-runs/log-veh-extract-unattended/`, gitignored)
+  so a retry RESUMES (skips verified chunks) instead of re-dumping.
+- **Retry loop**: re-invokes on exit `3/5/6` (resumable — tunnel-unrecoverable /
+  deadline / completeness-shortfall, verified chunks preserved); stops on `0`
+  (DONE), `2` (cred/connection), `4` (append-only) — the non-resumable outcomes.
+- Appends to `run.log`, writes a terminal `STATUS` sentinel (`DONE` / `FATAL …` /
+  `EXHAUSTED`), and **removes its own cron line** on a terminal outcome.
+- Idempotent: re-running after `DONE`/`FATAL` is a no-op.
+
+Fire manually (detached, survives terminal close):
+```
+setsid nohup scripts/migration/run-log-veh-extraction.sh >/dev/null 2>&1 &
+```
+Or schedule for off-hours with cron (the line is tagged so the script self-removes it):
+```
+( crontab -l 2>/dev/null; \
+  echo "0 1 * * * /usr/bin/env bash <abs>/run-log-veh-extraction.sh # log-veh-extract-unattended" ) | crontab -
+```
+
+**Requirements for an unattended run:** the workstation must stay **ON and not
+sleep** (WSL2 with systemd-as-PID1 keeps the VM up while cron runs); the SSH key
+for `rentacar` must be passphrase-less (verified). With `--compress` the run is
+~20–40 min.
+
+**On success the driver has already self-verified** completeness (every chunk
+`gzip -t` ok + `rows == range_count` + exact `sum == reconciled_count` →
+`complete:true`, exit 0) — that is SCEN-001/002/004/007. The remaining fidelity
+proofs (SCEN-005a byte round-trip into a scratch MariaDB, SCEN-005b
+`general_log` no-`LOCK TABLES`) and the prose run-summary are done as a short
+follow-up once an operator is back — they validate, they do not produce, the
+archive.

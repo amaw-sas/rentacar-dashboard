@@ -287,8 +287,13 @@ moves this directory to durable secure storage afterward (out of scope here).
 - **Completeness verdict** (end of run): `complete:true` requires the exact
   three-part reconciliation in §3 (all ranges verified · partition with no
   gap/overlap · `sum(rows) == reconciled_count` EXACTLY). Any shortfall →
-  `complete:false`, loud report, non-zero exit. A silent "done" with missing data
-  is the prime failure to avoid; there is no tolerance band that could mask it.
+  `complete:false`, loud report, **exit 6** — distinct from exit 5 (deadline) so the
+  monitor can tell a loop that ran to the end and still fell short (investigate)
+  from one that timed out (re-invoke). A silent "done" with missing data is the
+  prime failure to avoid; there is no tolerance band that could mask it.
+- **Exit-code map:** `0` ok · `2` connection/cred-fetch · `3` tunnel-unrecoverable
+  or real-query-error · `4` append-only precondition · `5` run-deadline ·
+  `6` completeness-shortfall.
 - All errors mask the host and never print credentials or the fetched `.env` blob.
 
 ---

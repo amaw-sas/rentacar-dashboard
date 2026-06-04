@@ -46,7 +46,8 @@ Key invariants:
 - **PII never enters git.** The run dir (chunks + manifest + temp creds file) is
   gitignored; secrets never on argv/logs.
 - Exit-code contract: `0` ok · `2` connection/cred-fetch · `3` tunnel unrecoverable
-  / real query error · `4` append-only precondition failed · `5` run deadline.
+  / real query error · `4` append-only precondition failed · `5` run deadline ·
+  `6` completeness shortfall (ran to the end, `complete:false`).
 
 ---
 

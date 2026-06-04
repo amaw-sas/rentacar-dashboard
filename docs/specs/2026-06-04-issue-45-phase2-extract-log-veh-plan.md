@@ -56,7 +56,11 @@ shaping; late-arrival accounting (`rows_arrived_during_run`).
 SCEN-007 (completeness/no-silent-gap). **Acceptance:** unit tests — a dropped range
 makes the verdict `complete:false`; an overlap is rejected; sum≠reconciled is
 rejected; a 0-row chunk needs `range_count==0`; `id>max_id_frozen` lands in
-`rows_arrived_during_run`, never in `total_rows`.
+`rows_arrived_during_run`, never in `total_rows`. **Cold-start (N2):**
+`load_manifest` on a missing file returns an empty manifest; on a truncated /
+invalid-JSON file it likewise yields **zero** verified chunks (never raises, never
+trusts partial content) → `resume_skip` returns `False` for every range, forcing a
+clean re-dump. The manifest is the sole source of verified-ness.
 
 ### Step 3 — Integrity primitives (pure) | Size: M | Deps: 1
 `count_insert_rows(gz_path)` counting `^INSERT INTO \`TABLE\`` lines from the
@@ -99,27 +103,56 @@ with backoff up to M.
 hangs is SIGKILLed at the timeout and retried; a stubbed dump emitting wrong row
 count is discarded, not marked verified.
 
-### Step 7 — Charset detect + append-only precondition gate (DB) | Size: S | Deps: 4,5
-`detect_charset(conn)` from `SHOW CREATE TABLE`; `append_only_gate(conn)` running
-`COUNT(*) WHERE updated_at <> created_at` → abort exit 4 unless `--allow-eventual`
-(then manifest `consistency:"eventual"`).
-**Scenario:** SCEN-009. **Acceptance:** unit test of the gate decision function
-(0 → proceed point-in-time; >0 → abort unless flag → eventual); the live queries
-run in Step 8/10.
+### Step 7 — Schema detect (charset + source_ip type) + append-only gate (DB) | Size: S | Deps: 4,5
+`detect_schema(conn)` from `SHOW CREATE TABLE` returns
+`(table_charset, source_ip_storage_type)` — the same read serves the charset (I6)
+and the M10 `source_ip` underlying type (`varchar(45)` vs `inet6`);
+`append_only_gate(conn)` running `COUNT(*) WHERE updated_at <> created_at` → abort
+exit 4 unless `--allow-eventual` (then manifest `consistency:"eventual"`).
+**Scenario:** SCEN-009. **Acceptance:** unit — the `SHOW CREATE TABLE` parser
+extracts both the table charset and the `source_ip` declared type from a fixture;
+the gate decision function returns proceed-point-in-time (0) / abort (>0) /
+eventual (>0 + flag). Live queries run in Step 8/10.
 
 ### Step 8 — Driver orchestration + status/exit contract | Size: M | Deps: 2,6,7
 `run(args)`: connect (pymysql, for metadata only) → `append_only_gate` →
-`detect_charset` → freeze `min_id`/`max_id_frozen` → `plan_ranges` → chunk loop
+`detect_schema` → freeze `min_id`/`max_id_frozen` → `plan_ranges` → chunk loop
 (`resume_skip`, `ensure_tunnel`/`relaunch_if_dead` before each, `dump_chunk`) →
-manifest finalize → `completeness_verdict` → exit codes (0/2/3/4/5) → tunnel
-teardown. Status file with `current_id`/`bytes`/`last_advance`. Global
-`RUN_DEADLINE`. `main(argv)` with `--chunk-rows`, `--allow-eventual`,
-`--run-deadline`, `--chunk-timeout`.
+manifest finalize → `completeness_verdict` → exit codes → tunnel teardown. Status
+file with `current_id`/`bytes`/`last_advance`. Global `RUN_DEADLINE`. `main(argv)`
+with `--chunk-rows`, `--allow-eventual`, `--run-deadline`, `--chunk-timeout`,
+`--stall-minutes`.
+
+**Exit-code contract** (so the unattended monitor can act on each):
+
+| exit | condition | resumable |
+|---|---|---|
+| `0` | success — `complete:true`, all ranges verified, `total_rows == reconciled_count` | n/a |
+| `2` | connection / credential-fetch failure (ssh/sudo) before any dump | retry after fixing creds |
+| `3` | tunnel unrecoverable after N relaunches **or** real query error (metadata/`range_count` SELECT) | yes |
+| `4` | append-only precondition failed, no `--allow-eventual` (aborts before dump) | n/a |
+| `5` | global `RUN_DEADLINE` breached — tunnel torn down, verified chunks preserved, `complete:false` | yes (re-invoke) |
+| `6` | **completeness shortfall** — loop ran to the end but verdict `complete:false` (a range failed all M retries / gap / overlap / `sum(rows)≠reconciled_count`); distinct from `5` so the monitor knows it ran out the loop and still fell short → investigate, don't blindly re-invoke | yes, after diagnosis |
+
+`completeness_verdict` returns `(complete: bool, exit_code: int)`.
+
 **Scenarios:** SCEN-001 (happy-path orchestration), SCEN-002 (resume end-to-end),
-SCEN-005b (no locking statements in emitted SQL — assert via a scratch capture),
-SCEN-007 (final verdict). **Acceptance:** a dry/stubbed end-to-end (mysqldump
-faked) produces a `complete:true` manifest with exact reconciliation; killing
-mid-loop and re-invoking resumes to the identical manifest.
+SCEN-007 (final verdict + exit code). SCEN-005b is **not** satisfiable here (a faked
+dump can't prove the real one emits no `LOCK TABLES`) — it lives solely in Step 10.
+**Acceptance:** a dry/stubbed end-to-end (mysqldump faked) produces a
+`complete:true` manifest with exact reconciliation and exit `0`; killing mid-loop
+and re-invoking resumes to the identical manifest. `completeness_verdict` unit:
+all-verified+reconciled → `(True, 0)`; dropped range → `(False, 6)`; overlap →
+`(False, 6)`; `sum(rows)≠reconciled` → `(False, 6)`. A stubbed metadata query that
+raises exits `3`. A stubbed loop exceeding an injected `RUN_DEADLINE` exits `5`
+(not `6`), tears the tunnel down, preserves verified chunks, leaves no `.partial`.
+A stubbed dump whose status file stops advancing for an injected `--stall-minutes`
+triggers the stall kill (SIGKILL in-flight chunk, discard `.partial`, count as
+chunk failure → retry under M). The built `mysqldump` command (pure string-builder,
+no subprocess) includes `--single-transaction --quick --skip-lock-tables
+--hex-blob --skip-extended-insert --default-character-set=<detected>` — this is a
+**flag-construction guard only**, NOT SCEN-005b. (Fake clock + fake chunk runner
+keep this step at M, no real DB.)
 
 ### Step 9 — README + run-summary scaffold | Size: S | Deps: 8
 Append the Phase-2 operation section to `scripts/migration/README.md` (autonomy,
@@ -133,9 +166,11 @@ Launch the driver in the background against prod legacy (off-hours), self-healin
 tunnel, ~2h. Monitor via wakeups + status file. On completion: verify SCEN-001
 (manifest `complete:true`, exact reconciliation), SCEN-003 (any relaunch logged),
 SCEN-005a (restore a sampled chunk into a scratch MariaDB, compare `SHA2()` of
-`response_raw`/`processed_data` on a multibyte row), SCEN-005b. Transcribe the
-PII-free numbers into the run-summary (via /humanizer). The chunks stay local
-(gitignored); operator stores them durably afterward.
+`response_raw`/`processed_data` on a multibyte row), SCEN-005b (capture emitted SQL
+via `general_log`, assert no `LOCK TABLES`). Transcribe the PII-free numbers — incl.
+`table_charset` and the `source_ip` storage type (M10) — into the run-summary (via
+/humanizer). The chunks stay local (gitignored); operator stores them durably
+afterward.
 **Acceptance:** all execution-validated scenarios satisfied with fresh evidence;
 run-summary committed; manifest `complete:true`.
 
@@ -154,6 +189,11 @@ run-summary committed; manifest `complete:true`.
 - **Execution (prod legacy):** Step 10 — the real run validates the DB/subprocess
   surface and the byte-fidelity round-trip; documented in the run-summary.
 - **No CI wiring** (these scripts run manually, like the ETL/Phase-1 scripts).
+- **Import mechanics:** `extract-log-veh.py` is hyphenated → the test imports its
+  pure functions by path (`importlib.util.spec_from_file_location`, the Phase-1
+  pattern). `_tunnel.py` is underscore-named → imported normally
+  (`from _tunnel import …`) with `scripts/migration` on `sys.path`. Do NOT attempt
+  `import extract_log_veh` — the hyphen makes that name unresolvable.
 
 ## Rollout / safety
 - Read-only on the source (only `mysqldump` SELECT-equivalent + metadata SELECTs);

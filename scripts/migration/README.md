@@ -553,3 +553,181 @@ The holdout contract is
 (SCEN-001 happy path, 002 env-missing, 003 connection-failure, 004 time-budget
 abort, 005 read-only, 006 PII-free + atomic, 007 kill-switch-unconfirmed). Pure
 functions are unit-tested in `test_size_log_veh.py` (bare Python, no driver).
+
+---
+
+# Extraction: legacy log_veh raw archive (issue #45, Phase 2)
+
+`extract-log-veh.py` is an **autonomous, resumable** driver that produces a
+faithful 1:1 raw archive of `log_veh_available_rates_queries` (~657,984 rows /
+28.7 GiB, MariaDB 10.11.15) as gzipped per-PK-range `mysqldump` chunks plus a
+PII-free manifest. It runs **read-only** on the source and **never writes** to
+`public.search_logs` — it is decoupled from the productive ETL (#19–#24). Phase 1
+(`size-log-veh.py`, above) confirmed the prune never ran, so the table is the full
+multi-year history; the archive is the durable input for a later analysis phase.
+
+## Autonomy — the driver owns its dependencies
+
+No human input mid-run. The driver:
+
+1. **Fetches its own credentials** via `ssh rentacar 'sudo -n cat /home/rentacar/.env'`,
+   extracting ONLY the five `DB_*` keys and discarding the rest of the `.env` blob
+   immediately (never logged, never returned whole — `parse_legacy_env`).
+2. **Owns its SSH tunnel** (`_tunnel.py`): launches `ssh -N -L 127.0.0.1:3307:<DB_HOST>:3306`
+   with keepalives + `ExitOnForwardFailure`, re-probes the raw MariaDB handshake
+   before every chunk, and relaunches a silently-dead forwarder. On exit it tears
+   down ONLY a forwarder it created (`created_by_us` + recorded PID) — a
+   pre-existing operator tunnel is left running.
+3. **Never hangs**: a per-chunk subprocess timeout (`--chunk-timeout`, SIGKILL on
+   breach), a global `--run-deadline`, and a stall rule (`--stall-minutes`: no
+   `current_id`/`bytes` advance → kill the in-flight chunk and retry under
+   `--max-retries`).
+4. **Freezes the PK bounds once** (`min_id`/`max_id_frozen`) and plans contiguous,
+   non-overlapping id windows over them — never re-sampled, so the plan is stable
+   across resumes. Rows arriving after the freeze (`id > max_id_frozen`) are
+   reported as `rows_arrived_during_run`, **never** folded into `total_rows`.
+
+## Credentials never on argv
+
+The password reaches `mysqldump` ONLY via a `0600 --defaults-extra-file=<path>`
+written inside the gitignored run dir — **never** as `-p<pass>` on argv (which
+`ps` would expose). Verify during a live run:
+
+```bash
+ps -ef | grep mysqldump | grep -v grep   # MUST show no -p<...> token
+```
+
+## Non-blocking + faithful flags
+
+Each chunk is dumped with:
+
+```
+mysqldump --defaults-extra-file=<0600 file> \
+          --single-transaction --quick --no-tablespaces --skip-lock-tables \
+          --hex-blob --skip-extended-insert \
+          --default-character-set=<charset detected from SHOW CREATE TABLE> \
+          --where="id BETWEEN <lo> AND <hi>" <db> log_veh_available_rates_queries \
+  | gzip > chunk-NNNNN-<lo>-<hi>.sql.gz.partial
+```
+
+`--single-transaction --quick` = an MVCC snapshot streamed row-by-row (no LOCK
+TABLES, no client/server buffering — the exact `SELECT *` failure mode that
+crashed prod is avoided). `--skip-extended-insert` = exactly ONE `INSERT INTO`
+statement per row, which makes the row count an unambiguous anchored line count
+immune to a `),(` or a quoted `INSERT INTO` substring inside `response_raw`. The
+charset is read at runtime (`--default-character-set=<actual>`, **no utf8mb4
+assumption**) so `response_raw`/`json` payloads round-trip byte-for-byte.
+
+### Read-only / no-lock grep (SCEN-005b)
+
+The dump must emit no table-level lock. On a scratch instance with `general_log`
+on, the captured statement stream MUST contain a consistent-snapshot start and
+SELECTs but **no `LOCK TABLES`**:
+
+```bash
+# after restoring/replaying through a scratch MariaDB with general_log = ON:
+grep -i 'LOCK TABLES' /var/lib/mysql/<host>.log   # MUST return nothing
+grep -i 'START TRANSACTION WITH CONSISTENT SNAPSHOT' /var/lib/mysql/<host>.log  # present
+```
+
+## Resume + integrity
+
+A chunk counts as **verified** ONLY by `(range present in manifest + sha256
+recorded + gzip_ok + rows == range_count)` — the manifest is the SOLE source of
+verified-ness. A re-invocation skips verified ranges and re-dumps the rest. If the
+manifest is absent or corrupt, resume trusts NO chunk and cold-starts (every range
+re-dumped via `.partial` + atomic rename). A 0-row chunk is verified ONLY when its
+live `range_count == 0` too (an empty dump over a non-empty range is a
+silently-failed dump, rejected — M9).
+
+## Completeness verdict (no silent gaps)
+
+`complete:true` requires ALL of: every planned range verified · the verified
+ranges **partition** `[min_id, max_id_frozen]` exactly (no gap, no overlap) ·
+`sum(chunk.rows) == reconciled_count == COUNT(*) WHERE id BETWEEN min_id AND
+max_id_frozen` **exactly** (no tolerance band). Any shortfall → `complete:false`
+and exit 6.
+
+## Running
+
+```bash
+cd scripts/migration
+# The driver fetches creds + brings up the tunnel itself — no .env / manual tunnel
+# needed (unlike Phase 1). Run off-hours, detached, and watch the status file.
+python extract-log-veh.py                      # defaults: 25k-row windows, 180-min deadline
+python extract-log-veh.py --chunk-rows 25000 --run-deadline 180 --chunk-timeout 20 \
+                          --stall-minutes 10 --max-retries 3 --local-port 3307
+python extract-log-veh.py --allow-eventual     # proceed despite updated-after-insert rows
+echo $?
+```
+
+A re-invocation against the SAME run dir resumes (skips verified chunks). `--help`
+prints the exit-code table.
+
+## Output
+
+A single gitignored run dir (PII-bearing — `response_raw` + `source_ip`):
+
+```
+docs/migration-runs/log-veh-extract-<UTC-stamp>/
+  chunk-00001-<lo>-<hi>.sql.gz   # one mysqldump SQL file per PK range
+  ...
+  manifest.json                  # PII-FREE metadata (counts, sha256, charset, verdict)
+  status.json                    # PII-FREE progress (chunks done, bytes, current id)
+  .defaults-extra.cnf            # 0600 temp creds — local-only, never committed
+```
+
+The whole dir is ignored by `/docs/migration-runs/log-veh-extract-*/` (NOT
+inherited from the `*.json` rule, which only reaches files directly in
+`docs/migration-runs/`). Verify:
+
+```bash
+git check-ignore -v docs/migration-runs/log-veh-extract-X/chunk-00001-1-2.sql.gz
+git status --porcelain docs/migration-runs/log-veh-extract-*/   # MUST be empty of tracked files
+```
+
+The PII-free numbers (incl. `table_charset` and the `source_ip` storage type) are
+transcribed into `docs/data-ops/2026-06-04-issue-45-phase2-extract-log-veh/run-summary.md`.
+The operator moves the run dir to durable secure storage afterward (out of scope).
+
+## Restore-to-scratch byte-fidelity recipe (SCEN-005a)
+
+Prove a produced chunk restores 1:1 — by `SHA2` equality of the bulk columns
+source-vs-restored, not mere row presence:
+
+```bash
+# 1. spin a scratch MariaDB (same major version) and create the empty table.
+# 2. restore one sampled chunk into it:
+zcat docs/migration-runs/log-veh-extract-X/chunk-00007-<lo>-<hi>.sql.gz \
+  | mysql --defaults-extra-file=<scratch.cnf> scratch_db
+# 3. pick ids in that chunk INCLUDING one with multibyte / 4-byte content, then
+#    compare the bulk columns source (over the tunnel) vs restored:
+#    SELECT id, SHA2(response_raw,256), SHA2(processed_data,256)
+#      FROM log_veh_available_rates_queries WHERE id IN (...);
+# The SHA2 hex strings MUST match for every sampled id. JSON columns are compared
+# as bytes (no re-canonicalization).
+```
+
+## Exit codes
+
+| Code | Meaning | Operator action |
+|---|---|---|
+| `0` | Complete — `complete:true`, all ranges verified, `total_rows == reconciled_count` | Move the run dir to durable storage; transcribe numbers |
+| `2` | Connection / credential-fetch failure (ssh/sudo) before any dump | Fix SSH/sudo to `rentacar`; rerun |
+| `3` | Tunnel unrecoverable after relaunches, OR a real query error (metadata / range COUNT) | Check tunnel + source; resume |
+| `4` | Append-only precondition failed (`updated_at <> created_at` > 0) and no `--allow-eventual` | Investigate the updated rows; rerun with `--allow-eventual` to proceed (stamps `consistency:eventual`) |
+| `5` | Global `RUN_DEADLINE` breached — tunnel torn down, verified chunks preserved, `complete:false`, no `.partial` | Re-invoke to resume |
+| `6` | Completeness shortfall — ran to the end but `complete:false` (a range failed all retries / gap / overlap / `sum(rows) != reconciled`) | Investigate the manifest; do NOT blindly re-invoke |
+
+## Scenarios
+
+The holdout contract is
+`docs/specs/2026-06-04-issue-45-phase2-extract-log-veh/scenarios/extract-log-veh.scenarios.md`.
+The pure functions (range planning, manifest/resume, completeness verdict, the N1
+row counter, the cred-file builder, host masking, status shaping, the append-only
+gate, the `SHOW CREATE TABLE` parser, the handshake parser, and the watchdog loop
+under an injected clock + fake chunk-runner) are unit-tested in
+`test_extract_log_veh.py` (bare Python — NO pymysql / mysqldump / ssh). The
+DB/subprocess surface (SCEN-001 happy path, 003 tunnel relaunch, 005a byte
+fidelity, 005b no-lock) is validated by the real Step-10 run and documented in the
+run-summary.

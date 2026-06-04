@@ -246,5 +246,23 @@ class BudgetValidation(unittest.TestCase):
         self.assertEqual(slv.main(["--budget", "301"]), slv.EXIT_ENV_MISSING)
 
 
+class FormatSummaryTableRobust(unittest.TestCase):
+    """A re-rendered/trimmed report (e.g. a Phase-2 consumer loading a saved JSON
+    with kill_switch/exact_rows/notes dropped) must render, not crash the run into
+    EXIT_UNEXPECTED after the report was already written."""
+
+    def test_full_report_renders(self):
+        rep = slv.build_summary(_measured(), generated_at="2026-06-04T00:00:00+00:00")
+        self.assertIn("kill-switch", slv.format_summary_table(rep))
+
+    def test_trimmed_report_does_not_crash(self):
+        rep = slv.build_summary(_measured(), generated_at="2026-06-04T00:00:00+00:00")
+        for k in ("kill_switch", "exact_rows", "notes"):
+            rep.pop(k, None)
+        out = slv.format_summary_table(rep)  # must not raise KeyError
+        self.assertIn("Legacy table sizing", out)
+        self.assertIn("UNCONFIRMED", out)  # missing kill_switch → falsy → UNCONFIRMED
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

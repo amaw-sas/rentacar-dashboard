@@ -185,8 +185,8 @@ def build_summary(measured: dict, *, generated_at: str) -> dict:
 
 def format_summary_table(rep: dict) -> str:
     """Human-readable stdout summary of the report dict."""
-    ks = rep["kill_switch"]
-    rows_metric = rep["exact_rows"]
+    ks = rep.get("kill_switch") or {}
+    rows_metric = rep.get("exact_rows") or {}
     if "value" in rows_metric and rows_metric["value"] is not None:
         exact = f"{rows_metric['value']:,}"
     elif "timed_out_after_s" in rows_metric:
@@ -209,7 +209,7 @@ def format_summary_table(rep: dict) -> str:
         f"  total size        : {format_bytes(rep.get('total_bytes'))}",
         f"  temporal span     : {rep.get('first_created_at')}  →  {rep.get('last_created_at')}"
         f"   (id {rep.get('first_id')} → {rep.get('last_id')}, pk_proxy)",
-        f"  kill-switch       : {'CONFIRMED' if ks['confirmed'] else 'UNCONFIRMED'}"
+        f"  kill-switch       : {'CONFIRMED' if ks.get('confirmed') else 'UNCONFIRMED'}"
         f"  (max_statement_time={ks.get('max_statement_time_readback')}s, budget {ks.get('budget_s')}s)",
     ]
     rng = rep.get("exact_range") or {}
@@ -217,9 +217,10 @@ def format_summary_table(rep: dict) -> str:
         lines.append(f"  exact range       : TIMED OUT (>{rng['timed_out_after_s']}s)")
     elif rng.get("min") is not None or rng.get("max") is not None:
         lines.append(f"  exact range       : {rng.get('min')}  →  {rng.get('max')}")
-    if rep["notes"]:
+    notes = rep.get("notes") or []
+    if notes:
         lines.append("  notes:")
-        lines.extend(f"    - {n}" for n in rep["notes"])
+        lines.extend(f"    - {n}" for n in notes)
     return "\n".join(lines)
 
 
@@ -308,6 +309,14 @@ def configure_session(conn, budget_s: int) -> tuple[bool, float]:
             cur.execute("SET SESSION TRANSACTION READ ONLY")
         except Exception:
             pass  # not fatal — the script issues no writes regardless.
+        try:
+            # The metadata tier reads information_schema.TABLES; with this ON, that
+            # read can trigger an InnoDB stats recompute that opens the table files.
+            # On this never-pruned 28.7 GiB table that recompute can be expensive,
+            # so disable it for the session. MariaDB ignores an unknown var → no-op.
+            cur.execute("SET SESSION innodb_stats_on_metadata = 0")
+        except Exception:
+            pass  # non-fatal — a server without this var just runs the default.
         try:
             cur.execute(f"SET SESSION max_statement_time = {int(budget_s)}")
             cur.execute("SELECT @@max_statement_time")
@@ -444,9 +453,13 @@ def run(args) -> int:
     port = os.environ.get("LEGACY_DB_PORT") or "3306"
 
     # Client-side per-statement ceiling: defense in depth even if the server-side
-    # kill-switch is unconfirmed. Generous vs the budget so it never pre-empts a
-    # legitimately-budgeted scan, but bounds any genuinely hung query.
-    read_timeout = max(args.budget * 2, 30)
+    # kill-switch is unconfirmed. A FIXED +60s margin over the budget guarantees the
+    # server-side max_statement_time (= budget) always wins the race and aborts a
+    # scan with errno 1969/3024 (a timeout FINDING, exit 0) before this socket
+    # timeout fires as a CR_SERVER_LOST (2013) the timeout-classifier can't see —
+    # which would surface a budgeted scan as a hard query error (exit 3). A genuine
+    # connection drop still trips this ceiling and correctly surfaces as an error.
+    read_timeout = args.budget + 60
     try:
         conn = connect_legacy(read_timeout=read_timeout)
     except Exception as exc:

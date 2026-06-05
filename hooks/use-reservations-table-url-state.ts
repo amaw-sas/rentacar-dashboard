@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { usePathname, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type {
   OnChangeFn,
   PaginationState,
@@ -157,6 +157,7 @@ export function useReservationsTableUrlState(
 
   const searchParams = useSearchParams();
   const pathname = usePathname();
+  const router = useRouter();
   const paramsKey = searchParams?.toString() ?? "";
 
   const { filters, sorting, pagination, urlSearchValue } = useMemo(() => {
@@ -234,15 +235,16 @@ export function useReservationsTableUrlState(
       const qs = next.toString();
       if (qs === paramsKey) return;
       justWroteRef.current = true;
-      if (typeof window !== "undefined") {
-        window.history.replaceState(
-          null,
-          "",
-          qs ? `${pathname}?${qs}` : pathname,
-        );
-      }
+      // router.replace (not history.replaceState) so the dynamic Server
+      // Component refetches with the new searchParams — pagination/filtering/
+      // search/sort now run server-side (issue #100). The round-trip is cheap:
+      // it returns one page (≤20 rows), not the whole table. This reverses the
+      // history.replaceState approach from issue #40, which avoided a refetch
+      // when filtering happened client-side; that tradeoff no longer holds at
+      // 13k rows. scroll:false keeps the operator's scroll position on the row.
+      router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
     },
-    [paramsKey, pathname],
+    [paramsKey, pathname, router],
   );
   const writeUrlRef = useRef(writeUrl);
   useEffect(() => {

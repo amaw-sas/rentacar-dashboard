@@ -1,18 +1,14 @@
 "use client";
 
-import { useEffect, useMemo } from "react";
+import { useEffect } from "react";
 import {
   flexRender,
   getCoreRowModel,
-  getFilteredRowModel,
-  getPaginationRowModel,
-  getSortedRowModel,
   useReactTable,
 } from "@tanstack/react-table";
 import { EraserIcon } from "lucide-react";
 
 import { cn } from "@/lib/utils";
-import { isWithinDateRange } from "@/lib/date-range";
 import { Button } from "@/components/ui/button";
 import { DateRangePicker } from "@/components/ui/date-range-picker";
 import { Input } from "@/components/ui/input";
@@ -30,86 +26,45 @@ import {
   isPriorityStatus,
   type ReservationStatus,
 } from "@/lib/schemas/reservation";
-import {
-  ALL,
-  useReservationsTableUrlState,
-} from "@/hooks/use-reservations-table-url-state";
+import { ALL } from "@/lib/reservations/list-params";
+import { useReservationsTableUrlState } from "@/hooks/use-reservations-table-url-state";
 import { columns, type ReservationRow } from "./columns";
 
 type ReferralOption = { id: string; name: string };
 type CityOption = { id: string; name: string };
 
 interface ReservationsTableProps {
+  // One server-rendered page of rows (already filtered, sorted, paginated).
   data: ReservationRow[];
+  // Exact total of the filtered result set, for the count label + pagination.
+  total: number;
+  pageCount: number;
   referrals: ReferralOption[];
   cities: CityOption[];
 }
 
-export const ALL_CITIES = ALL;
-
-// Search keys off the booking-time snapshot (issue #26) so an operator can find
-// a reservation by the identity the UI actually shows them. A global customer
-// edit changes the live join but not the snapshot, so the displayed name and the
-// searchable name stay in sync. Falls back to the live join defensively.
-export function matchesSearch(row: ReservationRow, term: string) {
-  if (!term) return true;
-  const needle = term.trim().toLowerCase();
-  if (!needle) return true;
-  const fields = [
-    row.customer_name_at_booking ??
-      (row.customers
-        ? `${row.customers.first_name} ${row.customers.last_name}`
-        : ""),
-    row.customer_identification_number_at_booking ??
-      row.customers?.identification_number ??
-      "",
-    row.customer_email_at_booking ?? row.customers?.email ?? "",
-    row.customer_phone_at_booking ?? row.customers?.phone ?? "",
-    row.reservation_code ?? "",
-  ];
-  return fields.some((f) => f.toLowerCase().includes(needle));
-}
-
-export function matchesCity(row: ReservationRow, cityFilter: string) {
-  if (cityFilter === ALL) return true;
-  return row.pickup_location?.city_id === cityFilter;
-}
-
 export function ReservationsTable({
   data,
+  total,
+  pageCount,
   referrals,
   cities,
 }: ReservationsTableProps) {
   const url = useReservationsTableUrlState();
   const { filters, setFilter } = url;
 
-  const filtered = useMemo(() => {
-    return data.filter((row) => {
-      if (filters.franchise !== ALL && row.franchise !== filters.franchise)
-        return false;
-      if (filters.status !== ALL && row.status !== filters.status) return false;
-      if (!matchesCity(row, filters.city)) return false;
-      if (
-        filters.referral !== ALL &&
-        (row.referrals?.id ?? row.referral_id ?? "") !== filters.referral
-      )
-        return false;
-      if (!isWithinDateRange(row.created_at, filters.createdRange))
-        return false;
-      if (!isWithinDateRange(row.pickup_date, filters.pickupRange))
-        return false;
-      if (!matchesSearch(row, filters.search)) return false;
-      return true;
-    });
-  }, [data, filters]);
-
+  // Filtering, sorting and pagination all run server-side now (issue #100).
+  // The table is a pure renderer of the current page; manual* flags tell
+  // @tanstack not to re-derive any row models client-side.
   const table = useReactTable({
-    data: filtered,
+    data,
     columns,
     getCoreRowModel: getCoreRowModel(),
-    getSortedRowModel: getSortedRowModel(),
-    getFilteredRowModel: getFilteredRowModel(),
-    getPaginationRowModel: getPaginationRowModel(),
+    manualPagination: true,
+    manualSorting: true,
+    manualFiltering: true,
+    pageCount,
+    rowCount: total,
     onSortingChange: url.onSortingChange,
     onPaginationChange: url.onPaginationChange,
     autoResetPageIndex: false,
@@ -119,17 +74,15 @@ export function ReservationsTable({
     state: { sorting: url.sorting, pagination: url.pagination },
   });
 
-  // Clamp pageIndex back to 0 when a stale bookmark or revalidatePath
-  // leaves the operator on an out-of-range page (filtered.length > 0
-  // but pageIndex >= pageCount). Without this the UI shows "Sin
-  // resultados" against rows that exist on earlier pages.
-  const pageCount = table.getPageCount();
+  // If a stale bookmark or a shrunk result set leaves the operator past the
+  // last page, the server returns an empty page. Clamp back to page 1 so they
+  // see the rows that do exist instead of "Sin resultados".
   const { pageIndex, pageSize } = url.pagination;
   useEffect(() => {
-    if (filtered.length > 0 && pageIndex >= pageCount) {
+    if (total > 0 && pageIndex >= pageCount) {
       url.onPaginationChange({ pageIndex: 0, pageSize });
     }
-  }, [filtered.length, pageIndex, pageCount, pageSize, url]);
+  }, [total, pageIndex, pageCount, pageSize, url]);
 
   return (
     <div className="space-y-4">
@@ -275,8 +228,8 @@ export function ReservationsTable({
                           header.getContext(),
                         )}
                     {{
-                      asc: " \u2191",
-                      desc: " \u2193",
+                      asc: " ↑",
+                      desc: " ↓",
                     }[header.column.getIsSorted() as string] ?? null}
                   </th>
                 ))}
@@ -327,9 +280,7 @@ export function ReservationsTable({
       </div>
 
       <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">
-          {table.getFilteredRowModel().rows.length} resultado(s)
-        </p>
+        <p className="text-sm text-muted-foreground">{total} resultado(s)</p>
         <div className="flex items-center gap-2">
           <Button
             variant="outline"
@@ -341,7 +292,7 @@ export function ReservationsTable({
           </Button>
           <span className="text-sm text-muted-foreground">
             {table.getState().pagination.pageIndex + 1} /{" "}
-            {Math.max(table.getPageCount(), 1)}
+            {Math.max(pageCount, 1)}
           </span>
           <Button
             variant="outline"

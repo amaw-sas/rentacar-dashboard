@@ -82,6 +82,13 @@ next-env.d.ts
 # customers ETL (issue #19): per-row reports carry identification numbers (PII)
 /docs/migration-runs/*.jsonl
 
+# log_veh raw extraction (issue #45 Phase 2): the whole run dir is PII-bearing
+# (response_raw + source_ip) and local-only — chunks, .partial, manifest, and the
+# 0600 temp creds file. PII-free numbers live in the committed run-summary instead.
+# This is NOT inherited from the *.json rule above (that only reaches files directly
+# in docs/migration-runs/, not this nested subdir) — the rule must be explicit.
+/docs/migration-runs/log-veh-extract-*/
+
 # data-ops PII (issue #62): never commit raw data dumps — they carry customer PII (cédula, phone, email).
 # Audit artifacts (*.sql rollback scripts, *.md run summaries) stay tracked; only data dumps are ignored.
 # Covers common dump formats under docs/data-ops/ (json/ndjson/csv/tsv/xlsx/gz/zip); **/*.jsonl is repo-wide.

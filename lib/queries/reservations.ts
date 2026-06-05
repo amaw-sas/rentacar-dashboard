@@ -1,4 +1,8 @@
 import { createClient } from "@/lib/supabase/server";
+import {
+  SEARCH_COLUMNS,
+  type ReservationListParams,
+} from "@/lib/reservations/list-params";
 
 const RESERVATION_SELECT = `
   *,
@@ -18,15 +22,69 @@ const RESERVATION_LIBRO_SELECT = `
   referrals(id, name, code)
 `;
 
-export async function getReservations() {
-  const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("reservations")
-    .select(RESERVATION_SELECT)
-    .order("created_at", { ascending: false });
+// Builds the PostgREST `or()` expression for snapshot-keyed search (issue #26).
+// `*term*` is PostgREST's ilike wildcard form; the term is pre-sanitized in
+// parseListParams (no `,()*%`) so it cannot break the comma-separated filter
+// list or inject wildcards.
+function searchOrExpr(term: string): string {
+  const pattern = `*${term}*`;
+  return SEARCH_COLUMNS.map((c) => `${c}.ilike.${pattern}`).join(",");
+}
 
+// Server-side paginated/filtered/sorted reservations list (issue #100). Returns
+// exactly one page of rows plus the exact total for pagination, instead of the
+// whole table — the previous unbounded fetch shipped ~26 MB (13k rows) to the
+// client on every list render and save.
+export async function getReservationsPage(params: ReservationListParams) {
+  const supabase = await createClient();
+
+  // City lives on locations, not reservations. Resolve the city to its pickup
+  // location ids (≤32 locations) and filter reservations by them — keeps the
+  // pickup_location embed a LEFT join (no `!inner`), so non-city filters still
+  // return reservations with a null pickup_location. An empty id list yields no
+  // rows, which is correct for a city with no locations.
+  let pickupLocationIds: string[] | null = null;
+  if (params.cityId) {
+    const { data: locs, error: locErr } = await supabase
+      .from("locations")
+      .select("id")
+      .eq("city_id", params.cityId);
+    if (locErr) throw locErr;
+    pickupLocationIds = (locs ?? []).map((l) => l.id as string);
+  }
+
+  let q = supabase
+    .from("reservations")
+    .select(RESERVATION_SELECT, { count: "exact" });
+
+  if (params.franchise) q = q.eq("franchise", params.franchise);
+  if (params.status) q = q.eq("status", params.status);
+  if (params.referralId) q = q.eq("referral_id", params.referralId);
+  if (pickupLocationIds) q = q.in("pickup_location_id", pickupLocationIds);
+  // created_at is timestamptz; the URL stores a UTC date. Slicing the stored
+  // ISO to its date (prior client behavior) is equivalent to a UTC-day bound,
+  // so an end-of-day UTC ceiling makes created_to inclusive.
+  if (params.createdFrom) q = q.gte("created_at", params.createdFrom);
+  if (params.createdTo)
+    q = q.lte("created_at", `${params.createdTo}T23:59:59.999`);
+  if (params.pickupFrom) q = q.gte("pickup_date", params.pickupFrom);
+  if (params.pickupTo) q = q.lte("pickup_date", params.pickupTo);
+  if (params.search) q = q.or(searchOrExpr(params.search));
+
+  // Priority statuses always lead (is_priority generated column), then the
+  // requested/default sort, then id as a stable tiebreaker so pagination is
+  // deterministic when the sort column has ties.
+  q = q
+    .order("is_priority", { ascending: false })
+    .order(params.sort.column, { ascending: params.sort.ascending })
+    .order("id", { ascending: true });
+
+  const from = (params.page - 1) * params.pageSize;
+  q = q.range(from, from + params.pageSize - 1);
+
+  const { data, error, count } = await q;
   if (error) throw error;
-  return data;
+  return { rows: data ?? [], total: count ?? 0 };
 }
 
 export async function getCustomerReservations(customerId: string) {

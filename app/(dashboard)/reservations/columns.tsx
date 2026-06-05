@@ -226,6 +226,10 @@ export const columns: ColumnDef<ReservationRow, unknown>[] = [
     id: "referral",
     accessorFn: (row) => row.referrals?.name ?? row.referral_raw ?? "",
     header: "Referido",
+    // Joined column: not server-sortable (no DB column in SORTABLE_COLUMNS).
+    // Disable so the header shows no misleading sort arrow that the server
+    // would silently ignore (falls back to created_at). Issue #100.
+    enableSorting: false,
     cell: ({ getValue }) => getValue<string>() || "—",
   },
   {
@@ -245,6 +249,10 @@ export const columns: ColumnDef<ReservationRow, unknown>[] = [
     accessorFn: (row) =>
       Number(row.total_price ?? 0) + Number(row.tax_fee ?? 0),
     header: "Total + Tax",
+    // Computed expression (total_price + tax_fee): PostgREST can't ORDER BY it,
+    // so it's absent from SORTABLE_COLUMNS. Disable sorting so the header
+    // doesn't show an arrow the server silently ignores. Issue #100.
+    enableSorting: false,
     cell: ({ getValue }) => currencyFormatter.format(getValue<number>()),
   },
   {

@@ -475,6 +475,39 @@ describe("sendReservationNotifications", () => {
       expect(props.returnMapUrl).toBe("https://maps.app.goo.gl/JjpsSCHkCrgGYa9P7");
     });
 
+    it("scenario 3: distinct locations, return pair fully null → falls back to the RETURN location's own pickup_address", async () => {
+      // Distinct locations AND distinct addresses so the assertion can only
+      // pass if resolveReturnPair reads the RETURN location's pickup_*. With
+      // identical addresses (as in scenario 1) a bug reading pickup_location
+      // would pass silently — this isolates scenario 3 from that degenerate case.
+      setupMock({
+        reservation: {
+          ...mockReservation,
+          pickup_location: {
+            name: "Bogotá Aeropuerto",
+            code: "AABOT",
+            pickup_address: "Aeropuerto El Dorado, Piso 1 Puerta 7",
+            pickup_map: "https://maps.app.goo.gl/PICKUP",
+          },
+          return_location: {
+            name: "Medellín Aeropuerto",
+            code: "AAMDE",
+            pickup_address: "Aeropuerto JMC Rionegro, Local 4",
+            pickup_map: "https://maps.app.goo.gl/RETURN",
+            return_address: null,
+            return_map: null,
+          },
+        },
+      });
+
+      await sendReservationNotifications("res-123", "reservado", "alquilatucarro");
+
+      const props = lastReservedEmailProps();
+      expect(props.returnAddress).toBe("Aeropuerto JMC Rionegro, Local 4"); // return loc's own pickup
+      expect(props.returnAddress).not.toBe(props.pickupAddress); // NOT the pickup loc's
+      expect(props.returnMapUrl).toBe("https://maps.app.goo.gl/RETURN");
+    });
+
     it("scenario 4: atomic fallback when return_address is set but return_map is null (mixed-null pair rejected)", async () => {
       setupMock({
         reservation: {

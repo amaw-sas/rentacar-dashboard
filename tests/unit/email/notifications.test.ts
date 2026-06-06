@@ -7,6 +7,8 @@ import { ReservedClientEmail } from "@/lib/email/templates/reserved-confirmation
 import {
   sendReservationNotifications,
   isSafeMapUrl,
+  formatHour,
+  formatDate,
 } from "@/lib/email/notifications";
 
 vi.mock("@/lib/email/templates/reserved-confirmation", () => ({
@@ -142,6 +144,48 @@ function setupMock({ reservation = mockReservation, franchiseRow }: MockOpts = {
     })),
   } as unknown as ReturnType<typeof createAdminClient>);
 }
+
+describe("formatHour", () => {
+  it("formats afternoon hour to 12h PM", () => {
+    expect(formatHour("14:30")).toBe("2:30 PM");
+  });
+
+  it("formats morning hour to 12h AM", () => {
+    expect(formatHour("09:00")).toBe("9:00 AM");
+  });
+
+  it("formats midnight as 12 AM", () => {
+    expect(formatHour("00:00")).toBe("12:00 AM");
+  });
+
+  it("formats noon as 12 PM", () => {
+    expect(formatHour("12:00")).toBe("12:00 PM");
+  });
+
+  it("falls back to raw value for empty string (no NaN)", () => {
+    expect(formatHour("")).toBe("");
+  });
+
+  it("falls back to raw value for non-numeric hour (no NaN)", () => {
+    const out = formatHour("abc");
+    expect(out).toBe("abc");
+    expect(out).not.toContain("NaN");
+  });
+});
+
+describe("formatDate", () => {
+  it("formats a valid ISO date in Spanish", () => {
+    expect(formatDate("2026-06-15")).toBe("15 de junio 2026");
+  });
+
+  it("falls back to raw value for empty string (no throw)", () => {
+    expect(formatDate("")).toBe("");
+  });
+
+  it("falls back to raw value for non-date input (no throw)", () => {
+    expect(formatDate("not-a-date")).toBe("not-a-date");
+  });
+});
 
 describe("sendReservationNotifications", () => {
   beforeEach(() => {

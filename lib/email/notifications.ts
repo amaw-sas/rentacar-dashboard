@@ -171,13 +171,16 @@ async function prepareLogoForEmail(branding: FranchiseBranding): Promise<{
   };
 }
 
-function formatDate(dateStr: string): string {
-  return format(new Date(dateStr + "T12:00:00"), "d 'de' MMMM yyyy", { locale: es });
+export function formatDate(dateStr: string): string {
+  const d = new Date(dateStr + "T12:00:00");
+  if (Number.isNaN(d.getTime())) return dateStr; // raw fallback — date-fns throws on invalid dates
+  return format(d, "d 'de' MMMM yyyy", { locale: es });
 }
 
-function formatHour(hourStr: string): string {
+export function formatHour(hourStr: string): string {
   const parts = hourStr.split(":");
   const h = parseInt(parts[0]);
+  if (Number.isNaN(h)) return hourStr; // raw fallback — avoid rendering "NaN:00 AM"
   const m = parts[1] || "00";
   const ampm = h >= 12 ? "PM" : "AM";
   const h12 = h > 12 ? h - 12 : h === 0 ? 12 : h;

@@ -18,7 +18,7 @@ All scripts tracked and PII-free. The throwaway datadir lives in `/tmp` (outside
 | File | Responsibility | Git |
 |---|---|---|
 | `scripts/analysis/log-veh/provision-db.sh` | Preflight (server binaries + ≥60 GiB free on /tmp); `mariadb-install-db` into `/tmp/log-veh-analysis-db/`; start `mariadbd` **socket-only** (skip-networking). Emits socket + datadir paths. | tracked |
-| `scripts/analysis/log-veh/load-archive.sh` | Restore the 27 chunks one-at-a-time in PK order under `set -o pipefail`, checking each exit code; then `COUNT(*)` must equal 664,126 or abort. Archive path is a parameter (Phase 2 worktree). | tracked |
+| `scripts/analysis/log-veh/load-archive.sh` | Restore the 27 chunks one-at-a-time in PK order under `set -o pipefail`, checking each exit code; then `COUNT(*)` must equal 664,126 or abort. **DDL footgun:** every chunk (not just chunk 1) carries `DROP TABLE IF EXISTS` + `CREATE TABLE`, so a naive sequential load would have each chunk wipe the prior. Load **chunk 1 in full** (creates the table + its rows) then **chunks 2–27 as INSERT-only** via `zcat … \| grep '^INSERT INTO' \| mariadb` (append, no DROP). `--skip-extended-insert` guarantees one `INSERT INTO` per row, so `grep` extracts exactly the data rows. Archive path is a parameter (Phase 2 worktree). | tracked |
 | `scripts/analysis/log-veh/materialize.sql` | Build `search_flat` (one row/search; `pd_kind`, `rp_kind`, extracted scalars) + `cat_quotes` (`JSON_TABLE` explosion over `pd_kind='array'`). | tracked |
 | `scripts/analysis/log-veh/analysis-queries.sql` | The 11 cuts, each with explicit denominator + deterministic `ORDER BY`. Never references `response_raw`; `source_ip` only as aggregate. | tracked |
 | `scripts/analysis/log-veh/check-pii.sh` | SCEN-003 gate over the committed report + **all** committed `scripts/analysis/log-veh/*.sql` (both `materialize.sql` and `analysis-queries.sql`). Report: zero IPv4/email matches. SQL: `response_raw` must appear **nowhere** (it is never read), and bare `source_ip` may appear **only** inside an aggregate call — the gate flags any `source_ip` token not immediately within `COUNT(`/`DISTINCT`. Exit non-zero on any violation. | tracked |
@@ -58,8 +58,9 @@ listens on TCP; a missing binary or insufficient disk aborts before install.
 forced-missing-binary path exits non-zero with a clear message. (Setup for SCEN-001; pair of SCEN-005.)
 
 **Step 2 — Load + reconcile** · Size: M · Deps: Step 1
-Build `load-archive.sh`: restore the 27 chunks one-at-a-time in PK order under `pipefail`, aborting
-on the first non-zero chunk; then reconcile.
+Build `load-archive.sh`: load chunk 1 in full (DROP+CREATE+rows), then chunks 2–27 INSERT-only
+(`grep '^INSERT INTO'`) so each appends instead of dropping the table, all under `pipefail` with
+per-chunk exit-code checks, aborting on the first non-zero chunk; then reconcile.
 *Scenario:* all chunks load → `COUNT(*)` equals the manifest total; a truncated load → abort, no
 analysis.
 *Acceptance:* **SCEN-001** — `SELECT COUNT(*)` → `664126` matching `manifest.json:total_rows`; a
@@ -118,7 +119,7 @@ gate output.
 *Acceptance:* quality gate findings addressed or justified; PR opened with `Refs #45`. The 4-agent
 gate is static analysis over the committed scripts + SQL (no DB needed). Verification reuses Step 6's
 captured `/tmp` results file + the committed report rather than re-provisioning — the full load +
-`JSON_TABLE` explosion (~664k rows / ~6M category rows) is expensive and Step 6's teardown already
+`JSON_TABLE` explosion (~664k rows / ~3M category rows) is expensive and Step 6's teardown already
 deleted the datadir; only re-run the pipeline if a script/SQL change after Step 6 invalidates the
 captured evidence.
 

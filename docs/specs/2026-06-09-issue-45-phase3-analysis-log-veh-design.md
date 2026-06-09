@@ -83,7 +83,8 @@ Deterministic, read-only on the archive, reproducible:
      classification, see §6), `rp_kind` (request_parameters classification, see §6),
      `error_code`, `n_categories`.
    - `cat_quotes` — `processed_data` arrays exploded via `JSON_TABLE`, one row per
-     `(search_id, category_code, total_amount, …)`; on the order of ~6M rows. **It spans
+     `(search_id, category_code, total_amount, …)`; on the order of ~3M rows (the real run
+     produced 2,974,126). **It spans
      only the `pd_kind = 'array'` subset** — error/malformed/null searches contribute no
      category rows. Any cut drawn from `cat_quotes` (§7 #5, #11) must state its denominator
      explicitly (see §7).

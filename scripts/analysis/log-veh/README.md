@@ -89,3 +89,80 @@ out from under a live `mariadbd`; re-run teardown once the server is down.
 MariaDB 10.11 has no `MEDIAN` aggregate; cut #11 uses
 `PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY total_amount) OVER (PARTITION BY category_code)`,
 the supported equivalent, alongside `AVG`/`MIN`/`MAX`.
+
+---
+
+# Phase 3.5 — persistent Parquet snapshot + formal reports (issue #45)
+
+Phase 3 ran one-shot SQL over a throwaway MariaDB that takes ~20 min to rebuild from the
+6.8 GiB archive. Phase 3.5 makes the analytical dataset **persistent and instant**: it
+exports the two PII-free materialized tables to a compact **Parquet snapshot** queryable
+with DuckDB alone (no MariaDB, no raw archive), then renders **4 formal reports** into a
+committed PII-free markdown bundle.
+
+Why Parquet (not Postgres / `public.search_logs`): the legacy `log_veh` data is lossy
+against the live `search_logs` schema (no franchise / referral / conversion) — the issue
+forbids writing it there — and the consumer is **offline/ad-hoc**. `cat_quotes` is also the
+only clean historical corpus of quoted prices (`search_logs` stores none), so it is worth
+persisting compactly. Parquet is tool-agnostic (DuckDB / pandas / polars) and future-proof.
+
+## Pipeline (build once, then query instantly)
+
+```bash
+# 1. Build the materialized tables (Phase 3 stages), then export to Parquet:
+bash scripts/analysis/log-veh/provision-db.sh
+bash scripts/analysis/log-veh/load-archive.sh          # 27 chunks -> 664,126 rows
+mariadb --socket=/tmp/log-veh-analysis-db/mysqld.sock analysis \
+  < scripts/analysis/log-veh/materialize.sql
+bash scripts/analysis/log-veh/export-dataset.sh        # -> dataset/{search_flat,cat_quotes}.parquet
+bash scripts/analysis/log-veh/teardown.sh              # MariaDB no longer needed
+
+# 2. Generate the committed report bundle from the Parquet (no MariaDB):
+bash scripts/analysis/log-veh/generate-reports.sh
+
+# 3. PII gate over the committed artifacts (defaults cover the new bundle + reports/*.sql):
+bash scripts/analysis/log-veh/check-pii.sh
+```
+
+| Script / file | Stage |
+|---|---|
+| `export-dataset.sh` | export `search_flat` + `cat_quotes` to `dataset/*.parquet`. PRIMARY: DuckDB `ATTACH … TYPE mysql` over the socket + `COPY … TO … (FORMAT parquet)`. FALLBACK: `mariadb --batch` TSV → DuckDB `read_csv` with pinned `nullstr='\N'` + explicit `DECIMAL(16,2)` (so the fallback is type-identical, not DOUBLE-coerced). Then the **allowlist schema assertion** — each Parquet's column set must equal exactly its expected list, else abort. |
+| `reports/01-demand-by-branch-month.sql` | searches by pickup branch × month + top routes |
+| `reports/02-pricing-by-category-season.sql` | median/avg/p25/p75 `total_amount` per category × month — the price corpus |
+| `reports/03-quote-failure-rate.sql` | pd_kind share + error-code breakdown + error rate by branch × month |
+| `reports/04-availability-and-behavior.sql` | availability per category + lead-time / duration / one-way-vs-round-trip buckets |
+| `generate-reports.sh` | run the 4 reports over the Parquet → assemble the dated markdown bundle; abort on missing Parquet or report error |
+| `query-examples.sql` | copy-paste DuckDB snippets for ad-hoc Parquet querying |
+
+### Ad-hoc querying
+
+Once `dataset/*.parquet` exists, query it directly — no MariaDB, no archive:
+
+```bash
+duckdb -c "SELECT COUNT(*) FROM 'scripts/analysis/log-veh/dataset/search_flat.parquet';"
+# or paste a snippet from query-examples.sql into an interactive `duckdb` shell
+```
+
+The `reports/*.sql` resolve the snapshot via a `dataset_dir` DuckDB variable
+(`generate-reports.sh` sets it with `-c "SET VARIABLE dataset_dir='…'"`); standalone they
+self-default to `scripts/analysis/log-veh/dataset`.
+
+## Persistence & safe-copy note
+
+- **Committed and durable:** the scripts, the 4 report SQL, and the **report bundle**
+  (`docs/data-ops/2026-06-09-issue-45-phase35-dataset/reports/log-veh-reports-2026-06-09.md`).
+  The findings survive in git even if the Parquet and the 6.8 GiB archive are deleted.
+- **Gitignored and regenerable:** the two `dataset/*.parquet` files (the data-artifact
+  preference keeps data out of git). Regenerating them requires the Phase 2 archive
+  (preserved in its worktree) + a full pipeline run; the only alternative is a full Phase 2
+  re-extract from the legacy DB. **Keep one manual copy of the ~30–55 MB Parquet somewhere
+  safe** — it is the cheap insurance against both regeneration paths.
+
+## PII boundary (Phase 3.5)
+
+- The export selects only `search_flat` (which has **no** `source_ip` column) and
+  `cat_quotes` (no PII columns); `response_raw` is never touched. The Parquet is PII-free.
+- The **allowlist** schema assertion in `export-dataset.sh` rejects any unexpected column —
+  not just `source_ip`/`response_raw`, but any future addition that could carry signal.
+- The report bundle is aggregates only. `check-pii.sh` (defaults extended) scans it +
+  `reports/*.sql` for IPv4/IPv6/email = 0 and `response_raw` absence.

@@ -23,6 +23,8 @@ EMAIL_RE='[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}'
 IPV6_RE='(::[0-9A-Fa-f]{1,4}|[0-9A-Fa-f]{1,4}::|([0-9A-Fa-f]{1,4}:){4,}[0-9A-Fa-f]{1,4})'
 
 DEFAULT_REPORT="$REPO_ROOT/docs/data-ops/2026-06-09-issue-45-phase3-analysis-log-veh/analysis-report.md"
+# Phase 3.5 committed report bundle (PII-free aggregates over the Parquet snapshot).
+DEFAULT_BUNDLE_P35="$REPO_ROOT/docs/data-ops/2026-06-09-issue-45-phase35-dataset/reports/log-veh-reports-2026-06-09.md"
 
 violations=0
 note() { printf '[pii] %s\n' "$*" >&2; }
@@ -33,9 +35,12 @@ declare -a TARGETS
 if (( $# > 0 )); then
   TARGETS=("$@")
 else
-  TARGETS=("$DEFAULT_REPORT")
+  TARGETS=("$DEFAULT_REPORT" "$DEFAULT_BUNDLE_P35")
+  # Phase 3 SQL (maxdepth 1) + Phase 3.5 report SQL in the reports/ subdir.
   while IFS= read -r f; do TARGETS+=("$f"); done \
     < <(find "$SCRIPT_DIR" -maxdepth 1 -name '*.sql' | sort)
+  while IFS= read -r f; do TARGETS+=("$f"); done \
+    < <(find "$SCRIPT_DIR/reports" -maxdepth 1 -name '*.sql' 2>/dev/null | sort)
 fi
 
 for path in "${TARGETS[@]}"; do

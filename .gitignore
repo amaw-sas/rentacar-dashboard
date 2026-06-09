@@ -89,6 +89,11 @@ next-env.d.ts
 # in docs/migration-runs/, not this nested subdir) — the rule must be explicit.
 /docs/migration-runs/log-veh-extract-*/
 
+# log_veh Phase 3.5 Parquet snapshot (issue #45): the persistent analytical dataset is
+# PII-free but a data artifact — gitignored + regenerable per the data-artifact preference.
+# The committed report bundle is the durable persistence; the Parquet stays local-only.
+/scripts/analysis/log-veh/dataset/
+
 # data-ops PII (issue #62): never commit raw data dumps — they carry customer PII (cédula, phone, email).
 # Audit artifacts (*.sql rollback scripts, *.md run summaries) stay tracked; only data dumps are ignored.
 # Covers common dump formats under docs/data-ops/ (json/ndjson/csv/tsv/xlsx/gz/zip); **/*.jsonl is repo-wide.

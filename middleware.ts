@@ -7,6 +7,7 @@ const PUBLIC_API_PREFIXES = [
   "/api/cron",
   "/api/upload",
   "/api/locations",
+  "/api/openapi",
 ];
 
 export async function middleware(request: NextRequest) {

@@ -54,6 +54,13 @@ header.report-cover .subtitle {
   font-size: 13px;
 }
 
+header.report-cover .period {
+  margin-top: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
 section {
   break-inside: avoid;
   page-break-inside: avoid;

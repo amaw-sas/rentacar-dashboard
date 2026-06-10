@@ -20,7 +20,9 @@ import {
   getCommissionSummary,
   getTopReferrals,
   getRecentReservations,
+  type PeriodCount,
 } from "@/lib/queries/dashboard";
+import { getFranchises } from "@/lib/queries/franchises";
 import { STATUS_LABELS } from "@/lib/schemas/reservation";
 
 const STATUS_VARIANT: Record<
@@ -50,13 +52,30 @@ const copFormat = new Intl.NumberFormat("es-CO", {
 });
 
 export default async function DashboardPage() {
-  const [reservationCounts, commissionSummary, topReferrals, recentReservations] =
+  // Franchises drive the count breakdown and its labels. Only getReservationCounts
+  // depends on them, so fetch franchises alongside the independent queries and
+  // chain just the counts off the resolved list — keeps everything else parallel.
+  const [franchises, commissionSummary, topReferrals, recentReservations] =
     await Promise.all([
-      getReservationCounts(),
+      getFranchises(),
       getCommissionSummary(),
       getTopReferrals(5),
       getRecentReservations(5),
     ]);
+
+  const activeFranchises = (franchises ?? []).filter(
+    (f) => f.status === "active"
+  );
+  const reservationCounts = await getReservationCounts(
+    activeFranchises.map((f) => f.code)
+  );
+
+  // display_name labels per active franchise, including those with 0 this period.
+  const breakdownFor = (period: PeriodCount) =>
+    activeFranchises.map((f) => ({
+      label: f.display_name,
+      value: period.byFranchise[f.code] ?? 0,
+    }));
 
   return (
     <div className="space-y-6">
@@ -66,21 +85,24 @@ export default async function DashboardPage() {
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <StatCard
           title="Reservas hoy"
-          value={reservationCounts.today}
+          value={reservationCounts.today.total}
           icon={CalendarCheck}
           description="Creadas hoy"
+          breakdown={breakdownFor(reservationCounts.today)}
         />
         <StatCard
           title="Reservas esta semana"
-          value={reservationCounts.week}
+          value={reservationCounts.week.total}
           icon={CalendarDays}
           description="Desde el lunes"
+          breakdown={breakdownFor(reservationCounts.week)}
         />
         <StatCard
           title="Reservas este mes"
-          value={reservationCounts.month}
+          value={reservationCounts.month.total}
           icon={CalendarRange}
           description="Mes en curso"
+          breakdown={breakdownFor(reservationCounts.month)}
         />
         <StatCard
           title="Comisiones pendientes"

@@ -67,7 +67,11 @@ export function DateRangePicker({
           onSelect={onChange}
           numberOfMonths={numberOfMonths}
           locale={es}
-          min={1}
+          // No `min`: react-day-picker's default (min=0) allows a single-day
+          // range (from === to) — required by issue #116. `resetOnSelect`
+          // already defers the filter to the second click (the first click on
+          // an empty selection yields {from, to: undefined}), so the first
+          // click never applies a complete-range filter.
           resetOnSelect
           autoFocus
         />

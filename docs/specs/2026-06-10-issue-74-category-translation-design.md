@@ -222,8 +222,8 @@ Un escenario verifica que availability ya devuelve `{error, message (ES), shortT
 ## Estrategia de testing
 
 - **Unit puro** sobre `enrichCategoryDescriptions` (sin red, pasando el mapa): cubre SCEN-001/002/004/006.
-- **Unit del handler** mockeando `getCategoryNameMap` y `fetch` del proxy: cubre SCEN-003 (lookup lanza → 200 crudo) y el camino feliz.
-- **Confirmación de errores** (SCEN-005): assertion sobre el reenvío estructurado del handler ante un body de error del proxy (mock), demostrando `{error, message, shortText}` — no genérico.
+- **Unit de I/O** sobre `getCategoryNameMap` mockeando `createAdminClient` (builder thenable con spies, precedente `location-directory.test.ts`): cubre SCEN-007 (call-chain de las dos queries + hilado del id + throw).
+- **Unit del handler** mockeando `getCategoryNameMap` y `fetch` del proxy: cubre SCEN-003 (lookup lanza → 200 crudo), SCEN-008 (composición feliz → ES) y SCEN-005 (reenvío estructurado + rama genérica).
 - El cambio de OpenAPI (`description` en `categoryDescription`) se verifica por inspección en el PR, no por un test verde-por-construcción (ver componente 4).
 - Vitest, ubicación `tests/unit/api/` espejo del árbol (igual que #73). El proxy tiene su propio vitest (no se toca aquí).
 
@@ -235,10 +235,12 @@ Un escenario verifica que availability ya devuelve `{error, message (ES), shortT
 | 002 | código ausente del mapa → enrich → conserva crudo + log `localiza_category_unmapped` (nunca blanco) | unit puro (spy log) |
 | 003 | `getCategoryNameMap` lanza → request availability → 200 con lista cruda (degradado) + log | unit handler (mock) |
 | 004 | respuesta real de N items → enrich → solo cambia `categoryDescription`; precio/token/IVA intactos | unit puro (igualdad de campos) |
-| 005 | request que dispara warning `LLNRAG009` → falla → consumidor recibe `{error, message ES, shortText}` estructurado (no genérico) | unit handler (mock error proxy) |
+| 005 | (a) proxy devuelve error con body `{error,message ES,shortText}` → handler reenvía ese JSON con el **status del proxy** (no genérico); (b) body no-parseable → handler cae al genérico 502 | unit handler (mock error proxy, ambas ramas) |
 | 006 | cambiar un `name` en el mapa inyectado → cambia la salida (la tabla es la fuente, no un dict hardcodeado) | unit puro (mapa inyectado) |
+| 007 | `getCategoryNameMap()` → la query apunta a `rental_companies` (`eq code='localiza'`, `.single()`), luego `vehicle_categories` filtrado por el **id resuelto**, proyección = `CATEGORY_NAME_COLUMNS`; ante error de cualquiera de las dos → **lanza** (no éxito parcial) | unit (spy call-chain, precedente `location-directory.test.ts`) |
+| 008 | handler: proxy ok (array PT) + mapa → respuesta enriquecida en ES con la **forma de array preservada** (composición real `enrich(data, await getCategoryNameMap())`) | unit handler (mock) |
 
-**Anti-reward-hacking:** SCEN-006 ata la salida al mapa inyectado, garantizando que la fuente es `vehicle_categories` y no un literal PT→ES. SCEN-004 prohíbe pérdida de campos (no se puede "pasar" devolviendo solo la descripción). SCEN-002/003 prueban los caminos degradados, no solo el feliz. Se descartó el escenario de doc OpenAPI por ser verde-por-construcción (ver componente 4): un test que no puede fallar no es un escenario.
+**Anti-reward-hacking:** SCEN-006 ata la salida al mapa inyectado, garantizando que la fuente es `vehicle_categories` y no un literal PT→ES. SCEN-004 prohíbe pérdida de campos (no se puede "pasar" devolviendo solo la descripción). SCEN-002/003 prueban los caminos degradados. **SCEN-007** pinta la construcción de la query (tabla, proyección, filtro por empresa, hilado del id, contrato de throw) por spies — el mismo patrón no-tautológico de #73, NO un mock que se asegura a sí mismo; sin él un typo en `"localiza"` se desplegaría sin test. **SCEN-008** ejerce el cableado real del handler (la única prueba que compone `enrich` con el lookup), protegida por el holdout del quality gate. Se descartó el escenario de doc OpenAPI por ser verde-por-construcción (ver componente 4): un test que no puede fallar no es un escenario.
 
 ## Blast radius
 

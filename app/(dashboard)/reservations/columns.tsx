@@ -69,6 +69,8 @@ const STATUS_VARIANT: Record<
   mensualidad: "default",
 };
 
+// Pickup is a wall-clock date + hour with no zone (built locally below); these
+// formatters carry no timeZone so the stored civil time is shown verbatim.
 const dateFormatter = new Intl.DateTimeFormat("es-CO", {
   day: "2-digit",
   month: "short",
@@ -79,6 +81,23 @@ const timeFormatter = new Intl.DateTimeFormat("es-CO", {
   hour: "2-digit",
   minute: "2-digit",
   hour12: true,
+});
+
+// created_at is a real instant (timestamptz). Pin the display to America/Bogota
+// so the "Creado" column always matches the Colombia-anchored range filter
+// (issue #115), regardless of the admin machine's timezone.
+const createdDateFormatter = new Intl.DateTimeFormat("es-CO", {
+  day: "2-digit",
+  month: "short",
+  year: "2-digit",
+  timeZone: "America/Bogota",
+});
+
+const createdTimeFormatter = new Intl.DateTimeFormat("es-CO", {
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: true,
+  timeZone: "America/Bogota",
 });
 
 const currencyFormatter = new Intl.NumberFormat("es-CO", {
@@ -101,8 +120,10 @@ function renderDateTimeStack(value: string) {
   if (Number.isNaN(d.getTime())) return "—";
   return (
     <div className="leading-tight">
-      <div>{dateFormatter.format(d)}</div>
-      <div className="text-muted-foreground">{timeFormatter.format(d)}</div>
+      <div>{createdDateFormatter.format(d)}</div>
+      <div className="text-muted-foreground">
+        {createdTimeFormatter.format(d)}
+      </div>
     </div>
   );
 }

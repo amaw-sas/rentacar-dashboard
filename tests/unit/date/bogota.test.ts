@@ -3,6 +3,8 @@ import {
   bogotaStartOfDayISO,
   bogotaStartOfWeekISO,
   bogotaStartOfMonthISO,
+  bogotaDayStartISO,
+  bogotaDayEndISO,
 } from "@/lib/date/bogota";
 
 // Colombia is UTC-5 fixed (no DST), so every "start" instant is 05:00Z of the
@@ -61,6 +63,47 @@ describe("bogota date boundaries", () => {
     it("returns the same Monday when the input is already Monday", () => {
       const monday = new Date("2026-06-08T12:00:00-05:00");
       expect(bogotaStartOfWeekISO(monday)).toBe("2026-06-08T05:00:00.000Z");
+    });
+  });
+
+  // Civil-date → instant bounds for the reservations "Creación" range filter
+  // (issue #115). A Colombia day "YYYY-MM-DD" spans 05:00Z of that date to
+  // 04:59:59.999Z of the next UTC day.
+  describe("bogotaDayStartISO / bogotaDayEndISO", () => {
+    it("maps a civil date to its 00:00 Colombia instant (05:00Z)", () => {
+      expect(bogotaDayStartISO("2026-06-02")).toBe("2026-06-02T05:00:00.000Z");
+    });
+
+    it("maps a civil date to its last-millisecond Colombia instant", () => {
+      expect(bogotaDayEndISO("2026-06-09")).toBe("2026-06-10T04:59:59.999Z");
+    });
+
+    it("crosses the year boundary for the end bound (Dec 31 → Jan 1 04:59…Z)", () => {
+      expect(bogotaDayEndISO("2026-12-31")).toBe("2027-01-01T04:59:59.999Z");
+    });
+
+    // The reported bug: filtering "from 2 jun" must NOT include a reservation
+    // created 1 jun 7:02 p.m. Colombia (= 2 jun 00:02 UTC).
+    it("excludes a 1-jun-19:02-Colombia reservation from a [2 jun, 9 jun] range", () => {
+      const createdAt = new Date("2026-06-01T19:02:00-05:00").toISOString();
+      expect(createdAt).toBe("2026-06-02T00:02:00.000Z"); // the UTC-day trap
+      const start = bogotaDayStartISO("2026-06-02");
+      expect(createdAt >= start).toBe(false); // correctly below the lower bound
+    });
+
+    it("includes the inclusive Colombia-day edges and excludes just outside", () => {
+      const start = bogotaDayStartISO("2026-06-02");
+      const end = bogotaDayEndISO("2026-06-09");
+
+      const lowerEdge = new Date("2026-06-02T00:30:00-05:00").toISOString();
+      const upperEdge = new Date("2026-06-09T23:30:00-05:00").toISOString();
+      const justBelow = new Date("2026-06-01T23:00:00-05:00").toISOString();
+      const justAbove = new Date("2026-06-10T00:00:00-05:00").toISOString();
+
+      expect(lowerEdge >= start && lowerEdge <= end).toBe(true);
+      expect(upperEdge >= start && upperEdge <= end).toBe(true);
+      expect(justBelow >= start).toBe(false);
+      expect(justAbove <= end).toBe(false);
     });
   });
 });

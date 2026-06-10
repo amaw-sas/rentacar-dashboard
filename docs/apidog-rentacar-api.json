@@ -1,14 +1,14 @@
 {
   "openapi": "3.0.3",
   "info": {
-    "title": "Rentacar Admin API",
+    "title": "Rentacar API",
     "version": "1.0.0",
     "description": "API de reservas del admin de rentacar. Reemplaza el backend Laravel.\n\n## Variables de entorno\n- `baseUrl`: http://localhost:3000 (local) o https://rentacar-dashboard.vercel.app (prod)\n- `apiKey`: valor de RESERVATION_API_KEY\n- `referenceToken`: se llena automáticamente tras llamar availability\n- `rateQualifier`: se llena automáticamente tras llamar availability"
   },
   "servers": [
     {
       "url": "{baseUrl}",
-      "description": "Admin API",
+      "description": "Rentacar public + admin API",
       "variables": {
         "baseUrl": {
           "default": "http://localhost:3000",
@@ -112,11 +112,59 @@
           "reserveCode": { "type": "string", "example": "AV78XC3JDA" },
           "reservationStatus": { "type": "string", "example": "reservado" }
         }
+      },
+      "LocationDirectoryItem": {
+        "type": "object",
+        "properties": {
+          "slug": { "type": "string", "example": "armenia-aeropuerto", "description": "Identificador URL-safe de la sede" },
+          "code": { "type": "string", "example": "AARME", "description": "Código de sucursal Localiza — el valor que aceptan availability y reservations" },
+          "city": { "type": "string", "example": "armenia", "description": "Ciudad en minúscula" },
+          "name": { "type": "string", "example": "Armenia Aeropuerto" },
+          "status": { "type": "string", "example": "active", "description": "Siempre 'active' — el directorio solo lista sedes activas" },
+          "pickup_address": { "type": "string", "example": "Aeropuerto el Edén – Local # 18" },
+          "pickup_map": { "type": "string", "example": "https://maps.app.goo.gl/yxKpFsswp4DKd6BL7" },
+          "schedule": {
+            "type": "object",
+            "description": "Horario en texto para mostrar",
+            "properties": {
+              "display": { "type": "string", "example": "Lun-Vie 06:00-19:00 | Sáb, Dom y fest 08:00-16:00" }
+            }
+          }
+        }
+      },
+      "LocationDirectoryResponse": {
+        "type": "object",
+        "properties": {
+          "count": { "type": "integer", "example": 31 },
+          "locations": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/LocationDirectoryItem" }
+          }
+        }
       }
     }
   },
   "security": [{ "ApiKeyAuth": [] }],
   "paths": {
+    "/api/locations": {
+      "get": {
+        "summary": "Directorio público de sedes",
+        "description": "Catálogo canónico `slug ↔ code ↔ ciudad` de las sedes activas, con dirección, mapa y horario. **Público, sin autenticación** (`x-api-key` no requerida). El `code` devuelto es exactamente el que aceptan `/api/reservations/availability` y `/api/reservations`.",
+        "tags": ["Sedes"],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Directorio de sedes activas",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/LocationDirectoryResponse" }
+              }
+            }
+          },
+          "500": { "description": "Error al cargar el directorio" }
+        }
+      }
+    },
     "/api/reservations/availability": {
       "post": {
         "summary": "Consultar disponibilidad de vehículos",
@@ -260,6 +308,10 @@
     {
       "name": "Reservas",
       "description": "Endpoints de reservas del admin — reemplazan al Laravel"
+    },
+    {
+      "name": "Sedes",
+      "description": "Directorio público de sedes — fuente única slug↔code↔ciudad para web y agentes"
     }
   ]
 }

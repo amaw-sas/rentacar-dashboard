@@ -51,6 +51,13 @@ describe("composeHtml — issue #45 PDF report composer", () => {
     expect(h1).toContain("48344");
   });
 
+  it("SCEN-009: header states the analyzed data period from cut 01b (mayo 2024 – mayo 2026)", () => {
+    const h1 = composeHtml(args);
+    expect(h1).toContain("Periodo analizado");
+    expect(h1).toContain("mayo 2024");
+    expect(h1).toContain("mayo 2026");
+  });
+
   it("sanity: output is a full HTML document with inline SVG charts", () => {
     const h1 = composeHtml(args);
     expect(h1.toLowerCase().startsWith("<!doctype html")).toBe(true);

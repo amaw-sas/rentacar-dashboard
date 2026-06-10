@@ -43,6 +43,30 @@ const REPORT_CUTS = {
   "04": ["04a", "04b", "04c", "04d", "04e"],
 };
 
+// Spanish month names — fixed array (no Intl/toLocaleString) to keep output deterministic.
+const MONTHS_ES = [
+  "enero", "febrero", "marzo", "abril", "mayo", "junio",
+  "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
+];
+
+// "2024-05" -> "mayo 2024".
+function formatMonthEs(ym) {
+  const [y, m] = String(ym).split("-");
+  return `${MONTHS_ES[Number(m) - 1] ?? ym} ${y}`;
+}
+
+// Analyzed data period from cut 01b (month_utc min/max). "" when 01b is absent.
+function analyzedPeriod(bundle) {
+  const months = (bundle?.["01"]?.["01b"]?.rows ?? [])
+    .map((r) => r.month_utc)
+    .filter(Boolean)
+    .sort();
+  if (months.length === 0) return "";
+  const from = formatMonthEs(months[0]);
+  const to = formatMonthEs(months[months.length - 1]);
+  return from === to ? from : `${from} – ${to}`;
+}
+
 const REPORT_ORDER = ["01", "02", "03", "04"];
 
 function relabel(code, branchLabels) {
@@ -203,6 +227,7 @@ export function composeHtml({ bundleMd, narrativeMd, branchLabels, themeCss, rep
   const bundle = parseBundle(bundleMd);
   const narrative = parseNarrative(narrativeMd);
   const labels = branchLabels ?? {};
+  const period = analyzedPeriod(bundle);
 
   const sections = REPORT_ORDER.map((report) => {
     const n = narrative[report] ?? { heading: "", bodyHtml: "" };
@@ -241,6 +266,7 @@ export function composeHtml({ bundleMd, narrativeMd, branchLabels, themeCss, rep
     `<header class="report-cover">` +
     `<h1>Reporte de búsquedas y disponibilidad</h1>` +
     `<div class="subtitle">Análisis de demanda, precios, cotización y disponibilidad</div>` +
+    (period ? `<div class="period">Periodo analizado: ${esc(period)}</div>` : "") +
     `</header>` +
     sections +
     footer +

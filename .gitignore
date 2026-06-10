@@ -105,3 +105,7 @@ docs/data-ops/**/*.xlsx
 docs/data-ops/**/*.gz
 docs/data-ops/**/*.zip
 **/*.jsonl
+
+# log_veh PDF report — derived, regenerable artifacts (markdown bundle stays canonical)
+scripts/analysis/log-veh/pdf/report.html
+scripts/analysis/log-veh/pdf/*.pdf

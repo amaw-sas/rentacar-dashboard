@@ -1,0 +1,141 @@
+/* theme.css — self-contained print stylesheet for the issue #45 log_veh PDF report.
+   No @import, no external fonts/URLs: Chromium prints this verbatim.
+   Integer geometry lives in the SVG charts; this file is pure presentation. */
+
+@page {
+  size: A4;
+  margin: 18mm 16mm;
+}
+
+:root {
+  --ink: #111827;
+  --ink-soft: #374151;
+  --muted: #6b7280;
+  --line: #d1d5db;
+  --line-soft: #e5e7eb;
+  --zebra: #f9fafb;
+  --brand: #2563eb;
+  --brand-soft: #eff6ff;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+body {
+  margin: 0;
+  color: var(--ink);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+header.report-cover {
+  margin-bottom: 24px;
+  padding-bottom: 12px;
+  border-bottom: 3px solid var(--brand);
+}
+
+header.report-cover h1 {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+header.report-cover .subtitle {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+section {
+  break-inside: avoid;
+  page-break-inside: avoid;
+  margin-bottom: 28px;
+}
+
+h2 {
+  break-after: avoid;
+  page-break-after: avoid;
+  margin: 0 0 8px;
+  padding-bottom: 6px;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--brand);
+  border-bottom: 2px solid var(--brand-soft);
+}
+
+.narrative-body p {
+  margin: 0 0 8px;
+  color: var(--ink-soft);
+}
+
+.charts {
+  margin: 16px 0;
+}
+
+.chart {
+  margin: 12px 0;
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+
+.chart svg {
+  width: 100%;
+  height: auto;
+  max-width: 100%;
+}
+
+table {
+  width: 100%;
+  margin: 12px 0 4px;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+caption {
+  caption-side: top;
+  text-align: left;
+  margin-bottom: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+th,
+td {
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+th {
+  background: var(--brand-soft);
+  font-weight: 600;
+  color: var(--ink);
+}
+
+tbody tr:nth-child(even) {
+  background: var(--zebra);
+}
+
+td.numeric,
+th.numeric {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+footer.report-footer {
+  margin-top: 24px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line-soft);
+  color: var(--muted);
+  font-size: 10px;
+}

@@ -8,6 +8,7 @@ interface StatCardProps {
   description?: string;
   icon?: LucideIcon;
   trend?: { value: string; positive: boolean };
+  breakdown?: { label: string; value: number }[];
   className?: string;
 }
 
@@ -17,6 +18,7 @@ export function StatCard({
   description,
   icon: Icon,
   trend,
+  breakdown,
   className,
 }: StatCardProps) {
   return (
@@ -41,6 +43,19 @@ export function StatCard({
           >
             {trend.value}
           </p>
+        )}
+        {breakdown && breakdown.length > 0 && (
+          <ul className="mt-2 space-y-0.5">
+            {breakdown.map((item) => (
+              <li
+                key={item.label}
+                className="flex items-center justify-between text-xs text-muted-foreground"
+              >
+                <span className="truncate">{item.label}</span>
+                <span className="ml-2 shrink-0 tabular-nums">{item.value}</span>
+              </li>
+            ))}
+          </ul>
         )}
       </CardContent>
     </Card>

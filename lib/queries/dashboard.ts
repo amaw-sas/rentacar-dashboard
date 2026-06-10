@@ -1,33 +1,59 @@
 import { createClient } from "@/lib/supabase/server";
-import { startOfDay, startOfWeek, startOfMonth } from "date-fns";
+import {
+  bogotaStartOfDayISO,
+  bogotaStartOfWeekISO,
+  bogotaStartOfMonthISO,
+} from "@/lib/date/bogota";
 
-export async function getReservationCounts() {
+export interface PeriodCount {
+  total: number;
+  byFranchise: Record<string, number>; // key = franchise code
+}
+
+export interface ReservationCounts {
+  today: PeriodCount;
+  week: PeriodCount;
+  month: PeriodCount;
+}
+
+// Counts reservations created in each period (today / this week / this month),
+// with a per-franchise breakdown. Period cutoffs are anchored to Colombia time
+// (see lib/date/bogota). Only the given active franchise codes are counted, so
+// `total` always equals the sum of `byFranchise`.
+//
+// Uses head/count queries (one per franchise per period) instead of fetching
+// rows: counting happens in Postgres, so it never hits PostgREST's max_rows cap
+// — a period with >1000 reservations still counts correctly (cf. issue #75).
+export async function getReservationCounts(
+  activeCodes: string[]
+): Promise<ReservationCounts> {
   const supabase = await createClient();
-  const now = new Date();
-  const todayStart = startOfDay(now).toISOString();
-  const weekStart = startOfWeek(now, { weekStartsOn: 1 }).toISOString();
-  const monthStart = startOfMonth(now).toISOString();
 
-  const [todayResult, weekResult, monthResult] = await Promise.all([
-    supabase
-      .from("reservations")
-      .select("id", { count: "exact", head: true })
-      .gte("created_at", todayStart),
-    supabase
-      .from("reservations")
-      .select("id", { count: "exact", head: true })
-      .gte("created_at", weekStart),
-    supabase
-      .from("reservations")
-      .select("id", { count: "exact", head: true })
-      .gte("created_at", monthStart),
+  const countSince = async (sinceISO: string): Promise<PeriodCount> => {
+    const entries = await Promise.all(
+      activeCodes.map(async (code) => {
+        const { count, error } = await supabase
+          .from("reservations")
+          .select("id", { count: "exact", head: true })
+          .gte("created_at", sinceISO)
+          .eq("franchise", code);
+        if (error) throw error;
+        return [code, count ?? 0] as const;
+      })
+    );
+
+    const byFranchise: Record<string, number> = Object.fromEntries(entries);
+    const total = entries.reduce((acc, [, n]) => acc + n, 0);
+    return { total, byFranchise };
+  };
+
+  const [today, week, month] = await Promise.all([
+    countSince(bogotaStartOfDayISO()),
+    countSince(bogotaStartOfWeekISO()),
+    countSince(bogotaStartOfMonthISO()),
   ]);
 
-  return {
-    today: todayResult.count ?? 0,
-    week: weekResult.count ?? 0,
-    month: monthResult.count ?? 0,
-  };
+  return { today, week, month };
 }
 
 export async function getCommissionSummary() {
@@ -60,7 +86,7 @@ export async function getCommissionSummary() {
 
 export async function getTopReferrals(limit = 5) {
   const supabase = await createClient();
-  const monthStart = startOfMonth(new Date()).toISOString();
+  const monthStart = bogotaStartOfMonthISO();
 
   const { data, error } = await supabase
     .from("reservations")

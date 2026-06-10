@@ -25,7 +25,7 @@ export interface LocationDirectoryItem {
   status: string;
   pickup_address: string;
   pickup_map: string;
-  schedule: Record<string, string>;
+  schedule: { display?: string };
 }
 
 /**
@@ -49,5 +49,10 @@ export async function getLocationDirectory(): Promise<LocationDirectoryItem[]> {
 
   if (error) throw error;
 
+  // The string-form `.select(DIRECTORY_COLUMNS.join(", "))` erases the row type
+  // (a dynamic select returns a loosely-typed result that won't narrow to
+  // LocationDirectoryItem), so the cast is unavoidable here — do NOT "fix" it
+  // into a typed select, that would break the single-source DIRECTORY_COLUMNS
+  // pattern. Matches the repo's untyped-Supabase-client convention.
   return (data ?? []) as unknown as LocationDirectoryItem[];
 }

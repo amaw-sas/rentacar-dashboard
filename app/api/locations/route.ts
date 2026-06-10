@@ -18,9 +18,12 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Headers": "Content-Type",
 } as const;
 
-// CDN TTL (not a rate limit): 5 min trims redundant origin hits while keeping a
-// location edit fresh within ≤5 min. revalidatePath does NOT purge this — the
-// CDN serves the cached copy until the TTL expires.
+// CDN TTL (not a rate limit): fresh for 5 min (s-maxage=300); stale-while-
+// revalidate=600 lets the CDN serve a stale copy up to ~15 min total (300+600)
+// while it revalidates in the background. So a location edit propagates in ≤5 min
+// best case, ~15 min worst case. revalidatePath does NOT purge the CDN copy.
+// Acceptable because the directory only maps name→code; the downstream
+// availability/reservation endpoints are authoritative on whether a code is bookable.
 const CACHE_CONTROL = "public, s-maxage=300, stale-while-revalidate=600";
 
 export async function GET() {

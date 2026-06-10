@@ -11,7 +11,9 @@ const PUBLIC_API_PREFIXES = [
 ];
 
 export async function middleware(request: NextRequest) {
-  // Public API routes — authenticated via x-api-key header, not session
+  // Public API routes — bypass session auth. /api/reservations, /api/cron and
+  // /api/upload authenticate via x-api-key in the handler; /api/locations and
+  // /api/openapi are fully public (no key — data already public on brand sites).
   if (PUBLIC_API_PREFIXES.some((p) => request.nextUrl.pathname.startsWith(p))) {
     return NextResponse.next();
   }

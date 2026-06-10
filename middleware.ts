@@ -2,10 +2,18 @@ import { type NextRequest, NextResponse } from "next/server";
 import { updateSession } from "@/lib/supabase/middleware";
 import { createServerClient } from "@supabase/ssr";
 
-const PUBLIC_API_PREFIXES = ["/api/reservations", "/api/cron", "/api/upload"];
+const PUBLIC_API_PREFIXES = [
+  "/api/reservations",
+  "/api/cron",
+  "/api/upload",
+  "/api/locations",
+  "/api/openapi",
+];
 
 export async function middleware(request: NextRequest) {
-  // Public API routes — authenticated via x-api-key header, not session
+  // Public API routes — bypass session auth. /api/reservations, /api/cron and
+  // /api/upload authenticate via x-api-key in the handler; /api/locations and
+  // /api/openapi are fully public (no key — data already public on brand sites).
   if (PUBLIC_API_PREFIXES.some((p) => request.nextUrl.pathname.startsWith(p))) {
     return NextResponse.next();
   }

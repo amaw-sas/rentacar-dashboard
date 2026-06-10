@@ -63,24 +63,33 @@ null. Everything excluded is accounted for in 05e (§5).
 **Fixed-weight pooled curve (composition confound).** A naive `median(idx)` pooled over all categories is still
 confounded: *which* gamas populate a bucket varies by lead-time (gama composition shifts bucket-to-bucket), so
 the pooled median mixes the lead-time effect with composition. The global curve therefore uses **fixed category
-weights**:
+weights over ALL categories**, **renormalized per bucket over the categories actually present** so missing cells
+never bias it:
 ```
-curve(bucket) = Σ_cat  w_cat · median_idx(cat, bucket)         -- per-category median, then weighted sum
-w_cat = n_priced_quotes(cat) / Σ n_priced_quotes               -- weight is CONSTANT across buckets
+present(b) = { cat : n_quotes(cat, b) >= 1 }                          -- cats with a quote in bucket b
+curve(b)   = Σ_{cat ∈ present(b)} w_cat·median_idx(cat,b)
+             ───────────────────────────────────────────             -- renormalized: surviving weights sum to 1
+                    Σ_{cat ∈ present(b)} w_cat
+w_cat      = n_priced_quotes(cat) / Σ_ALL n_priced_quotes            -- base weight, CONSTANT across buckets, over ALL cats
 ```
-Because `w_cat` does not depend on the bucket, gama composition can no longer shift the curve across lead-times —
-only the genuine within-gama lead-time effect moves it. (`median_idx(cat,bucket)` from cut 05c feeds this.)
+The base `w_cat` is constant across buckets (so composition cannot shift the curve), but each bucket renormalizes
+over the gamas present in it (so a gama with no quotes at, say, `0d` does not silently drag the weights below 1).
+The per-`(cat, bucket)` `median_idx` and `w_cat` that feed this are **all exposed in cut 05c** (every category,
+not just the top 6), so the curve is exactly reproducible from 05c — see SCEN-2.
 
-**Aggregation outputs.** Per bucket (05a): `n_quotes`, `weighted_median_idx` (= `curve(bucket)`), and for spread
-the volume-pooled `p25_idx`/`p75_idx`. **Headline index (chart-safe):**
+**Aggregation outputs.** Per bucket (05a): `n_quotes`, `weighted_median_idx` (= `curve(b)`), and for spread the
+volume-pooled `p25_idx`/`p75_idx`. **Headline index (chart-safe), rebased on the cheapest CONFIDENT bucket:**
 ```
-index_100 = round( curve(bucket) / min(curve) * 100 )          -- integer: 100 at the sweet spot, e.g. 141
+confident = { b : n_quotes(b) >= 1000 }
+base      = min_{b ∈ confident} curve(b)                              -- a thin/noisy tail can NEVER be the base
+index_100 = round( curve(b) / base * 100 )                           -- integer: 100 at the sweet spot, e.g. 141
 ```
-`index_100` is an **integer** (100, 105, 141 …) so the integer-only chart label path renders it faithfully
-(§6); the decimal `weighted_median_idx` stays in the table.
+`index_100` is an **integer** (100, 105, 141 …) so the integer-only chart label path renders it faithfully (§6);
+the decimal `weighted_median_idx` stays in the table. `sweet_spot_bucket` (05b) is the argmin over `confident`
+buckets — never a low-confidence one.
 
-**Low-confidence flagging.** Any bucket / gama×bucket / target-week with `n_quotes < 1000` carries a
-`low_confidence` flag (rendered, not hidden).
+**Low-confidence flagging.** Any bucket / cat×bucket / target-week with `n_quotes < 1000` carries a
+`low_confidence` flag (rendered, not hidden) and is excluded from `base`/`sweet_spot` selection.
 
 ## 5. Report cuts (DuckDB over Parquet, pattern of reports/01–04)
 
@@ -89,26 +98,29 @@ Cuts (each a DuckDB `-markdown` result set with the `--- 05x: … ---` marker, l
 
 - **05a — global anticipation curve.** Columns: `lead_bucket, n_quotes, weighted_median_idx, p25_idx, p75_idx,
   index_100, low_confidence`. One row per bucket, ordered by the sortable label. `weighted_median_idx` is the
-  fixed-weight curve (§4); `index_100` is its integer base-100 rebasing (min bucket = 100). The headline curve.
+  per-bucket-renormalized fixed-weight curve (§4); `index_100` rebases on the cheapest *confident* bucket
+  (= 100). The headline curve.
 - **05b — actionable metrics (one row), each pinned to a NAMED 05a bucket so it is recomputable from 05a:**
-  `sweet_spot_bucket` (the 05a row with min `weighted_median_idx`), `sweet_spot_index_100` (= 100),
-  `urgency_3d_pct = round((curve(03_3d)/min(curve) − 1)·100)` (the **`03_3d`** bucket, not a pooled ≤3d),
+  `sweet_spot_bucket` (argmin `weighted_median_idx` over `n_quotes ≥ 1000` buckets), `sweet_spot_index_100`
+  (= 100), `urgency_3d_pct = round((curve(03_3d)/base − 1)·100)` (the **`03_3d`** bucket, not a pooled ≤3d),
   `velocity_7to2_pct = round((curve(02_2d)/curve(04_4_7d) − 1)·100)` (the **`02_2d`** vs **`04_4_7d`** buckets;
   `04_4_7d` is the 7-day reference since there is no exact 7d bucket — stated explicitly), `n_quotes_total`.
-- **05c — per-gama (top 6 by n_priced_quotes).** Per `(category_code, lead_bucket)`: `n_quotes`,
-  `median_total_amount` (COP) and `median_idx` (this feeds the 05a weighted curve); plus a per-gama summary:
-  `category_code, category_description, sweet_spot_bucket, min_median_price, pct_increase_at_3d`.
-- **05d — target dates that escalate fastest (point 2).** Per ISO `pickup_week`: `n_searches` (demand) and
-  `escalation_pct = round((curve_week(03_3d ∪ shorter) / curve_week(≥30d) − 1)·100)` using the same per-gama
-  fixed weights within the week, ranked desc, top 30. Surfaces holidays/puentes for inventory + Ads. Weeks with
-  `n_searches < 1000` flagged `low_confidence`.
-- **05e — reconciliation, four mutually-exclusive drop reasons (applied in this precedence).** Starting from
+- **05c — per-(category × bucket) curve inputs, ALL categories.** Per `(category_code, lead_bucket)`: `n_quotes`,
+  `median_idx`, `w_cat` (the base weight). This is the **complete grid** that feeds 05a's weighted curve — every
+  category (~16), so SCEN-2 can reproduce 05a exactly from this cut. (It is a backing table, ~16×≤10 rows.)
+- **05d — per-gama actionable summary (top 6 by n_priced_quotes).** `category_code, category_description,
+  sweet_spot_bucket, min_median_price` (COP), `pct_increase_at_3d`. Drives the per-gama `hbar` chart + narrative;
+  top-6 for readability (the full data lives in 05c).
+- **05e — target dates that escalate fastest (point 2).** Per ISO `pickup_week`: `n_searches` (demand) and
+  `escalation_pct = round((curve_week(03_3d) / curve_week(06_15_30d) − 1)·100)` using the same per-gama fixed
+  weights renormalized within the week, ranked desc, top 30. Surfaces holidays/puentes for inventory + Ads.
+  Weeks with `n_searches < 1000` flagged `low_confidence`.
+- **05f — reconciliation, four mutually-exclusive drop reasons (applied in this precedence).** Starting from
   total priced `cat_quotes` = 2,974,126: `dropped_null_lead` (parent search `pickup_dt` NULL/unparseable →
   `lead_days` NULL), then `dropped_negative_lead` (`lead_days < 0`), then `dropped_null_price`
   (`total_amount` IS NULL OR `<= 0`), then `dropped_null_category` (`category_code` NULL), then
-  `n_quotes_analyzed` (= Σ 05a buckets). The five counts MUST sum to exactly 2,974,126. (Note: `cat_quotes` is
-  the `pd_kind='array'` priced subset; `total_amount` is nonetheless NULLABLE in `materialize.sql`, so
-  `dropped_null_price` can be > 0 and must be tallied, not assumed zero.)
+  `n_quotes_analyzed` (= Σ 05a buckets). The five counts MUST sum to exactly 2,974,126. (`total_amount` is
+  NULLABLE in `materialize.sql`, so `dropped_null_price` can be > 0 — tallied, not assumed zero.)
 
 `generate-reports.sh` is extended to run `05-anticipation.sql` and append its block to the committed bundle,
 exactly as it does for 01–04 (same `SET VARIABLE dataset_dir`, atomic publish, PII-free markdown).
@@ -122,7 +134,7 @@ exactly as it does for 01–04 (same `SET VARIABLE dataset_dir`, atomic publish,
 - **Charts (§6 of the parent spec):** Report 05 → `line(05a → x = lead_bucket far→near, y = index_100)` (the
   curve — `index_100` is an **integer** 100…150, so the existing integer-only `fmtInt` label path renders it
   faithfully; plotting the decimal `weighted_median_idx` would collapse every label to "1"/"2" and is NOT used)
-  + `hbar(05c per-gama → value = pct_increase_at_3d)` (already integer-percent). No change to `charts.mjs`; its
+  + `hbar(05d per-gama → value = pct_increase_at_3d)` (already integer-percent). No change to `charts.mjs`; its
   integer-only / IPv4-guard invariants are preserved.
 - `render-pdf.sh` / `render-markdown.sh`: unchanged (they already render whatever the bundle/composers contain).
 
@@ -141,7 +153,7 @@ compute time. Row counts are anchored to the merged Phase 3 numbers (664,126 / 2
 | Parquet missing | `generate-reports.sh` aborts (dataset not materialized) — run the pipeline first |
 | Row counts ≠ 664,126 / 2,974,126 | load is incomplete — abort before reporting |
 | Bucket with n_quotes < 1000 | rendered with a `low_confidence` flag, not hidden |
-| 05e does not reconcile | report is wrong — investigate, do not publish |
+| 05f does not reconcile | report is wrong — investigate, do not publish |
 | Negative/null lead-time or price | excluded by filter, counted in 05e's dropped tally |
 
 ## 9. File structure
@@ -151,10 +163,10 @@ scripts/analysis/log-veh/
   reports/05-anticipation.sql      # NEW — cuts 05a–05e
   generate-reports.sh              # MODIFIED — add 5th entry to REPORT_FILES/REPORT_TITLES arrays
   pdf/narrative.es.md              # MODIFIED — + NARRATIVE 05 block (humanized)
-  pdf/parse-bundle.mjs             # MODIFIED — MANIFEST += ["05","05a"]…["05","05e"] (else 05 cuts are unguarded)
-  pdf/compose-html.mjs             # MODIFIED — REPORT_ORDER += "05"; REPORT_CUTS["05"]; TEXT_COLUMNS +=
-                                   #   lead_bucket, pickup_week, low_confidence; new chartsFor("05") branch
-  pdf/compose-markdown.mjs         # MODIFIED — REPORT_ORDER += "05"; REPORT_CUTS["05"]; TEXT_COLUMNS += same
+  pdf/parse-bundle.mjs             # MODIFIED — MANIFEST += ["05","05a"]…["05","05f"] (else 05 cuts are unguarded)
+  pdf/compose-html.mjs             # MODIFIED — REPORT_ORDER += "05"; REPORT_CUTS["05"]=["05a"…"05f"];
+                                   #   TEXT_COLUMNS += lead_bucket, pickup_week, low_confidence; new chartsFor("05")
+  pdf/compose-markdown.mjs         # MODIFIED — REPORT_ORDER += "05"; REPORT_CUTS["05"]=["05a"…"05f"]; TEXT_COLUMNS += same
 docs/specs/2026-06-10-issue-45-anticipation-curve/scenarios/*.scenarios.md   # holdout
 docs/data-ops/.../reports/log-veh-reports-<date>.md   # the committed bundle gains a Report 05 section
 ```
@@ -170,11 +182,11 @@ additions. No other consumer reads the bundle.
 ## 10. Testing strategy
 
 - **Report correctness (DuckDB execution):** run `05-anticipation.sql` over the regenerated Parquet; assert
-  05e reconciles; assert the curve is monotone-ish (median_idx non-decreasing as lead-time shrinks past the
+  05f reconciles; assert the curve is monotone-ish (median_idx non-decreasing as lead-time shrinks past the
   sweet spot is expected but NOT forced — if it isn't, that's a real finding, not a bug); assert 05b's metrics
   equal the values derivable from 05a.
 - **Presentation (unit, vitest):** `compose-html`/`compose-markdown` include the Report 05 heading + its chart;
-  determinism preserved; `parse-bundle` parses 05a–05e AND its `MANIFEST` now includes the five 05 cuts (a
+  determinism preserved; `parse-bundle` parses 05a–05f AND its `MANIFEST` now includes the six 05 cuts (a
   bundle missing any 05 cut throws — extend the existing missing-cut test).
 - **End-to-end:** `render-pdf.sh` / `render-markdown.sh` produce `%PDF`/Markdown with the new section; check-pii
   passes; determinism holds.
@@ -185,24 +197,30 @@ additions. No other consumer reads the bundle.
    10 ordered buckets present, each with `n_quotes`, `weighted_median_idx`, and an integer `index_100` whose
    minimum equals exactly `100` (rebasing arithmetic). This proves the pipeline ran end-to-end; the analytical
    value is the reported numbers, whose *direction is not pre-judged* (the curve is whatever the data says).
-2. **Curve is the fixed-weight average, not a naive pool** — 05a's `weighted_median_idx(bucket)` equals
-   `Σ_cat w_cat·median_idx(cat,bucket)` with `w_cat` (= cat share of priced quotes) **constant across buckets**;
-   recomputing it from 05c's per-gama medians + the fixed weights reproduces 05a exactly. (This is what removes
-   the gama-composition-per-bucket confound, not just the level confound.)
-3. **Metrics derive from NAMED 05a buckets** — 05b's `sweet_spot_bucket` is exactly the 05a row with min
-   `weighted_median_idx`; `urgency_3d_pct` equals 05a's `index_100` at the **`03_3d`** bucket minus 100;
-   `velocity_7to2_pct` equals `round((curve(02_2d)/curve(04_4_7d) − 1)·100)` from 05a's named buckets. Each is
-   recomputable from 05a with no ambiguity.
-4. **Reconciliation (five mutually-exclusive counts)** — 05e: `dropped_null_lead + dropped_negative_lead +
-   dropped_null_price + dropped_null_category + n_quotes_analyzed` = exactly `2,974,126`; no quote is silently
-   lost or double-counted.
-5. **Robustness** — aggregation uses median (a single 95M-COP outlier does not move a bucket's reported value);
-   buckets / gama×buckets / weeks with `n_quotes < 1000` carry the `low_confidence` flag (rendered, not hidden).
-6. **Report 05 in the bundle + presentation** — the committed markdown bundle gains a Report 05 section; the
-   parser's `MANIFEST` includes 05a–05e (a missing 05 cut throws); the composed HTML/Markdown contains the
-   **"Anticipación de precios"** heading, the curve `line` chart (with a faithful integer `index_100` label such
-   as a 3-digit value > 100), and the per-gama `hbar`; PDF renders (`%PDF`), check-pii passes, determinism holds.
-7. **Target-date escalation (point 2)** — 05d ranks pickup-weeks by `escalation_pct` desc and reports each
+2. **Curve is the renormalized fixed-weight average, reproducible from 05c** — recomputing
+   `curve(b) = Σ_{cat present in b} w_cat·median_idx(cat,b) / Σ_{cat present in b} w_cat` from cut **05c** (which
+   exposes every category's `median_idx` + `w_cat` per bucket) reproduces 05a's `weighted_median_idx` exactly.
+   Because `w_cat` is constant across buckets, gama composition cannot shift the curve (this removes the
+   composition confound, not just the level one).
+3. **Missing cells renormalize, never bias** — for a bucket where some categories have zero quotes, 05a's curve
+   uses only the present categories with their weights renormalized to sum to 1 (verifiable: take a bucket with a
+   known-absent gama; its `weighted_median_idx` equals the present-only renormalized sum, and equals what 05c
+   reproduces — it is NOT dragged toward 0).
+4. **Metrics derive from NAMED, CONFIDENT 05a buckets** — 05b's `sweet_spot_bucket` is the argmin
+   `weighted_median_idx` over buckets with `n_quotes ≥ 1000` (never a low-confidence bucket); `urgency_3d_pct`
+   equals 05a's `index_100` at **`03_3d`** minus 100; `velocity_7to2_pct` equals
+   `round((curve(02_2d)/curve(04_4_7d) − 1)·100)` from 05a's named buckets. Each recomputable from 05a.
+5. **Reconciliation (five mutually-exclusive counts)** — 05f: `dropped_null_lead + dropped_negative_lead +
+   dropped_null_price + dropped_null_category + n_quotes_analyzed` = exactly `2,974,126`; no quote silently lost
+   or double-counted.
+6. **Robustness + confident rebasing** — aggregation uses median (a single 95M-COP outlier does not move a
+   bucket's value); `index_100`'s base is the cheapest bucket with `n_quotes ≥ 1000`, so a thin noisy tail can
+   never become the rebasing base; buckets / cat×buckets / weeks with `n_quotes < 1000` carry `low_confidence`.
+7. **Report 05 in the bundle + presentation** — the committed markdown bundle gains a Report 05 section; the
+   parser's `MANIFEST` includes 05a–05f (a missing 05 cut throws); the composed HTML/Markdown contains the
+   **"Anticipación de precios"** heading, the curve `line` chart (faithful integer `index_100` label, a 3-digit
+   value ≥ 100), and the per-gama `hbar`; PDF renders (`%PDF`), check-pii passes, determinism holds.
+8. **Target-date escalation (point 2)** — 05e ranks pickup-weeks by `escalation_pct` desc and reports each
    week's `n_searches`; every reported top row is above the `n_searches ≥ 1000` confidence threshold (which
    weeks rank highest is a data finding, not asserted).
 
@@ -211,7 +229,7 @@ additions. No other consumer reads the bundle.
 - **Absolute per-gama curves (no index)** — rejected as headline: 16 curves, no single message, still mixes
   route/date within a gama.
 - **Strict same-cohort (route×gama×target-week across lead-times)** — rejected: too sparse for a stable curve;
-  its spirit is partially captured by 05d's per-target-date view.
+  its spirit is partially captured by 05e's per-target-date view.
 - **Mean instead of median** — rejected: the price tail (max 95M COP) makes the mean meaningless.
 - **Standalone report** — rejected: duplicates presentation scaffolding; Report 05 in the bundle reuses everything.
 

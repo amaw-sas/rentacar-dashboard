@@ -58,7 +58,7 @@ Bucketed into the 10 ordered buckets, sortable labels `00_0d, 01_1d, 02_2d, 03_3
 07_31_60d, 08_61_90d, 09_90plus`.
 
 **Filters (analysis rows).** `lead_days IS NOT NULL`, `lead_days >= 0`, `total_amount > 0`, `category_code` not
-null. Everything excluded is accounted for in 05e (§5).
+null. Everything excluded is accounted for in 05f (§5).
 
 **Fixed-weight pooled curve (composition confound).** A naive `median(idx)` pooled over all categories is still
 confounded: *which* gamas populate a bucket varies by lead-time (gama composition shifts bucket-to-bucket), so
@@ -115,7 +115,7 @@ Cuts (each a DuckDB `-markdown` result set with the `--- 05x: … ---` marker, l
   `escalation_pct = round((curve_week(03_3d) / curve_week(06_15_30d) − 1)·100)` using the same per-gama fixed
   weights renormalized within the week, ranked desc, top 30. Surfaces holidays/puentes for inventory + Ads.
   Weeks with `n_searches < 1000` flagged `low_confidence`.
-- **05f — reconciliation, four mutually-exclusive drop reasons (applied in this precedence).** Starting from
+- **05f — reconciliation, five mutually-exclusive counts (four drop reasons + the analyzed count, in this precedence).** Starting from
   total priced `cat_quotes` = 2,974,126: `dropped_null_lead` (parent search `pickup_dt` NULL/unparseable →
   `lead_days` NULL), then `dropped_negative_lead` (`lead_days < 0`), then `dropped_null_price`
   (`total_amount` IS NULL OR `<= 0`), then `dropped_null_category` (`category_code` NULL), then
@@ -130,7 +130,7 @@ exactly as it does for 01–04 (same `SET VARIABLE dataset_dir`, atomic publish,
 - `narrative.es.md`: a new `<!-- NARRATIVE: 05 -->` block, heading **"Anticipación de precios"** (Spanish, run
   through `/humanizer`), citing the real 05b figures (sweet spot, +% at 3d, 7→2 velocity) once computed.
 - `compose-html.mjs` / `compose-markdown.mjs`: add `"05"` to `REPORT_ORDER` and `REPORT_CUTS`
-  (`["05a","05b","05c","05d","05e"]`); add report-05 charts.
+  (`["05a","05b","05c","05d","05e","05f"]`); add report-05 charts.
 - **Charts (§6 of the parent spec):** Report 05 → `line(05a → x = lead_bucket far→near, y = index_100)` (the
   curve — `index_100` is an **integer** 100…150, so the existing integer-only `fmtInt` label path renders it
   faithfully; plotting the decimal `weighted_median_idx` would collapse every label to "1"/"2" and is NOT used)
@@ -154,13 +154,13 @@ compute time. Row counts are anchored to the merged Phase 3 numbers (664,126 / 2
 | Row counts ≠ 664,126 / 2,974,126 | load is incomplete — abort before reporting |
 | Bucket with n_quotes < 1000 | rendered with a `low_confidence` flag, not hidden |
 | 05f does not reconcile | report is wrong — investigate, do not publish |
-| Negative/null lead-time or price | excluded by filter, counted in 05e's dropped tally |
+| Negative/null lead-time or price | excluded by filter, counted in 05f's dropped tally |
 
 ## 9. File structure
 
 ```
 scripts/analysis/log-veh/
-  reports/05-anticipation.sql      # NEW — cuts 05a–05e
+  reports/05-anticipation.sql      # NEW — cuts 05a–05f
   generate-reports.sh              # MODIFIED — add 5th entry to REPORT_FILES/REPORT_TITLES arrays
   pdf/narrative.es.md              # MODIFIED — + NARRATIVE 05 block (humanized)
   pdf/parse-bundle.mjs             # MODIFIED — MANIFEST += ["05","05a"]…["05","05f"] (else 05 cuts are unguarded)

@@ -168,6 +168,9 @@ export function line(series, opts = {}) {
   const max = maxValue(items.map((d) => d.y));
   const n = items.length;
   const step = px(n > 1 ? plotW / (n - 1) : 0);
+  // Thin the x-axis ticks so a long monthly series doesn't collide into a
+  // smear: show at most ~12 labels (every point's value label is kept).
+  const tickStride = Math.max(1, Math.ceil(n / 12));
 
   // Precompute integer marker coordinates.
   const pts = [];
@@ -193,12 +196,14 @@ export function line(series, opts = {}) {
     parts.push(`<polyline points="${poly}" fill="none" stroke="${color}" stroke-width="2"/>`);
   }
 
-  // markers + value label + x tick label
-  for (const p of pts) {
+  // markers + value label (all points) + x tick label (thinned)
+  pts.forEach((p, i) => {
     parts.push(`<circle cx="${p.cx}" cy="${p.cy}" r="3" fill="${color}"/>`);
     parts.push(`<text x="${p.cx}" y="${px(p.cy - 8)}" font-size="12" text-anchor="middle" fill="#111827">${fmtInt(p.value)}</text>`);
-    parts.push(`<text x="${p.cx}" y="${px(baseY + 18)}" font-size="11" text-anchor="middle" fill="#374151">${esc(p.x)}</text>`);
-  }
+    if (i % tickStride === 0 || i === pts.length - 1) {
+      parts.push(`<text x="${p.cx}" y="${px(baseY + 18)}" font-size="11" text-anchor="middle" fill="#374151">${esc(p.x)}</text>`);
+    }
+  });
 
   parts.push(`</svg>`);
   return guard(parts.join(""));

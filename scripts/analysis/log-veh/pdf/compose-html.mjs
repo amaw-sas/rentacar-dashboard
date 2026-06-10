@@ -129,14 +129,14 @@ function chartsFor(report, cuts, branchLabels) {
     out.push(
       line(
         b.rows.map((r) => ({ x: r.month_utc, y: numAt(r, "searches") })),
-        { title: "Busquedas por mes", color: "#2563eb" },
+        { title: "Búsquedas por mes", color: "#2563eb" },
       ),
     );
     const a = topN(cuts["01a"].rows, 10);
     out.push(
       hbar(
         a.map((r) => ({ label: relabel(r.pickup_location, branchLabels), value: numAt(r, "searches") })),
-        { title: "Top sucursales por busquedas", color: "#2563eb" },
+        { title: "Top sucursales por búsquedas", color: "#2563eb" },
       ),
     );
   } else if (report === "02") {
@@ -144,20 +144,20 @@ function chartsFor(report, cuts, branchLabels) {
     out.push(
       hbar(
         a.map((r) => ({ label: r.category_description, value: numAt(r, "median_total_amount") })),
-        { title: "Mediana de cotizacion por gama", color: "#7c3aed" },
+        { title: "Mediana de cotización por gama", color: "#7c3aed" },
       ),
     );
   } else if (report === "03") {
     out.push(
       hbar(
         cuts["03b"].rows.map((r) => ({ label: r.error_code, value: numAt(r, "rows_n") })),
-        { title: "Errores por codigo", color: "#dc2626" },
+        { title: "Errores por código", color: "#dc2626" },
       ),
     );
     out.push(
       hbar(
         cuts["03a"].rows.map((r) => ({ label: r.pd_kind, value: numAt(r, "rows_n") })),
-        { title: "Resultado de la cotizacion", color: "#dc2626" },
+        { title: "Resultado de la cotización", color: "#dc2626" },
       ),
     );
   } else if (report === "04") {
@@ -170,19 +170,19 @@ function chartsFor(report, cuts, branchLabels) {
     out.push(
       vbar(
         cuts["04b"].rows.map((r) => ({ label: r.bucket, value: numAt(r, "searches") })),
-        { title: "Anticipacion (lead-time)", color: "#059669" },
+        { title: "Anticipación (lead-time)", color: "#059669" },
       ),
     );
     out.push(
       vbar(
         cuts["04c"].rows.map((r) => ({ label: r.bucket, value: numAt(r, "searches") })),
-        { title: "Duracion del alquiler", color: "#059669" },
+        { title: "Duración del alquiler", color: "#059669" },
       ),
     );
     out.push(
       hbar(
         cuts["04d"].rows.map((r) => ({ label: r.trip_type, value: numAt(r, "searches") })),
-        { title: "Ida y vuelta vs. una via", color: "#059669" },
+        { title: "Ida y vuelta vs. una vía", color: "#059669" },
       ),
     );
   }
@@ -239,8 +239,8 @@ export function composeHtml({ bundleMd, narrativeMd, branchLabels, themeCss, rep
     `</head>` +
     `<body>` +
     `<header class="report-cover">` +
-    `<h1>Reporte de demanda y disponibilidad</h1>` +
-    `<div class="subtitle">Analisis de busquedas log_veh</div>` +
+    `<h1>Reporte de búsquedas y disponibilidad</h1>` +
+    `<div class="subtitle">Análisis de demanda, precios, cotización y disponibilidad</div>` +
     `</header>` +
     sections +
     footer +

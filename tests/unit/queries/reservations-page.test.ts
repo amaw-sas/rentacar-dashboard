@@ -158,12 +158,18 @@ describe("getReservationsPage — query construction", () => {
     ]);
   });
 
-  it("makes created_to inclusive through end of day (SCEN-007)", async () => {
+  it("anchors the created_at range to Colombia time, inclusive (SCEN-007, issue #115)", async () => {
     await run("created_from=2026-05-01&created_to=2026-05-31");
-    expect(rec.reservations.gte).toContainEqual(["created_at", "2026-05-01"]);
+    // Lower bound = 00:00 Colombia of May 1 = 05:00Z; upper bound = last ms of
+    // May 31 Colombia = Jun 1 04:59:59.999Z. Bare UTC dates (the prior bug) would
+    // misattribute reservations created 19:00–24:00 Colombia to the next day.
+    expect(rec.reservations.gte).toContainEqual([
+      "created_at",
+      "2026-05-01T05:00:00.000Z",
+    ]);
     expect(rec.reservations.lte).toContainEqual([
       "created_at",
-      "2026-05-31T23:59:59.999",
+      "2026-06-01T04:59:59.999Z",
     ]);
   });
 

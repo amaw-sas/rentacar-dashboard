@@ -18,10 +18,23 @@ function bogotaDateParts(now: Date): string {
   }).format(now); // e.g. "2026-06-09"
 }
 
+// Instant (UTC) at 00:00 Colombia of the given civil date "YYYY-MM-DD".
+// Use as the inclusive lower bound of a created_at range filter (issue #115):
+// `.gte("created_at", bogotaDayStartISO(from))`.
+export function bogotaDayStartISO(ymd: string): string {
+  return new Date(`${ymd}T00:00:00.000${BOGOTA_OFFSET}`).toISOString();
+}
+
+// Instant (UTC) at the last millisecond of the given civil date in Colombia.
+// Use as the inclusive upper bound of a created_at range filter (issue #115):
+// `.lte("created_at", bogotaDayEndISO(to))`.
+export function bogotaDayEndISO(ymd: string): string {
+  return new Date(`${ymd}T23:59:59.999${BOGOTA_OFFSET}`).toISOString();
+}
+
 // Instant (UTC) at 00:00 Colombia of the current day.
 export function bogotaStartOfDayISO(now: Date = new Date()): string {
-  const ymd = bogotaDateParts(now);
-  return new Date(`${ymd}T00:00:00${BOGOTA_OFFSET}`).toISOString();
+  return bogotaDayStartISO(bogotaDateParts(now));
 }
 
 // Instant (UTC) at 00:00 Colombia on Monday of the current week.

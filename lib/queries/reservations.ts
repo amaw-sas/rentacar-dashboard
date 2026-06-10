@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { bogotaDayStartISO, bogotaDayEndISO } from "@/lib/date/bogota";
 import {
   SEARCH_COLUMNS,
   type ReservationListParams,
@@ -61,12 +62,14 @@ export async function getReservationsPage(params: ReservationListParams) {
   if (params.status) q = q.eq("status", params.status);
   if (params.referralId) q = q.eq("referral_id", params.referralId);
   if (pickupLocationIds) q = q.in("pickup_location_id", pickupLocationIds);
-  // created_at is timestamptz; the URL stores a UTC date. Slicing the stored
-  // ISO to its date (prior client behavior) is equivalent to a UTC-day bound,
-  // so an end-of-day UTC ceiling makes created_to inclusive.
-  if (params.createdFrom) q = q.gte("created_at", params.createdFrom);
-  if (params.createdTo)
-    q = q.lte("created_at", `${params.createdTo}T23:59:59.999`);
+  // created_at is timestamptz; the URL stores a Colombia civil date. Anchoring
+  // the bounds to America/Bogota (UTC-5) — not bare UTC dates — keeps the filter
+  // aligned with the "Creado" column, which renders in Colombia time. Otherwise
+  // a reservation created 19:00–24:00 Colombia (= next UTC day) leaks into the
+  // following day's range. Issue #115; helpers shared with the dashboard (#114).
+  if (params.createdFrom)
+    q = q.gte("created_at", bogotaDayStartISO(params.createdFrom));
+  if (params.createdTo) q = q.lte("created_at", bogotaDayEndISO(params.createdTo));
   if (params.pickupFrom) q = q.gte("pickup_date", params.pickupFrom);
   if (params.pickupTo) q = q.lte("pickup_date", params.pickupTo);
   if (params.search) q = q.or(searchOrExpr(params.search));

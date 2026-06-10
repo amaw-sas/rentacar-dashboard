@@ -43,46 +43,72 @@ anticipation**. The data exists: `cat_quotes.total_amount` (price per category q
 
 ## 4. Methodology
 
-**Per-quote normalization (confound control).**
+**Per-quote normalization (level confound).**
 ```
 idx = total_amount / median(total_amount) OVER (PARTITION BY category_code)
 ```
-The category median is taken over **all priced quotes of that category** in the archive. `idx` is dimensionless
-and comparable across categories, so pooling categories into one national curve no longer mixes price scales.
-Interpretation: `idx = 1.41` at a bucket means "41% above that category's typical price".
+The category median is over **all priced quotes of that category**. `idx` is dimensionless and comparable across
+categories, removing the gama **price-level** mix. Interpretation: `idx = 1.41` ⇒ "41% above that gama's typical".
 
 **Lead-time.**
 ```
-lead_days = datediff('day', cast(created_at as date), cast(pickup_dt as date))
+lead_days = datediff('day', cast(created_at as date), cast(pickup_dt as date))   -- NULL if pickup_dt is NULL
 ```
-Bucketed into the 10 ordered buckets above (sortable labels `00_0d … 09_90plus`).
+Bucketed into the 10 ordered buckets, sortable labels `00_0d, 01_1d, 02_2d, 03_3d, 04_4_7d, 05_8_14d, 06_15_30d,
+07_31_60d, 08_61_90d, 09_90plus`.
 
-**Filters (all cuts).** `lead_days >= 0` (negative = created after pickup = dirty), `total_amount > 0`,
-`category_code` not null. `cat_quotes` already contains only `pd_kind='array'` priced quotes.
+**Filters (analysis rows).** `lead_days IS NOT NULL`, `lead_days >= 0`, `total_amount > 0`, `category_code` not
+null. Everything excluded is accounted for in 05e (§5).
 
-**Aggregation.** Per bucket: `count(*)`, `median(idx)`, `quantile(idx,0.25/0.75)`. The headline curve rebases:
-`idx_rebased = median_idx / min(median_idx over buckets)` → base `1.00` at the sweet spot.
+**Fixed-weight pooled curve (composition confound).** A naive `median(idx)` pooled over all categories is still
+confounded: *which* gamas populate a bucket varies by lead-time (gama composition shifts bucket-to-bucket), so
+the pooled median mixes the lead-time effect with composition. The global curve therefore uses **fixed category
+weights**:
+```
+curve(bucket) = Σ_cat  w_cat · median_idx(cat, bucket)         -- per-category median, then weighted sum
+w_cat = n_priced_quotes(cat) / Σ n_priced_quotes               -- weight is CONSTANT across buckets
+```
+Because `w_cat` does not depend on the bucket, gama composition can no longer shift the curve across lead-times —
+only the genuine within-gama lead-time effect moves it. (`median_idx(cat,bucket)` from cut 05c feeds this.)
 
-**Low-confidence flagging.** Any bucket (or gama×bucket) with `n_quotes < 1000` is marked low-confidence in the
-output so management doesn't over-read a thin tail.
+**Aggregation outputs.** Per bucket (05a): `n_quotes`, `weighted_median_idx` (= `curve(bucket)`), and for spread
+the volume-pooled `p25_idx`/`p75_idx`. **Headline index (chart-safe):**
+```
+index_100 = round( curve(bucket) / min(curve) * 100 )          -- integer: 100 at the sweet spot, e.g. 141
+```
+`index_100` is an **integer** (100, 105, 141 …) so the integer-only chart label path renders it faithfully
+(§6); the decimal `weighted_median_idx` stays in the table.
+
+**Low-confidence flagging.** Any bucket / gama×bucket / target-week with `n_quotes < 1000` carries a
+`low_confidence` flag (rendered, not hidden).
 
 ## 5. Report cuts (DuckDB over Parquet, pattern of reports/01–04)
 
 `reports/05-anticipation.sql` runs over `cat_quotes.parquet` JOIN `search_flat.parquet` on `sf.id = cq.search_id`.
 Cuts (each a DuckDB `-markdown` result set with the `--- 05x: … ---` marker, like the merged reports):
 
-- **05a — global anticipation curve.** Columns: `lead_bucket, n_quotes, median_idx, p25_idx, p75_idx,
-  idx_rebased, low_confidence`. One row per bucket, ordered. The headline curve.
-- **05b — actionable metrics (one row).** `sweet_spot_bucket, sweet_spot_idx, urgency_3d_pct (= idx_le3d/min −1),
-  velocity_7to2_pct (= idx_2d/idx_4_7d −1), n_quotes_total`.
-- **05c — per-gama (top 6 by n_quotes).** Per `(category_code, lead_bucket)`: `median_total_amount` (COP) and
-  `median_idx`; plus a per-gama summary row set: `category_code, category_description, sweet_spot_bucket,
-  min_median_price, pct_increase_at_3d`.
-- **05d — target dates that escalate fastest (point 2).** Per ISO `pickup_week` (and/or month): `n_searches`
-  (demand) and `escalation_pct = median_idx(lead≤3d) / median_idx(lead≥30d) − 1`, ranked desc, top 30. Surfaces
-  holidays/puentes for inventory + Ads budgeting. Weeks with `n_searches < 1000` flagged.
-- **05e — reconciliation.** `n_quotes` used (sum over 05a buckets) vs total priced `cat_quotes`; the dropped
-  count by reason (negative lead-time, null price/category). Numbers must reconcile.
+- **05a — global anticipation curve.** Columns: `lead_bucket, n_quotes, weighted_median_idx, p25_idx, p75_idx,
+  index_100, low_confidence`. One row per bucket, ordered by the sortable label. `weighted_median_idx` is the
+  fixed-weight curve (§4); `index_100` is its integer base-100 rebasing (min bucket = 100). The headline curve.
+- **05b — actionable metrics (one row), each pinned to a NAMED 05a bucket so it is recomputable from 05a:**
+  `sweet_spot_bucket` (the 05a row with min `weighted_median_idx`), `sweet_spot_index_100` (= 100),
+  `urgency_3d_pct = round((curve(03_3d)/min(curve) − 1)·100)` (the **`03_3d`** bucket, not a pooled ≤3d),
+  `velocity_7to2_pct = round((curve(02_2d)/curve(04_4_7d) − 1)·100)` (the **`02_2d`** vs **`04_4_7d`** buckets;
+  `04_4_7d` is the 7-day reference since there is no exact 7d bucket — stated explicitly), `n_quotes_total`.
+- **05c — per-gama (top 6 by n_priced_quotes).** Per `(category_code, lead_bucket)`: `n_quotes`,
+  `median_total_amount` (COP) and `median_idx` (this feeds the 05a weighted curve); plus a per-gama summary:
+  `category_code, category_description, sweet_spot_bucket, min_median_price, pct_increase_at_3d`.
+- **05d — target dates that escalate fastest (point 2).** Per ISO `pickup_week`: `n_searches` (demand) and
+  `escalation_pct = round((curve_week(03_3d ∪ shorter) / curve_week(≥30d) − 1)·100)` using the same per-gama
+  fixed weights within the week, ranked desc, top 30. Surfaces holidays/puentes for inventory + Ads. Weeks with
+  `n_searches < 1000` flagged `low_confidence`.
+- **05e — reconciliation, four mutually-exclusive drop reasons (applied in this precedence).** Starting from
+  total priced `cat_quotes` = 2,974,126: `dropped_null_lead` (parent search `pickup_dt` NULL/unparseable →
+  `lead_days` NULL), then `dropped_negative_lead` (`lead_days < 0`), then `dropped_null_price`
+  (`total_amount` IS NULL OR `<= 0`), then `dropped_null_category` (`category_code` NULL), then
+  `n_quotes_analyzed` (= Σ 05a buckets). The five counts MUST sum to exactly 2,974,126. (Note: `cat_quotes` is
+  the `pd_kind='array'` priced subset; `total_amount` is nonetheless NULLABLE in `materialize.sql`, so
+  `dropped_null_price` can be > 0 and must be tallied, not assumed zero.)
 
 `generate-reports.sh` is extended to run `05-anticipation.sql` and append its block to the committed bundle,
 exactly as it does for 01–04 (same `SET VARIABLE dataset_dir`, atomic publish, PII-free markdown).
@@ -93,8 +119,11 @@ exactly as it does for 01–04 (same `SET VARIABLE dataset_dir`, atomic publish,
   through `/humanizer`), citing the real 05b figures (sweet spot, +% at 3d, 7→2 velocity) once computed.
 - `compose-html.mjs` / `compose-markdown.mjs`: add `"05"` to `REPORT_ORDER` and `REPORT_CUTS`
   (`["05a","05b","05c","05d","05e"]`); add report-05 charts.
-- **Charts (§6 of the parent spec):** Report 05 → `line(05a → x = lead_bucket far→near, y = idx_rebased)` (the
-  curve) + `hbar(05c per-gama → value = pct_increase_at_3d)`.
+- **Charts (§6 of the parent spec):** Report 05 → `line(05a → x = lead_bucket far→near, y = index_100)` (the
+  curve — `index_100` is an **integer** 100…150, so the existing integer-only `fmtInt` label path renders it
+  faithfully; plotting the decimal `weighted_median_idx` would collapse every label to "1"/"2" and is NOT used)
+  + `hbar(05c per-gama → value = pct_increase_at_3d)` (already integer-percent). No change to `charts.mjs`; its
+  integer-only / IPv4-guard invariants are preserved.
 - `render-pdf.sh` / `render-markdown.sh`: unchanged (they already render whatever the bundle/composers contain).
 
 ## 7. Data prerequisite (regeneration)
@@ -120,14 +149,23 @@ compute time. Row counts are anchored to the merged Phase 3 numbers (664,126 / 2
 ```
 scripts/analysis/log-veh/
   reports/05-anticipation.sql      # NEW — cuts 05a–05e
-  generate-reports.sh              # MODIFIED — include report 05 in the bundle
+  generate-reports.sh              # MODIFIED — add 5th entry to REPORT_FILES/REPORT_TITLES arrays
   pdf/narrative.es.md              # MODIFIED — + NARRATIVE 05 block (humanized)
-  pdf/compose-html.mjs             # MODIFIED — REPORT_ORDER/REPORT_CUTS + report-05 charts
-  pdf/compose-markdown.mjs         # MODIFIED — REPORT_ORDER/REPORT_CUTS + report-05 caption
+  pdf/parse-bundle.mjs             # MODIFIED — MANIFEST += ["05","05a"]…["05","05e"] (else 05 cuts are unguarded)
+  pdf/compose-html.mjs             # MODIFIED — REPORT_ORDER += "05"; REPORT_CUTS["05"]; TEXT_COLUMNS +=
+                                   #   lead_bucket, pickup_week, low_confidence; new chartsFor("05") branch
+  pdf/compose-markdown.mjs         # MODIFIED — REPORT_ORDER += "05"; REPORT_CUTS["05"]; TEXT_COLUMNS += same
 docs/specs/2026-06-10-issue-45-anticipation-curve/scenarios/*.scenarios.md   # holdout
 docs/data-ops/.../reports/log-veh-reports-<date>.md   # the committed bundle gains a Report 05 section
 ```
-Reports 01–04 SQL and the PDF/MD render scripts are untouched. The Parquet stays gitignored.
+Reports 01–04 SQL and the `render-pdf.sh`/`render-markdown.sh` orchestrators are untouched (they render whatever
+the composers emit). `charts.mjs` is untouched. The Parquet stays gitignored.
+
+**Blast radius (consumers):** `parse-bundle.mjs`'s `MANIFEST` is a hardcoded list of expected `(report, cut)`
+pairs asserted present at parse time — it MUST gain the five 05 cuts or they are parsed-but-unguarded (a missing
+05 cut would pass silently). `compose-html.mjs`/`compose-markdown.mjs` drive table ordering from `REPORT_CUTS`,
+column alignment from `TEXT_COLUMNS`, and charts from a hardcoded `chartsFor` if-chain — all three need the 05
+additions. No other consumer reads the bundle.
 
 ## 10. Testing strategy
 
@@ -136,30 +174,37 @@ Reports 01–04 SQL and the PDF/MD render scripts are untouched. The Parquet sta
   sweet spot is expected but NOT forced — if it isn't, that's a real finding, not a bug); assert 05b's metrics
   equal the values derivable from 05a.
 - **Presentation (unit, vitest):** `compose-html`/`compose-markdown` include the Report 05 heading + its chart;
-  determinism preserved; `parse-bundle` parses 05a–05e (the existing parser is generic — add 05 to its manifest
-  if it has one).
+  determinism preserved; `parse-bundle` parses 05a–05e AND its `MANIFEST` now includes the five 05 cuts (a
+  bundle missing any 05 cut throws — extend the existing missing-cut test).
 - **End-to-end:** `render-pdf.sh` / `render-markdown.sh` produce `%PDF`/Markdown with the new section; check-pii
   passes; determinism holds.
 
 ## 11. Observable scenarios (holdout for SDD)
 
-1. **Curve produced** — `05-anticipation.sql` over the Parquet yields cut 05a with the 10 ordered buckets, each
-   with `n_quotes` and `median_idx`, and a `min`-rebased `idx_rebased` whose minimum is exactly `1.00`.
-2. **Index controls gama mix** — `idx` is `total_amount ÷ per-category median`; the per-category median of `idx`
-   equals ~1.0 by construction (sanity), and pooling categories does not let an expensive gama dominate the
-   curve.
-3. **Metrics derive from the curve** — 05b's `sweet_spot_bucket` is exactly the 05a bucket with min `median_idx`;
-   `urgency_3d_pct` and `velocity_7to2_pct` equal the values recomputed from 05a.
-4. **Reconciliation** — 05e: `Σ n_quotes` over 05a buckets + dropped(negative/null) = total priced `cat_quotes`
-   (2,974,126); no quote is silently lost.
-5. **Robustness** — aggregation uses median (a single 95M-COP outlier does not move the bucket's reported value);
-   buckets with `n_quotes < 1000` carry the `low_confidence` flag.
+1. **Curve produced (structural smoke check)** — `05-anticipation.sql` over the Parquet yields cut 05a with all
+   10 ordered buckets present, each with `n_quotes`, `weighted_median_idx`, and an integer `index_100` whose
+   minimum equals exactly `100` (rebasing arithmetic). This proves the pipeline ran end-to-end; the analytical
+   value is the reported numbers, whose *direction is not pre-judged* (the curve is whatever the data says).
+2. **Curve is the fixed-weight average, not a naive pool** — 05a's `weighted_median_idx(bucket)` equals
+   `Σ_cat w_cat·median_idx(cat,bucket)` with `w_cat` (= cat share of priced quotes) **constant across buckets**;
+   recomputing it from 05c's per-gama medians + the fixed weights reproduces 05a exactly. (This is what removes
+   the gama-composition-per-bucket confound, not just the level confound.)
+3. **Metrics derive from NAMED 05a buckets** — 05b's `sweet_spot_bucket` is exactly the 05a row with min
+   `weighted_median_idx`; `urgency_3d_pct` equals 05a's `index_100` at the **`03_3d`** bucket minus 100;
+   `velocity_7to2_pct` equals `round((curve(02_2d)/curve(04_4_7d) − 1)·100)` from 05a's named buckets. Each is
+   recomputable from 05a with no ambiguity.
+4. **Reconciliation (five mutually-exclusive counts)** — 05e: `dropped_null_lead + dropped_negative_lead +
+   dropped_null_price + dropped_null_category + n_quotes_analyzed` = exactly `2,974,126`; no quote is silently
+   lost or double-counted.
+5. **Robustness** — aggregation uses median (a single 95M-COP outlier does not move a bucket's reported value);
+   buckets / gama×buckets / weeks with `n_quotes < 1000` carry the `low_confidence` flag (rendered, not hidden).
 6. **Report 05 in the bundle + presentation** — the committed markdown bundle gains a Report 05 section; the
-   composed HTML/Markdown contains the **"Anticipación de precios"** heading, the curve `line` chart, and the
-   per-gama `hbar`; PDF renders (`%PDF`), check-pii passes, determinism holds.
+   parser's `MANIFEST` includes 05a–05e (a missing 05 cut throws); the composed HTML/Markdown contains the
+   **"Anticipación de precios"** heading, the curve `line` chart (with a faithful integer `index_100` label such
+   as a 3-digit value > 100), and the per-gama `hbar`; PDF renders (`%PDF`), check-pii passes, determinism holds.
 7. **Target-date escalation (point 2)** — 05d ranks pickup-weeks by `escalation_pct` desc and reports each
-   week's `n_searches`; the top rows are high-demand weeks (e.g. holiday/puente periods), each above the
-   confidence threshold.
+   week's `n_searches`; every reported top row is above the `n_searches ≥ 1000` confidence threshold (which
+   weeks rank highest is a data finding, not asserted).
 
 ## 12. Alternatives considered
 

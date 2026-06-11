@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo } from "react";
 import {
   BarChart,
   Bar,
@@ -18,9 +19,9 @@ import { aggregateChannels } from "@/lib/attribution/aggregate-channels";
 export function AttributionCharts({
   data,
 }: {
-  data: { attribution_channel: string | null }[];
+  data: { attribution_channel: string | null; count: number }[];
 }) {
-  const { total, stats } = aggregateChannels(data);
+  const { total, stats } = useMemo(() => aggregateChannels(data), [data]);
 
   // "Canales activos" counts real channels (excludes the Desconocido/null bucket).
   const activeChannels = stats.filter((s) => s.channel !== null).length;

@@ -78,15 +78,12 @@ export async function getReferralPerformance(filters?: AnalyticsFilters) {
 }
 
 export async function getAttributionBreakdown(): Promise<
-  { attribution_channel: string | null }[]
+  { attribution_channel: string | null; count: number }[]
 > {
   const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("reservations")
-    .select("attribution_channel");
-
+  const { data, error } = await supabase.rpc("attribution_breakdown");
   if (error) throw error;
-  return data;
+  return (data ?? []) as { attribution_channel: string | null; count: number }[];
 }
 
 const COMMISSION_REVENUE_SELECT = `

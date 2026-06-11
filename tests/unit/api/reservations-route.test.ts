@@ -227,4 +227,17 @@ describe("POST /api/reservations — attribution channel (issue #113, SCEN-005/0
     expect(res.status).toBe(200);
     expect(payload.attribution_channel).toBeNull();
   });
+
+  it("non-string raw fields are coerced to null and never block the booking", async () => {
+    // A malformed caller sends an object/number into text columns. attrStr must
+    // null them so the INSERT can't 500 on a JSON value in a `text` column.
+    const { res, payload } = await postWith({
+      attribution: { utm_source: { x: 1 }, gclid: 123, fbclid: "ok" },
+    });
+    expect(res.status).toBe(200);
+    expect(payload.utm_source).toBeNull();
+    expect(payload.gclid).toBeNull();
+    // A valid string field is preserved.
+    expect(payload.fbclid).toBe("ok");
+  });
 });

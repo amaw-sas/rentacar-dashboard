@@ -1,6 +1,7 @@
 /**
- * Pure aggregation for the Analytics → Origen surface: collapses raw
- * `attribution_channel` rows into one stat per channel that actually appears,
+ * Pure aggregation for the Analytics → Origen surface: maps pre-grouped
+ * `(attribution_channel, count)` rows (one per channel, already counted by the
+ * `attribution_breakdown` RPC) into one stat per channel that actually appears,
  * ordered by the canonical display order, with "Desconocido" (null) last.
  *
  * No React, no I/O — imported by the client `attribution-charts.tsx` and unit
@@ -29,35 +30,39 @@ export interface ChannelStat {
 }
 
 /**
- * Aggregate raw rows into per-channel stats.
+ * Aggregate pre-grouped channel counts into per-channel stats.
  *
- * - One entry per channel that actually appears, plus one for `null` rows
- *   ("Desconocido") when any are present.
- * - `total` is the row count over ALL rows (the percentage denominator).
+ * - Input is one row per channel (already counted by the DB RPC), not one row
+ *   per reservation. Each row carries its own `count`.
+ * - One entry per channel that actually appears, plus one for the `null` row
+ *   ("Desconocido") when present.
+ * - `total` is the SUM of all `count` values (the percentage denominator).
  * - `pct = count / total * 100`, rounded to one decimal.
  * - Ordered by `ATTRIBUTION_CHANNELS` display order, with `null` last.
  * - Unknown non-null channel strings are folded into `'other'` (see module doc).
  */
 export function aggregateChannels(
-  rows: { attribution_channel: string | null }[],
+  rows: { attribution_channel: string | null; count: number }[],
 ): { total: number; stats: ChannelStat[] } {
-  const total = rows.length;
+  let total = 0;
 
-  // Tally per known channel; `null` rows tracked separately as Desconocido.
+  // Tally per known channel; the `null` row tracked separately as Desconocido.
   const counts = new Map<AttributionChannel, number>();
   let unknownCount = 0;
 
   for (const row of rows) {
     const raw = row.attribution_channel;
+    const n = row.count;
+    total += n;
     if (raw === null) {
-      unknownCount++;
+      unknownCount += n;
       continue;
     }
     // Bucket recognized channels as-is; anything off-enum → 'other'.
     const channel: AttributionChannel = ATTRIBUTION_CHANNEL_SET.has(raw)
       ? (raw as AttributionChannel)
       : "other";
-    counts.set(channel, (counts.get(channel) ?? 0) + 1);
+    counts.set(channel, (counts.get(channel) ?? 0) + n);
   }
 
   const pct = (count: number): number =>

@@ -91,11 +91,14 @@ one shows "Desconocido" and no raw-signals section
 **Evidence**: rendered DOM of the detail page for each of the three reservations
 
 ## SCEN-011: analytics renders the per-channel breakdown
-**Given**: reservations spanning multiple channels within the selected period
+**Given**: reservations spanning multiple channels (all-time, all franchises — the Origen tab mirrors the
+Referidos analytics: no period/franchise selector)
 **When**: the operator opens Analytics → Origen
-**Then**: the page renders a per-channel count and percentage of reservations for the period, with
-"Desconocido" shown distinctly (not silently dropped), and zero console errors / failed network requests
-**Evidence**: rendered chart/table values; browser console + network log
+**Then**: the page renders a per-channel count and percentage over ALL reservations, with "Desconocido"
+shown distinctly (not silently dropped), and zero console errors / failed network requests. The counts come
+from a server-side `GROUP BY` aggregate (RPC `attribution_breakdown`) — never a row fetch that PostgREST's
+max-rows cap could silently truncate (the #75 lesson).
+**Evidence**: rendered chart/table values; browser console + network log; the query is an RPC, not a `select` of N rows
 
 ## SCEN-012: the utm fallback ladder (no click-id) derives correctly
 **Given**: inputs (no click-id) `{ utm_source:"google", utm_medium:"cpc" }`, `{ utm_medium:"organic" }`,

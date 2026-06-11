@@ -50,6 +50,24 @@ describe("parseListParams — filters", () => {
   });
 });
 
+describe("parseListParams — Origen filter (SCEN-008)", () => {
+  it("hydrates a concrete channel from ?origen", () => {
+    expect(parse("origen=google_ads").attributionChannel).toBe("google_ads");
+  });
+
+  it("keeps the __unknown__ sentinel (Desconocido → IS NULL downstream)", () => {
+    expect(parse("origen=__unknown__").attributionChannel).toBe("__unknown__");
+  });
+
+  it("ignores an out-of-enum channel value (falls back to null)", () => {
+    expect(parse("origen=bogus").attributionChannel).toBeNull();
+  });
+
+  it("is null when no origen param is present", () => {
+    expect(parse("").attributionChannel).toBeNull();
+  });
+});
+
 describe("parseListParams — date ranges (SCEN-007)", () => {
   it("parses valid created/pickup ranges", () => {
     const p = parse(
@@ -87,6 +105,17 @@ describe("parseListParams — sort whitelist + fallback (SCEN-011)", () => {
     expect(parse("sort=customer:asc").sort).toEqual({
       column: "customer_name_at_booking",
       ascending: true,
+    });
+  });
+
+  it("maps the origen sort key to attribution_channel (SCEN-009)", () => {
+    expect(parse("sort=origen:asc").sort).toEqual({
+      column: "attribution_channel",
+      ascending: true,
+    });
+    expect(parse("sort=origen:desc").sort).toEqual({
+      column: "attribution_channel",
+      ascending: false,
     });
   });
 

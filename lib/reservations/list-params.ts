@@ -1,4 +1,8 @@
 import { FRANCHISES, RESERVATION_STATUSES } from "@/lib/schemas/reservation";
+import {
+  ATTRIBUTION_CHANNEL_SET,
+  UNKNOWN_FILTER,
+} from "@/lib/attribution/channel-meta";
 
 // Single source of truth for the reservations-list URL contract, shared by the
 // server component (reads searchParams → query) and the client URL-state hook
@@ -42,6 +46,7 @@ export const SORTABLE_COLUMNS: Record<string, string> = {
   identification: "customer_identification_number_at_booking",
   phone: "customer_phone_at_booking",
   email: "customer_email_at_booking",
+  origen: "attribution_channel",
 };
 
 export interface ReservationSort {
@@ -57,6 +62,7 @@ export const DEFAULT_SORT: ReservationSort = {
 export interface ReservationListParams {
   franchise: string | null;
   status: string | null;
+  attributionChannel: string | null;
   cityId: string | null;
   referralId: string | null;
   createdFrom: string | null;
@@ -74,6 +80,15 @@ const PAGE_DIGITS_RE = /^\d+$/;
 
 function enumOrNull(v: string | null, set: Set<string>): string | null {
   return v && set.has(v) ? v : null;
+}
+
+// Attribution-channel filter: the `__unknown__` sentinel maps to "Desconocido"
+// (channel IS NULL) downstream; any other value must be one of the 9 channels or
+// it is ignored (out-of-enum → null). Issue #113.
+function attributionChannelOrNull(v: string | null): string | null {
+  if (!v) return null;
+  if (v === UNKNOWN_FILTER) return UNKNOWN_FILTER; // "__unknown__" sentinel → IS NULL
+  return ATTRIBUTION_CHANNEL_SET.has(v) ? v : null; // out-of-enum → ignored
 }
 
 function stringOrNull(v: string | null): string | null {
@@ -136,6 +151,7 @@ export function parseListParams(
   return {
     franchise: enumOrNull(params.get("franchise"), FRANCHISE_SET),
     status: enumOrNull(params.get("status"), STATUS_SET),
+    attributionChannel: attributionChannelOrNull(params.get("origen")),
     cityId: stringOrNull(params.get("city")),
     referralId: stringOrNull(params.get("referral")),
     createdFrom,

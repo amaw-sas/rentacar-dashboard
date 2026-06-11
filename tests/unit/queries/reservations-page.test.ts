@@ -11,6 +11,7 @@ type Recorder = {
     select: { sel: string; opts: unknown } | null;
     eq: Array<[string, unknown]>;
     in: Array<[string, unknown]>;
+    is: Array<[string, unknown]>;
     gte: Array<[string, unknown]>;
     lte: Array<[string, unknown]>;
     or: string[];
@@ -39,6 +40,10 @@ function makeReservationsChain() {
     },
     in: (c: string, v: unknown) => {
       r.in.push([c, v]);
+      return chain;
+    },
+    is: (c: string, v: unknown) => {
+      r.is.push([c, v]);
       return chain;
     },
     gte: (c: string, v: unknown) => {
@@ -94,6 +99,7 @@ function freshRecorder(): Recorder {
       select: null,
       eq: [],
       in: [],
+      is: [],
       gte: [],
       lte: [],
       or: [],
@@ -146,6 +152,34 @@ describe("getReservationsPage — query construction", () => {
   it("applies status as an eq filter (SCEN-003)", async () => {
     await run("status=pendiente");
     expect(rec.reservations.eq).toContainEqual(["status", "pendiente"]);
+  });
+
+  it("applies a concrete Origen channel as an eq filter (SCEN-008)", async () => {
+    await run("origen=google_ads");
+    expect(rec.reservations.eq).toContainEqual([
+      "attribution_channel",
+      "google_ads",
+    ]);
+    // A concrete channel never goes through the IS NULL path.
+    expect(rec.reservations.is).toEqual([]);
+  });
+
+  it("maps the Desconocido sentinel to attribution_channel IS NULL (SCEN-008)", async () => {
+    await run("origen=__unknown__");
+    expect(rec.reservations.is).toContainEqual(["attribution_channel", null]);
+    // Desconocido must not collapse into an eq filter on a literal.
+    expect(rec.reservations.eq).not.toContainEqual([
+      "attribution_channel",
+      "__unknown__",
+    ]);
+  });
+
+  it("applies no attribution filter when Origen is absent (SCEN-008)", async () => {
+    await run("");
+    expect(rec.reservations.is).toEqual([]);
+    for (const [col] of rec.reservations.eq) {
+      expect(col).not.toBe("attribution_channel");
+    }
   });
 
   it("resolves city → location ids and filters pickup_location_id (SCEN-005)", async () => {

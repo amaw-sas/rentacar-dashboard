@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { getCategoryNameMap } from "@/lib/api/category-names";
+import { enrichCategoryDescriptions } from "@/lib/api/availability-enrichment";
 
 export async function POST(request: Request) {
   // Validate API key
@@ -78,6 +80,14 @@ export async function POST(request: Request) {
     }
 
     const data = await proxyResponse.json();
+    if (Array.isArray(data)) {
+      try {
+        const nameMap = await getCategoryNameMap();
+        return NextResponse.json(enrichCategoryDescriptions(data, nameMap));
+      } catch (e) {
+        console.error("[availability] category enrichment failed, serving raw:", e);
+      }
+    }
     return NextResponse.json(data);
   } catch (error) {
     console.error("[availability] Request failed:", error);

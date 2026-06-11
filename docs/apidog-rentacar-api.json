@@ -43,7 +43,7 @@
         "type": "object",
         "properties": {
           "categoryCode": { "type": "string", "example": "C" },
-          "categoryDescription": { "type": "string", "example": "Gama C Económico Mecánico" },
+          "categoryDescription": { "type": "string", "example": "Gama C Económico Mecánico", "description": "Nombre de la gama (categoría) en español, traducido en origen desde el catálogo curado de Localiza. Cae al texto crudo de Localiza si la gama aún no está curada." },
           "totalAmount": { "type": "number", "example": 400000 },
           "estimatedTotalAmount": { "type": "number", "example": 476000 },
           "vehicleDayCharge": { "type": "number", "example": 100000 },

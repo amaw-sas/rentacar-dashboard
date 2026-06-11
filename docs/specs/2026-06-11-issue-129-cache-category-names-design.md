@@ -28,7 +28,7 @@ cambiar la firma pública ni el comportamiento observable de la traducción.
 
 - **`lib/api/category-names.ts`** — único archivo de producción modificado. Refactor
   interno; la firma pública `getCategoryNameMap(): Promise<Map<string,string>>` **no cambia**.
-- **`tests/unit/api/category-names.test.ts`** — añade escenarios de cache (SCEN-009..012).
+- **`tests/unit/api/category-names.test.ts`** — añade escenarios de cache (SCEN-009..013).
 - **Consumidor único** `app/api/reservations/availability/route.ts:85` — **no se toca**;
   sigue llamando `await getCategoryNameMap()` igual.
 - **`docs/specs/`** — este spec + el plan.
@@ -160,11 +160,15 @@ proporcional al riesgo real.
   sola vez** (`from` 2 veces, no 4) — ambas comparten la promesa in-flight.
 - **SCEN-013 (expirado + concurrente → un solo refetch):** Dado un cache poblado pero
   expirado (`>= TTL`), cuando dos llamadas llegan concurrentes en el mismo tick, entonces
-  se hace **un solo refetch** compartido. Pinea el orden de guardas load-bearing
-  (chequear `cache` antes que `inflight`): si se invirtiera, el path expirado-concurrente
-  regresaría. Observable (con rebind, cada fetch usa su propio client): el `from` del
-  **client del refetch** se llama exactamente **2 veces** (un solo refetch compartido), no
-  4. Ambas llamadas concurrentes resuelven al mismo `Map` nuevo.
+  se hace **un solo refetch** compartido. Pinea que el single-flight **sigue activo en el
+  path de expiración** (no solo en cold start): un `if (expired) refetch()` naïve sin la
+  guarda `inflight` dispararía N refetches concurrentes — esto lo previene. (Nota: el
+  *orden* de las dos guardas `cache`/`inflight` NO es discriminante aquí; ambas órdenes dan
+  el mismo resultado porque `inflight` nunca está poblada mientras `cache` es válida. Lo
+  load-bearing es la guarda `inflight` en sí, no su posición.) Observable (con rebind, cada
+  fetch usa su propio client): el `from` del **client del refetch** se llama exactamente
+  **2 veces** (un solo refetch compartido), no 4. Ambas llamadas resuelven al mismo `Map`
+  nuevo.
 
 ## Decisiones cerradas
 

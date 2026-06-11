@@ -76,7 +76,9 @@ own — only typing and the derived-channel filter are added.
 
 **New**
 - `lib/attribution/derive-channel.ts` — pure `deriveAttributionChannel(input?)` + the
-  `AttributionInput` and `AttributionChannel` types. No I/O, no imports beyond types.
+  `AttributionInput` and `AttributionChannel` types, plus a module-level `OWN_HOSTS`
+  constant (the brand + funnel domains: `alquilatucarro.com`, `alquilame.co`,
+  `alquicarros.com`, `reservatucarro.com`). No I/O, no imports beyond types.
 - `lib/attribution/channel-meta.ts` — `ATTRIBUTION_CHANNELS` (the ordered channel list),
   Spanish labels, badge color/variant per channel, plus the "Desconocido" rendering for
   `null`. Single source consumed by list, detail and analytics.
@@ -117,6 +119,11 @@ alter table public.reservations
 create index idx_reservations_attribution_channel
   on public.reservations(attribution_channel);
 ```
+
+The single-column index serves the list `.eq`/`.is` filter. The Analytics tab aggregates
+count/% per channel over a `created_at` period; if that query shows up in the performance
+pass, a composite `(attribution_channel, created_at)` index is the follow-up — not added
+up front (YAGNI: the table is ~13k rows, a seq scan over the period is cheap today).
 
 - Raw signals kept for audit and future re-derivation; `attribution_channel` denormalized
   for fast filter/aggregate.
@@ -159,7 +166,7 @@ priority order (first match wins):
    `google_display`; else → `google_ads`.
 3. `msclkid`, or `utm_source` ∈ {bing, microsoft, msn} → `bing_ads`.
 4. `fbclid`, or `utm_source` ∈ {facebook, fb, instagram, ig, meta} → `meta_ads`.
-5. `ttclid`, or `utm_source` = tiktok → `tiktok_ads`.
+5. `ttclid`, or `utm_source` ∈ {tiktok, tt, ttads} → `tiktok_ads`.
 6. No click-id but `utm_medium` present:
    - ∈ {cpc, ppc, paid, paidsearch, paid-search, paid_search}: source google → `google_ads`;
      bing/microsoft → `bing_ads`; meta/facebook/instagram → `meta_ads`; tiktok → `tiktok_ads`;
@@ -168,20 +175,30 @@ priority order (first match wins):
    - ∈ {organic, social} → `organic`.
    - = referral → `referral`.
    - other → `other`.
-7. No utm but `referrer` present (and not an own domain) → `referral`.
-8. Everything empty → `direct`.
+7. No utm but `referrer` present **and its host is external** (not in `OWN_HOSTS`, including
+   subdomains) → `referral`. An **own-domain referrer is internal navigation that carries no
+   attribution**, so it is treated as absent and execution falls through to rule 8.
+8. Everything empty (or only an own-domain referrer) → `direct`.
 
 A field that is present but empty/whitespace after normalization counts as absent. An empty
 object `{}` (all fields absent/empty) is **not** `undefined` → falls through to rule 8 →
 `direct`. This is the load-bearing "Directo vs Desconocido" distinction.
 
+**`gad_source` assumption (flag for the capture arms #121/#35):** rule 2 treats `gad_source`
+as a paid-Google signal equivalent to `gclid`. This holds only if the websites attach
+`gad_source` exclusively from paid ad landings. If a site were to forward `gad_source` on
+non-paid Google traffic, derivation would mislabel it `google_ads`. The capture contract
+(Apéndice A) must only populate click-id fields from genuine ad-click query params; this is
+called out so the #121/#35 implementers honor it.
+
 ### 3.4 API `/api/reservations`
 
 - Extend `ReservationRequestBody` with optional `attribution?: AttributionInput`.
 - After resolving the customer, call `deriveAttributionChannel(body.attribution)`.
-- In the `insert`, write the 8 raw columns from `body.attribution` (each `?? null`) and
-  `attribution_channel` (the derivation result, may be `null`). Note the column is
-  `landing_referrer` but the input field is `referrer` — map explicitly.
+- In the `insert`, write the **8 raw columns** from `body.attribution` (each `?? null`) and
+  `attribution_channel` (the derivation result, may be `null`) = **9 attribution columns total**.
+  The 8 inputs of `AttributionInput` map 1:1 to the 8 raw columns, with the input field
+  `referrer` mapping to the column `landing_referrer` (rename made explicit).
 - No compatibility break: absent `attribution` → all columns `null`, identical to today.
 
 ### 3.5 List: server-side filter + sort + badge column
@@ -189,8 +206,10 @@ object `{}` (all fields absent/empty) is **not** `undefined` → falls through t
 - `list-params.ts`: add `origen: "attribution_channel"` to `SORTABLE_COLUMNS`; add
   `attributionChannel: string | null` to `ReservationListParams`; parse it in
   `parseListParams` validated against the channel enum (an `ATTRIBUTION_CHANNEL_SET`), so an
-  out-of-enum value is ignored. A sentinel for "Desconocido" filtering = `IS NULL` (decide a
-  reserved key, e.g. `__unknown__`, distinct from `ALL`).
+  out-of-enum value is ignored. A sentinel for "Desconocido" filtering = `IS NULL`, reserved
+  key `__unknown__`. The planner must confirm `__unknown__` collides with neither the channel
+  enum nor the existing URL-state sentinel `ALL` (`__all__`) in `list-params.ts` — both are
+  double-underscore-wrapped, so the new key must not duplicate an existing one.
 - `queries/reservations.ts`: in `getReservationsPage`, `if (params.attributionChannel)` →
   `.eq("attribution_channel", …)`; the `__unknown__` sentinel → `.is("attribution_channel", null)`.
   Raw columns already arrive via `select("*")`.
@@ -205,6 +224,10 @@ object `{}` (all fields absent/empty) is **not** `undefined` → falls through t
 
 `reservations/[id]/page.tsx`: show the channel badge, and in a secondary/collapsible section
 the captured raw signals (utm_source, utm_medium, the click-ids, landing_referrer) for audit.
+Two empty cases must render coherently: a `direct` reservation (`{}` arrived) has a badge but
+all-NULL raw signals → the raw section renders with an explicit "Sin señales capturadas
+(tráfico directo)" note rather than empty fields; an old `NULL` reservation ("Desconocido")
+hides the raw section entirely (nothing was ever captured).
 
 ### 3.7 Analytics → Origen
 
@@ -232,8 +255,10 @@ the captured raw signals (utm_source, utm_medium, the click-ids, landing_referre
 
 - `tests/unit/attribution/derive-channel.test.ts`: one case per rule, including
   `gclid`→google_ads, `gclid`+`utm_medium=display`→google_display, `fbclid`→meta_ads,
-  `msclkid`→bing_ads, `ttclid`→tiktok_ads, absent→`null`, `{}`→`direct`, whitespace-only
-  fields→treated as absent, case-insensitivity.
+  `msclkid`→bing_ads, `ttclid`→tiktok_ads, the rule-6 utm ladder (`utm_medium=cpc`+source,
+  `utm_medium=organic`→organic, unknown medium→other), rule-7 external referrer→referral,
+  own-domain referrer→direct, absent→`null`, `{}`→`direct`, whitespace-only fields→treated
+  as absent, case-insensitivity. (Mirrors SCEN-1..4, 12..15.)
 - Runtime verification (testing branch): POST with `attribution:{gclid:"x"}` →
   `attribution_channel='google_ads'` + `gclid` persisted; POST without `attribution` → all
   attribution columns NULL, flow unchanged; list shows "Origen" badge, old rows "Desconocido";
@@ -243,8 +268,11 @@ the captured raw signals (utm_source, utm_medium, the click-ids, landing_referre
 
 ## 7. Out of scope (documented)
 
-- **GHL (task 8):** if a matching GHL custom field exists, map `attribution_channel` in
-  `lib/ghl/mapper.ts` toward the contact/opportunity. If not, leave documented, do not block.
+- **GHL (task 8): explicitly out of this PR.** No GHL probing or mapping happens in this
+  effort. The follow-up, if pursued: if a matching GHL custom field exists, map
+  `attribution_channel` in `lib/ghl/mapper.ts` toward the contact/opportunity. Kept out to
+  prevent scope creep — `attribution_channel` is persisted and can be propagated later without
+  rework.
 - Website capture (#121 / #35), campaign/ad-group/keyword, backfill.
 
 ## 8. Apéndice A — Frozen contract for the websites (reference; not implemented here)
@@ -281,6 +309,17 @@ is no data so the dashboard records **Directo** instead of "Desconocido".
   `meta_ads`/`bing_ads`/`tiktok_ads` respectively.
 - **SCEN-4 (derive: direct vs unknown):** Given `{}`, then `direct`; given `undefined`, then
   `null`.
+- **SCEN-12 (derive: utm ladder, no click-id):** Given `{utm_source:"google", utm_medium:"cpc"}`,
+  then `google_ads`; given `{utm_medium:"organic"}`, then `organic`; given
+  `{utm_source:"bing", utm_medium:"cpc"}`, then `bing_ads`; given `{utm_medium:"foobar"}`,
+  then `other`.
+- **SCEN-13 (derive: external referrer → referral):** Given
+  `{referrer:"https://www.google.com/"}` (no utm, no click-id), then `referral`.
+- **SCEN-14 (derive: own-domain referrer → direct):** Given
+  `{referrer:"https://www.alquilatucarro.com/gamas"}` (no utm, no click-id), then `direct`
+  (own host is ignored, falls through to rule 8) — distinct from `undefined` → `null`.
+- **SCEN-15 (derive: whitespace/case):** Given `{utm_source:"  FACEBOOK  "}`, then `meta_ads`
+  (trim + lowercase); given `{gclid:"   "}` (whitespace only), then treated as absent.
 - **SCEN-5 (API persist):** Given POST with `attribution={gclid:"x"}`, when saved, then the
   row has `attribution_channel='google_ads'` and `gclid='x'`.
 - **SCEN-6 (API compat):** Given POST without `attribution`, when saved, then all 9 columns

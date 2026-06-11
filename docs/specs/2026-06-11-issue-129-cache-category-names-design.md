@@ -89,23 +89,59 @@ export async function getCategoryNameMap(): Promise<Map<string, string>> {
 
 Si `fetchCategoryNameMap()` rechaza:
 
-- `.then` se salta → `cache` queda `null` → **el fallo NO se cachea**.
-- `.finally` limpia `inflight` → el próximo request **reintenta** (no queda envenenado).
+- **Mecanismo:** `.then(onFulfilled)` sin `onRejected` deja pasar la rejection sin tocarla
+  → el callback que puebla `cache` **no se ejecuta** → `cache` queda `null` → **el fallo
+  NO se cachea**.
+- `.finally` limpia `inflight` en ambos caminos (éxito y error) → el próximo request
+  **reintenta** (no queda envenenado).
 - La rejection se propaga al caller; la degradación segura del route
   (`catch` → sirve lista cruda con 200) se preserva intacta.
 
-El `Map` cacheado se comparte por referencia entre callers concurrentes. Es seguro: el
-consumidor (`enrichCategoryDescriptions`) solo hace `nameMap.get(...)`, nunca muta.
+**Contrato no-mutar (obligatorio documentar en código):** el `Map` cacheado se comparte
+por referencia entre callers (hit y single-flight). Es seguro hoy porque el único
+consumidor (`enrichCategoryDescriptions`, `availability-enrichment.ts:18`) solo hace
+`nameMap.get(...)`. Pero esa garantía vive en otro archivo sin guard: un futuro caller que
+haga `map.set/delete` envenenaría el cache compartido para todos los requests dentro del
+TTL (bug silencioso cross-request). **Mitigación:** un comentario en el sitio de retorno de
+`getCategoryNameMap` declarando que el `Map` es compartido y los callers NO deben mutarlo.
+Se descarta la copia defensiva por-hit (`new Map(cached)`): el consumidor es read-only y
+verificado, y copiar introduce inconsistencia de identidad con el path single-flight (los
+callers concurrentes comparten la misma promesa/Map). El comentario es la cobertura
+proporcional al riesgo real.
+
+## Anclaje del TTL y semántica de borde
+
+- **Anclaje:** `expiresAt = Date.now() + TTL` se computa dentro del `.then`, es decir al
+  **completar** el fetch, no al emitir el request. El staleness real medido desde el
+  request que dispara el refetch es `≤ TTL + duración_fetch` (~30-80 ms sobre 5 min →
+  despreciable). SCEN-010 valida `≤ TTL` con esta precisión.
+- **Borde exclusivo:** la guarda es `expiresAt > Date.now()` (estricta). En `t == expiresAt`
+  exacto el cache se considera **expirado** (refetch). Implicación para tests: un hit debe
+  avanzar el reloj `< TTL`; un refetch debe avanzar `>= TTL`. Avanzar exactamente
+  `CATEGORY_NAME_TTL_MS` cae en el borde → refetch.
 
 ## Testing
 
-- `vi.useFakeTimers()` controla `Date.now()` para hit/expiry deterministas.
-- `vi.resetModules()` (ya presente en `beforeEach`) resetea el estado de módulo entre
-  tests → aislamiento limpio del cache.
+- `vi.useFakeTimers()` controla `Date.now()` para hit/expiry deterministas. Avanzar el
+  reloj con `vi.setSystemTime(...)` (absoluto) para evitar el borde exclusivo del TTL.
+- `vi.resetModules()` (ya en `beforeEach`) + el re-`import` dentro de `loadModule`
+  resetean el estado de módulo (`cache`/`inflight`) entre tests → aislamiento limpio. **NO
+  llamar `resetModules` a mitad de un test** (borraría el cache que se está probando).
 - Los 7 tests SCEN-007.x existentes siguen verdes (cada uno hace exactamente 1 fetch).
-- El mock `createMockSupabase` actual sirve el par de queries con `.mockReturnValueOnce`
-  ×2; para escenarios con 2 fetches (expiry, fallo-luego-éxito) se construyen dos mocks
-  o se reconfigura `from`.
+- **Harness para escenarios de 2 fetches (SCEN-010 expiry, SCEN-011 fallo→éxito):** el
+  mock actual `createMockSupabase` agota sus dos `.mockReturnValueOnce` con un solo fetch.
+  Para un segundo fetch en el **mismo módulo cargado**, rebind `createAdminClient` a un
+  **client fresco** antes de la segunda llamada: `vi.mocked(createAdminClient)
+  .mockReturnValue(secondClient)`. Funciona porque `fetchCategoryNameMap` invoca
+  `createAdminClient()` de nuevo en cada fetch (cachea el `Map`, no el client). Alternativa:
+  extender `createMockSupabase` para aceptar N pares de queries y encadenar `2N`
+  `mockReturnValueOnce`. Se usa el rebind (más simple, sin tocar el helper compartido).
+- **SCEN-012 (single-flight):** emitir ambas llamadas en el **mismo tick síncrono** vía
+  `Promise.all([getCategoryNameMap(), getCategoryNameMap()])` y aseverar `from` llamado
+  **2 veces** (un fetch), no 4. Como `fetchCategoryNameMap` es `async`, la 1ª llamada fija
+  `inflight` y devuelve una promesa pendiente antes de que el mock resuelva su microtask;
+  la 2ª entra por `if (inflight) return inflight`. `await getCategoryNameMap(); await
+  getCategoryNameMap();` (secuencial) probaría el path de hit, NO single-flight.
 
 ## Escenarios observables (holdout para SDD)
 
@@ -113,14 +149,22 @@ consumidor (`enrichCategoryDescriptions`) solo hace `nameMap.get(...)`, nunca mu
   llama de nuevo antes de que expire el TTL, entonces la BD se consulta **una sola vez**
   (`from` invocado 2 veces en total, no 4) y ambos mapas son iguales.
 - **SCEN-010 (expiry refetch + staleness acotado):** Dado un cache poblado, cuando el
-  reloj avanza más allá del TTL y las filas subyacentes cambian, entonces el siguiente
-  lookup reconsulta la BD y refleja los datos nuevos (staleness ≤ TTL).
+  reloj avanza `>= TTL` (borde exclusivo) y las filas subyacentes cambian, entonces el
+  siguiente lookup reconsulta la BD y refleja los datos nuevos (staleness ≤ TTL, medido
+  desde la completitud del fetch). Requiere rebind a un client fresco (ver Testing).
 - **SCEN-011 (fallo no se cachea):** Dado que el primer fetch rechaza, cuando se vuelve a
   llamar, entonces reintenta contra la BD (no devuelve un fallo cacheado) y puede tener
-  éxito en el segundo intento.
-- **SCEN-012 (single-flight):** Dadas dos llamadas concurrentes emitidas antes de que la
-  primera resuelva, entonces la BD se consulta **una sola vez** — ambas comparten la
-  promesa in-flight.
+  éxito en el segundo intento. Requiere rebind a un client fresco para el reintento.
+- **SCEN-012 (single-flight, cold):** Dadas dos llamadas concurrentes emitidas en el mismo
+  tick (`Promise.all`) antes de que la primera resuelva, entonces la BD se consulta **una
+  sola vez** (`from` 2 veces, no 4) — ambas comparten la promesa in-flight.
+- **SCEN-013 (expirado + concurrente → un solo refetch):** Dado un cache poblado pero
+  expirado (`>= TTL`), cuando dos llamadas llegan concurrentes en el mismo tick, entonces
+  se hace **un solo refetch** compartido. Pinea el orden de guardas load-bearing
+  (chequear `cache` antes que `inflight`): si se invirtiera, el path expirado-concurrente
+  regresaría. Observable (con rebind, cada fetch usa su propio client): el `from` del
+  **client del refetch** se llama exactamente **2 veces** (un solo refetch compartido), no
+  4. Ambas llamadas concurrentes resuelven al mismo `Map` nuevo.
 
 ## Decisiones cerradas
 

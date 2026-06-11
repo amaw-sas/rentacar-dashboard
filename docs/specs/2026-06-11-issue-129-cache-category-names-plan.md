@@ -27,19 +27,29 @@ después.
 
 **Harness — dos mecanismos (el mock actual solo sirve 1 fetch):**
 
-El `createMockSupabase` actual encadena exactamente 2 `.mockReturnValueOnce` en `from` y
-**sin fallback** → un solo fetch lo agota; un 2º fetch obtiene `undefined` y lanza
-`undefined.select` *en setup*. Eso produciría un red de throw-on-setup (débil), no un
-fail-on-assertion. Para un red honesto se necesitan dos mecanismos distintos:
+El `createMockSupabase` actual encadena exactamente 2 `.mockReturnValueOnce` en `from`
+(despacho **por orden de llamada**, no por nombre de tabla) y **sin fallback** → un solo
+fetch lo agota; un 2º fetch obtiene `undefined` y lanza `undefined.select` *en setup*. Un
+`.mockReturnValue` único de respaldo NO sirve: el call 3 (`rental_companies`, necesita
+`.single()`) y el call 4 (`vehicle_categories`, thenable) tienen formas distintas; un solo
+builder crashea en uno de los dos. Se necesitan dos mecanismos:
 
-- **Fallback repetible (SCEN-009, SCEN-012):** añadir un `.mockReturnValue(builder)` de
-  respaldo (mismas filas) tras los dos `Once`, de modo que un 2º/concurrente fetch
-  *filtrado* (código sin cache) **alcance el assert** y se observe `from` 4×, en vez de
-  crashear. Con el green (cache/single-flight) el 2º acceso no hace fetch → `from` 2×.
+- **Despacho por nombre de tabla (SCEN-009, SCEN-012):** convertir el `from` de
+  `createMockSupabase` a `mockImplementation((table) => table === "rental_companies" ?
+  { select: companySelect } : { select: categoriesSelect })`. Así sirve **N fetches
+  repetidos** con las mismas filas, despachando el builder correcto por argumento. Un 2º/
+  concurrente fetch *filtrado* (código sin cache) **alcanza el assert** → se observa
+  `from` 4×, en vez de crashear. Con el green (cache/single-flight) el 2º acceso no hace
+  fetch → `from` 2×. Las **mismas filas** importan en el camino **red** (el 2º fetch
+  filtrado debe producir un mapa igual, para que SCEN-009 falle por *demasiados fetches*,
+  no por contenido distinto); en green el 2º acceso devuelve `cache.map` y nunca toca el
+  mock. **SCEN-007.x siguen verdes:** las aserciones `toHaveBeenNthCalledWith(n, "tabla")`
+  y los spies `companySelect`/`categoriesSelect` se preservan con `mockImplementation`.
 - **Rebind a client fresco (SCEN-010, SCEN-011, SCEN-013):** `vi.mocked(createAdminClient)
   .mockReturnValue(secondClient)` antes del 2º fetch. Funciona porque `fetchCategoryNameMap`
-  llama `createAdminClient()` de nuevo en cada fetch. Permite filas nuevas (010/013) o
-  pasar de error→éxito (011) en el refetch.
+  llama `createAdminClient()` de nuevo en cada fetch. Permite filas **distintas** (010/013)
+  o pasar de error→éxito (011) en el refetch. Cada client solo necesita sus 2 builders (no
+  fallback, porque cada fetch usa un client fresco).
 
 **Scenario → Code → Satisfy → Refactor:**
 
@@ -48,10 +58,10 @@ fail-on-assertion. Para un red honesto se necesitan dos mecanismos distintos:
 
    | Escenario | Setup | Assert | Red esperado (sin cache) |
    |---|---|---|---|
-   | SCEN-009 hit < TTL | 2 llamadas seq, fallback repetible, `setSystemTime` < TTL | `from` llamado 2× | **falla: `from` 4×** (2 fetches) |
+   | SCEN-009 hit < TTL | 2 llamadas seq, `from` por `mockImplementation` (despacho por tabla), `setSystemTime` < TTL | `from` llamado 2× | **falla: `from` 4×** (2 fetches) |
    | SCEN-010 expiry ≥ TTL | 1ª llamada, rebind client con filas nuevas, avanzar ≥ TTL, 2ª llamada | mapa refleja filas nuevas | **falla: 2ª refetchea siempre** → el assert de "no refetch antes de TTL" no aplica; aquí el red es que sin cache no hay noción de TTL — ver nota |
    | SCEN-011 fallo no-cachea | 1er fetch rechaza, rebind client OK, 2ª llamada | 2ª tiene éxito | sin cache pasa trivial → **red real = afirmar que NO se sirve un fallo cacheado**; ver nota |
-   | SCEN-012 single-flight cold | `Promise.all([get(),get()])`, fallback repetible | `from` 2× | **falla: `from` 4×** (2 fetches concurrentes) |
+   | SCEN-012 single-flight cold | `Promise.all([get(),get()])`, `from` por `mockImplementation` | `from` 2× | **falla: `from` 4×** (2 fetches concurrentes) |
    | SCEN-013 expirado+concurrente | poblar, avanzar ≥ TTL, rebind, `Promise.all` de 2 | `from` del refetch 2× | **falla: `from` del refetch 4×** (sin single-flight, 2 refetches) |
 
    **Nota SCEN-010/011 (red honesto):** sin cache, "refetch tras TTL" y "reintento tras
@@ -71,9 +81,9 @@ fail-on-assertion. Para un red honesto se necesitan dos mecanismos distintos:
 
 **Anti-reward-hacking (prueba de no-trivialidad por escenario):**
 - Los escenarios son holdout del spec, escritos antes del código GREEN; no se reescriben para encajar con el output.
-- **SCEN-009/012:** con el cache revertido deben **alcanzar el assert** y ver `from` 4× (no crashear en setup) — de ahí el fallback repetible. Confirmar el red ejecutando contra el código pre-cache.
+- **SCEN-009/012:** con el cache revertido deben **alcanzar el assert** y ver `from` 4× (no crashear en setup) — de ahí el despacho por nombre de tabla (`mockImplementation`). Confirmar el red ejecutando contra el código pre-cache.
 - **SCEN-010:** romper selectivamente el green (cache que no expira: quitar la guarda `expiresAt > Date.now()`) debe hacerlo fallar (sirve filas viejas tras ≥ TTL).
-- **SCEN-011:** romper el green (cachear también el fallo: mover el set de cache fuera del `.then`) debe hacerlo fallar (2ª llamada devuelve error cacheado).
+- **SCEN-011:** romper el green (cachear también el fallo: poblar `cache` en el camino de rechazo — p.ej. añadir un `.catch` que set-ee `cache`, o set-ear en `.finally`) debe hacerlo fallar (2ª llamada devuelve el error cacheado en vez de reintentar). Nota: "mover el set fuera del `.then`" no compila tal cual (`map` no está en scope); usar la variante `.catch`/`.finally`.
 - **SCEN-013:** quitar la guarda `inflight` debe hacerlo fallar (`from` del refetch 4×, dos refetches).
 - **Borde TTL:** con `>` estricto, avanzar exactamente `CATEGORY_NAME_TTL_MS` cae en refetch (no hit) — SCEN-009 usa `< TTL`, SCEN-010/013 usan `≥ TTL`.
 

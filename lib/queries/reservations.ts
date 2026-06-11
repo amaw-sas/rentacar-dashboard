@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { bogotaDayStartISO, bogotaDayEndISO } from "@/lib/date/bogota";
+import { UNKNOWN_FILTER } from "@/lib/attribution/channel-meta";
 import {
   SEARCH_COLUMNS,
   type ReservationListParams,
@@ -72,6 +73,14 @@ export async function getReservationsPage(params: ReservationListParams) {
   if (params.createdTo) q = q.lte("created_at", bogotaDayEndISO(params.createdTo));
   if (params.pickupFrom) q = q.gte("pickup_date", params.pickupFrom);
   if (params.pickupTo) q = q.lte("pickup_date", params.pickupTo);
+  // Origen filter (issue #113): the "Desconocido" sentinel means the channel was
+  // never captured (IS NULL); a concrete channel is an exact match. Distinct ops
+  // because PostgREST `.eq(col, null)` would not produce `IS NULL`.
+  if (params.attributionChannel === UNKNOWN_FILTER) {
+    q = q.is("attribution_channel", null);
+  } else if (params.attributionChannel) {
+    q = q.eq("attribution_channel", params.attributionChannel);
+  }
   if (params.search) q = q.or(searchOrExpr(params.search));
 
   // Priority statuses always lead (is_priority generated column), then the

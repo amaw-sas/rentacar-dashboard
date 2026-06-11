@@ -11,6 +11,10 @@ import { sendReservationNotifications } from "@/lib/email/notifications";
 import { sendStatusWhatsApp } from "@/lib/wati/notifications";
 import { syncReservationToGhl } from "@/lib/ghl/sync";
 import { parseMonthlyMileage } from "@/lib/reservation/mileage-parser";
+import {
+  deriveAttributionChannel,
+  type AttributionInput,
+} from "@/lib/attribution/derive-channel";
 import type { ReservationStatus } from "@/lib/schemas/reservation";
 
 interface ReservationRequestBody {
@@ -48,6 +52,9 @@ interface ReservationRequestBody {
   flight?: boolean | number;
   aeroline?: string;
   flight_number?: string;
+  // Marketing attribution (issue #113). Optional object of raw ad signals;
+  // absent → channel null ("Desconocido"), empty {} → 'direct' ("Directo").
+  attribution?: AttributionInput;
 }
 
 const LOCALIZA_STATUS_MAP: Record<string, ReservationStatus> = {
@@ -55,6 +62,14 @@ const LOCALIZA_STATUS_MAP: Record<string, ReservationStatus> = {
   Reserved: "reservado",
   Pending: "pendiente",
 };
+
+// Coerce a raw attribution field to a clean string-or-null before it reaches a
+// `text` column. A malformed caller can send a non-string (object/array/number);
+// passing that straight through can 500 the INSERT and BLOCK THE BOOKING. This
+// mirrors `deriveAttributionChannel`, which already treats non-strings as absent.
+function attrStr(v: unknown): string | null {
+  return typeof v === "string" ? v : null;
+}
 
 function toBoolean(value: boolean | number | undefined): boolean {
   if (typeof value === "boolean") return value;
@@ -138,6 +153,13 @@ export async function POST(request: Request) {
       phone: body.phone,
       email: body.email,
     });
+
+    // 3b. Derive marketing attribution channel (issue #113). Returns null when
+    // `attribution` is absent ("Desconocido"); the raw signals are persisted
+    // verbatim for audit. The derivation is total — never throws — so a
+    // malformed attribution object can never block a booking.
+    const attribution = body.attribution;
+    const attributionChannel = deriveAttributionChannel(attribution);
 
     // 4. Resolve referral
     let referralId: string | null = null;
@@ -295,6 +317,17 @@ export async function POST(request: Request) {
         monthly_mileage: parseMonthlyMileage(body.monthly_mileage),
         notification_required: notificationRequired,
         status,
+        // Marketing attribution (issue #113): 8 raw signals (referrer →
+        // landing_referrer) + the derived channel. All null when absent.
+        utm_source: attrStr(attribution?.utm_source),
+        utm_medium: attrStr(attribution?.utm_medium),
+        gclid: attrStr(attribution?.gclid),
+        gad_source: attrStr(attribution?.gad_source),
+        fbclid: attrStr(attribution?.fbclid),
+        ttclid: attrStr(attribution?.ttclid),
+        msclkid: attrStr(attribution?.msclkid),
+        landing_referrer: attrStr(attribution?.referrer),
+        attribution_channel: attributionChannel,
       })
       .select("id")
       .single();

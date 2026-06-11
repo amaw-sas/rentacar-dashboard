@@ -14,6 +14,10 @@ import {
   toLocalIsoDate,
 } from "@/lib/date-range";
 import { FRANCHISES, RESERVATION_STATUSES } from "@/lib/schemas/reservation";
+import {
+  ATTRIBUTION_CHANNEL_SET,
+  UNKNOWN_FILTER,
+} from "@/lib/attribution/channel-meta";
 
 export const ALL = "__all__";
 export const PRIORITY_SORT = { id: "priority", desc: false } as const;
@@ -24,6 +28,7 @@ export const DEFAULT_USER_SORT: SortingState = [
 export interface FilterState {
   franchise: string;
   status: string;
+  origen: string;
   city: string;
   referral: string;
   createdRange: DateRange | undefined;
@@ -34,6 +39,7 @@ export interface FilterState {
 export const INITIAL_FILTERS: FilterState = {
   franchise: ALL,
   status: ALL,
+  origen: ALL,
   city: ALL,
   referral: ALL,
   createdRange: undefined,
@@ -59,6 +65,7 @@ const STATUS_SET = new Set<string>(RESERVATION_STATUSES);
 const MANAGED_KEYS = [
   "franchise",
   "status",
+  "origen",
   "city",
   "referral",
   "created_from",
@@ -85,6 +92,16 @@ function parseEnumFilter(
 function parseStringFilter(params: URLSearchParams, key: string): string {
   const raw = params.get(key);
   return raw && raw.length > 0 ? raw : ALL;
+}
+
+// Mirrors parseEnumFilter but also accepts the UNKNOWN_FILTER ("__unknown__")
+// sentinel, which the server maps to attribution_channel IS NULL ("Desconocido").
+// Out-of-enum values (and non-sentinel garbage) fall back to ALL.
+function parseAttributionFilter(params: URLSearchParams, key: string): string {
+  const raw = params.get(key);
+  if (!raw) return ALL;
+  if (raw === UNKNOWN_FILTER) return UNKNOWN_FILTER;
+  return ATTRIBUTION_CHANNEL_SET.has(raw) ? raw : ALL;
 }
 
 function parseDateRange(
@@ -165,6 +182,7 @@ export function useReservationsTableUrlState(
     const f: FilterState = {
       franchise: parseEnumFilter(p, "franchise", FRANCHISE_SET),
       status: parseEnumFilter(p, "status", STATUS_SET),
+      origen: parseAttributionFilter(p, "origen"),
       city: parseStringFilter(p, "city"),
       referral: parseStringFilter(p, "referral"),
       createdRange: parseDateRange(p, "created_from", "created_to"),

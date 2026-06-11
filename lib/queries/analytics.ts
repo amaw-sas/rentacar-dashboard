@@ -77,6 +77,15 @@ export async function getReferralPerformance(filters?: AnalyticsFilters) {
   return data;
 }
 
+export async function getAttributionBreakdown(): Promise<
+  { attribution_channel: string | null; count: number }[]
+> {
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("attribution_breakdown");
+  if (error) throw error;
+  return (data ?? []) as { attribution_channel: string | null; count: number }[];
+}
+
 const COMMISSION_REVENUE_SELECT = `
   id, amount, payment_status, created_at,
   reservations(id, total_price, franchise)

@@ -29,6 +29,7 @@ const baseRow: ReservationRow = {
   total_price_localiza: 0,
   referral_id: null,
   referral_raw: null,
+  attribution_channel: "meta_ads",
   customers: {
     first_name: "Daniela",
     last_name: "Carreño",
@@ -63,6 +64,7 @@ describe("reservations columns (legacy parity)", () => {
       "reservation_code",
       "category_code",
       "franchise",
+      "origen",
       "referral",
       "status",
       "total_with_tax",
@@ -81,6 +83,7 @@ describe("reservations columns (legacy parity)", () => {
     expect(headerOf("reservation_code")).toBe("Código");
     expect(headerOf("category_code")).toBe("Cat.");
     expect(headerOf("franchise")).toBe("Franquicia");
+    expect(headerOf("origen")).toBe("Origen");
     expect(headerOf("referral")).toBe("Referido");
     expect(headerOf("status")).toBe("Estado");
     expect(headerOf("total_with_tax")).toBe("Total + Tax");
@@ -256,6 +259,35 @@ describe("reservations columns (legacy parity)", () => {
       const { container } = render(<>{rendered}</>);
       expect(container.textContent).toContain("…");
       expect(container.textContent).not.toContain("Fernández de la Torre");
+    });
+  });
+
+  describe("origen column (attribution channel badge)", () => {
+    afterEach(() => {
+      cleanup();
+    });
+
+    function renderOrigenCell(value: ReservationRow["attribution_channel"]) {
+      const col = columns.find((c) => c.id === "origen");
+      const rendered = flexRender(col!.cell, {
+        getValue: () => value,
+      } as never);
+      return render(<>{rendered}</>);
+    }
+
+    it("renders the Spanish channel label for a known channel", () => {
+      const { container } = renderOrigenCell("meta_ads");
+      expect(container.textContent).toBe("Meta Ads");
+    });
+
+    it("renders 'Desconocido' for a null channel", () => {
+      const { container } = renderOrigenCell(null);
+      expect(container.textContent).toBe("Desconocido");
+    });
+
+    it("does not opt out of sorting", () => {
+      const col = columns.find((c) => c.id === "origen");
+      expect(col).not.toHaveProperty("enableSorting", false);
     });
   });
 

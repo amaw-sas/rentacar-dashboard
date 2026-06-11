@@ -91,6 +91,27 @@ describe("useReservationsTableUrlState — URL parsing (Steps 3+4)", () => {
     expect(result.current.filters.status).toBe(ALL);
   });
 
+  it("SCEN-008 origen hydration: valid channel parses verbatim", () => {
+    setUrl("origen=google_ads");
+    const { result } = renderHook(() => useReservationsTableUrlState());
+
+    expect(result.current.filters.origen).toBe("google_ads");
+  });
+
+  it("SCEN-008 origen hydration: __unknown__ sentinel is preserved", () => {
+    setUrl("origen=__unknown__");
+    const { result } = renderHook(() => useReservationsTableUrlState());
+
+    expect(result.current.filters.origen).toBe("__unknown__");
+  });
+
+  it("SCEN-008 origen hydration: out-of-enum value falls back to ALL", () => {
+    setUrl("origen=bogus");
+    const { result } = renderHook(() => useReservationsTableUrlState());
+
+    expect(result.current.filters.origen).toBe(ALL);
+  });
+
   it("SCEN-006 hydration: ?sort=pickup_date:asc maps with PRIORITY_SORT pinned", () => {
     setUrl("sort=pickup_date:asc");
     const { result } = renderHook(() => useReservationsTableUrlState());
@@ -211,6 +232,45 @@ describe("useReservationsTableUrlState — setters", () => {
     const url = lastReplaceUrl();
     const qs = new URLSearchParams(url.split("?")[1] ?? "");
     expect(qs.get("franchise")).toBe("alquilame");
+  });
+
+  it("SCEN-008 setFilter(origen, channel) writes the origen key", () => {
+    setUrl("");
+    const { result } = renderHook(() => useReservationsTableUrlState());
+
+    act(() => {
+      result.current.setFilter("origen", "google_ads");
+    });
+
+    const url = lastReplaceUrl();
+    const qs = new URLSearchParams(url.split("?")[1] ?? "");
+    expect(qs.get("origen")).toBe("google_ads");
+  });
+
+  it("SCEN-008 setFilter(origen, __unknown__) writes the sentinel", () => {
+    setUrl("");
+    const { result } = renderHook(() => useReservationsTableUrlState());
+
+    act(() => {
+      result.current.setFilter("origen", "__unknown__");
+    });
+
+    const url = lastReplaceUrl();
+    const qs = new URLSearchParams(url.split("?")[1] ?? "");
+    expect(qs.get("origen")).toBe("__unknown__");
+  });
+
+  it("SCEN-008 setFilter(origen, ALL) drops the origen key", () => {
+    setUrl("origen=google_ads");
+    const { result } = renderHook(() => useReservationsTableUrlState());
+
+    act(() => {
+      result.current.setFilter("origen", ALL);
+    });
+
+    const url = lastReplaceUrl();
+    const qs = new URLSearchParams(url.split("?")[1] ?? "");
+    expect(qs.has("origen")).toBe(false);
   });
 
   it("SCEN-003 DateRange round-trip preserves Y/M/D across leap year", () => {

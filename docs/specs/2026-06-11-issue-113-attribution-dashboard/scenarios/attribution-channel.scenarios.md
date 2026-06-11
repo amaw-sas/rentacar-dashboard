@@ -120,6 +120,17 @@ host is in `OWN_HOSTS`
 through to the all-empty rule) — distinct from `undefined`, which yields `null`
 **Evidence**: return value of `deriveAttributionChannel`
 
+## SCEN-016: derivation is total — malformed input never throws
+**Given**: malformed inputs that an untrusted JSON caller could emit — `null`, a non-object
+(`"foo"`, `42`), and an object with non-string field values (`{ utm_source: 123 }`,
+`{ gclid: 0 }`, `{ referrer: 12345 }`)
+**When**: each is derived
+**Then**: the function returns a value without throwing — `null` and non-objects yield channel
+`null` (treated as absent, "Desconocido"); non-string field values are treated as absent so an
+otherwise-empty object yields `direct`. Attribution must never block a booking (design §5: pure
+and total).
+**Evidence**: return value of `deriveAttributionChannel` for each input; no exception raised
+
 ## SCEN-015: derivation is case- and whitespace-insensitive
 **Given**: inputs `{ utm_source: "  FACEBOOK  " }` and `{ gclid: "   " }`
 **When**: each is derived

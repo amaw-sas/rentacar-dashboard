@@ -7,16 +7,51 @@ import { createAdminClient } from "@/lib/supabase/admin";
  */
 export const CATEGORY_NAME_COLUMNS = ["code", "name"] as const;
 
+/** Cache lifetime for the category-name map. The catalog is near-static (~1 row
+ * in rental_companies, ~18 in vehicle_categories) and the no-rename-gamas policy
+ * means it changes rarely, so a 5-minute staleness window is acceptable (#129). */
+export const CATEGORY_NAME_TTL_MS = 5 * 60_000;
+
+let cache: { map: ReadonlyMap<string, string>; expiresAt: number } | null =
+  null;
+let inflight: Promise<ReadonlyMap<string, string>> | null = null;
+
 /**
- * Map<categoryCode, ES name> for the Localiza company. Includes ALL statuses:
- * this map translates, it does not filter which categories appear (visibility
- * is #111, out of scope).
+ * Map<categoryCode, ES name> for the Localiza company, memoized for
+ * CATEGORY_NAME_TTL_MS with single-flight dedup. Includes ALL statuses: this map
+ * translates, it does not filter which categories appear (visibility is #111).
  *
- * Uses the admin (service-role) client because the calling route is public and
- * has no session, so RLS-via-cookies is unavailable. Same precedent as
- * `lib/api/location-directory.ts`.
+ * Caching detail (#129): on a hit within the TTL we return the memoized map; on a
+ * miss we share one in-flight promise so concurrent cold-start requests trigger a
+ * single fetch, not N. A rejected fetch is NOT cached (`.then` runs only on
+ * fulfillment, so `cache` stays null) and `.finally` clears `inflight` on both
+ * paths, so the next request retries cleanly.
+ *
+ * The returned map is SHARED by reference across callers, so the type is
+ * `ReadonlyMap` — mutating it would poison the cache for every request within the
+ * TTL, and `ReadonlyMap` makes a `set`/`delete` a compile error rather than a
+ * silent cross-request bug.
  */
-export async function getCategoryNameMap(): Promise<Map<string, string>> {
+export function getCategoryNameMap(): Promise<ReadonlyMap<string, string>> {
+  if (cache && cache.expiresAt > Date.now()) return Promise.resolve(cache.map);
+  if (inflight) return inflight;
+  inflight = fetchCategoryNameMap()
+    .then((map) => {
+      cache = { map, expiresAt: Date.now() + CATEGORY_NAME_TTL_MS };
+      return map;
+    })
+    .finally(() => {
+      inflight = null;
+    });
+  return inflight;
+}
+
+/**
+ * Uncached read of the curated ES names. Uses the admin (service-role) client
+ * because the calling route is public and has no session, so RLS-via-cookies is
+ * unavailable. Same precedent as `lib/api/location-directory.ts`.
+ */
+async function fetchCategoryNameMap(): Promise<Map<string, string>> {
   const supabase = createAdminClient();
 
   // Resolve the Localiza company by its unique code. No reusable helper exists

@@ -31,7 +31,12 @@ create index idx_search_logs_converted on public.search_logs(converted_to_reserv
 
 alter table public.search_logs enable row level security;
 
--- Read-only for authenticated users (append-only from rentacar-main via service role)
+-- Read-only for authenticated users via this policy. Rows are written server-side from
+-- rentacar-dashboard (admin / service-role client) at the search-availability route,
+-- mirroring how the legacy rentacar-admin logged Localiza queries to
+-- `log_veh_available_rates_queries`. NOTE (2026-06-11): the producer is NOT yet wired —
+-- search_logs is empty in prod; the insert belongs in app/api/reservations/availability.
+-- (Prior text attributed writes to "rentacar-main" = the now-archived rentacar-web monorepo.)
 create policy "Authenticated users can read search_logs"
   on public.search_logs for select
   to authenticated

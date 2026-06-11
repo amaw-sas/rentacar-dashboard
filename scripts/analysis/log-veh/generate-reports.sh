@@ -54,12 +54,14 @@ declare -a REPORT_FILES=(
   "$SCRIPT_DIR/reports/02-pricing-by-category-season.sql"
   "$SCRIPT_DIR/reports/03-quote-failure-rate.sql"
   "$SCRIPT_DIR/reports/04-availability-and-behavior.sql"
+  "$SCRIPT_DIR/reports/05-anticipation.sql"
 )
 declare -a REPORT_TITLES=(
   "Report 01 — Demand by branch + month + routes"
   "Report 02 — Pricing by category + season (the price corpus)"
   "Report 03 — Quote failure rate"
   "Report 04 — Availability + booking behavior"
+  "Report 05 — Anticipation curve (price vs booking lead time)"
 )
 for f in "${REPORT_FILES[@]}"; do
   [[ -f "$f" ]] || die "report SQL not found: $f"

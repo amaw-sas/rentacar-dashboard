@@ -34,7 +34,7 @@ anticipation**. The data exists: `cat_quotes.total_amount` (price per category q
 
 | Decision | Choice | Why |
 |---|---|---|
-| Granularity | Normalized **index** (price ÷ gama median) + top-gama breakdown | Removes the gama-mix confound; gives one national message with rigor |
+| Granularity | Normalized **per-day index** (price-per-day ÷ stratum median, stratum = gama × duration-band) + top-gama breakdown | Removes the gama-mix AND the rental-duration confound; gives one national message with rigor |
 | Lead-time buckets | Fine near pickup: `0,1,2,3,4-7,8-14,15-30,31-60,61-90,90+` days | Day resolution where booking decisions happen; grouped tail avoids noise |
 | Headline metrics | Sweet spot = min-index bucket; urgency = index(≤3d)÷min−1; velocity = index(2d)÷index(4-7d)−1 | Anchored to the directive's own framing |
 | Aggregation | **Median** index per bucket (+ p25/p75) | Robust to the 95M-COP price outliers |
@@ -43,12 +43,23 @@ anticipation**. The data exists: `cat_quotes.total_amount` (price per category q
 
 ## 4. Methodology
 
-**Per-quote normalization (level confound).**
+> **Correction (2026-06-11).** The first draft indexed on `total_amount`. Verifying over the real Parquet showed
+> `total_amount` is the WHOLE-RENTAL price, so the curve was dominated by rental **duration** (longer trips are
+> booked further ahead → higher total) plus a spurious 1-day spike from the funnel's "tomorrow, 7-day rental"
+> default. The methodology below indexes a **per-day** unit price within a **duration band**, controlling both
+> the price-level and the duration confound. The honest corrected curve is a modest ~9% last-minute premium that
+> fades by ~1 month — the directive's "+30% urgency" premise is not supported; the actionable signal is per
+> target-week (05e) and the disclosed duration/seasonality mix.
+
+**Per-quote normalization (price-level + duration confound).** `total_amount` carries both the gama price level
+and the rental length. We index a **per-day unit price** within its `(gama × duration-band)` stratum:
 ```
-idx = total_amount / median(total_amount) OVER (PARTITION BY category_code)
+rental_days = greatest(datediff('day', cast(pickup_dt as date), cast(return_dt as date)), 1)   -- 1-day minimum
+ppd         = total_amount / rental_days
+idx         = ppd / median(ppd) OVER (PARTITION BY category_code, dur_band)
 ```
-The category median is over **all priced quotes of that category**. `idx` is dimensionless and comparable across
-categories, removing the gama **price-level** mix. Interpretation: `idx = 1.41` ⇒ "41% above that gama's typical".
+`idx` is dimensionless and comparable across gamas AND rental lengths. Duration bands (sortable):
+`1_1d, 2_2_3d, 3_4_7d, 4_8_14d, 5_15plus`.
 
 **Lead-time.**
 ```
@@ -58,24 +69,24 @@ Bucketed into the 10 ordered buckets, sortable labels `00_0d, 01_1d, 02_2d, 03_3
 07_31_60d, 08_61_90d, 09_90plus`.
 
 **Filters (analysis rows).** `lead_days IS NOT NULL`, `lead_days >= 0`, `total_amount > 0`, `category_code` not
-null. Everything excluded is accounted for in 05f (§5).
+null, `return_dt` present and `>= pickup_dt` (so a valid `rental_days` exists). Everything excluded is accounted
+for in 05f (§5), including the new `dropped_bad_duration`.
 
-**Fixed-weight pooled curve (composition confound).** A naive `median(idx)` pooled over all categories is still
-confounded: *which* gamas populate a bucket varies by lead-time (gama composition shifts bucket-to-bucket), so
-the pooled median mixes the lead-time effect with composition. The global curve therefore uses **fixed category
-weights over ALL categories**, **renormalized per bucket over the categories actually present** so missing cells
-never bias it:
+**Fixed-weight pooled curve (composition confound).** A naive `median(idx)` pooled over all strata is still
+confounded: *which* `(gama × dur_band)` strata populate a bucket varies by lead-time, so the pooled median mixes
+the lead-time effect with composition (gama-mix AND duration-mix). The global curve therefore uses **fixed strata
+weights**, **renormalized per bucket over the strata actually present** so missing cells never bias it:
 ```
-present(b) = { cat : n_quotes(cat, b) >= 1 }                          -- cats with a quote in bucket b
-curve(b)   = Σ_{cat ∈ present(b)} w_cat·median_idx(cat,b)
-             ───────────────────────────────────────────             -- renormalized: surviving weights sum to 1
-                    Σ_{cat ∈ present(b)} w_cat
-w_cat      = n_priced_quotes(cat) / Σ_ALL n_priced_quotes            -- base weight, CONSTANT across buckets, over ALL cats
+present(b) = { strata : n_quotes(strata, b) >= 1 }                   -- (gama,dur_band) with a quote in bucket b
+curve(b)   = Σ_{s ∈ present(b)} w_s·median_idx(s,b)
+             ───────────────────────────────────────                -- renormalized over present strata
+                    Σ_{s ∈ present(b)} w_s
+w_s        = n_quotes(strata) / Σ_ALL n_quotes                       -- base weight, CONSTANT across buckets
 ```
-The base `w_cat` is constant across buckets (so composition cannot shift the curve), but each bucket renormalizes
-over the gamas present in it (so a gama with no quotes at, say, `0d` does not silently drag the weights below 1).
-The per-`(cat, bucket)` `median_idx` and `w_cat` that feed this are **all exposed in cut 05c** (every category,
-not just the top 6), so the curve is exactly reproducible from 05c — see SCEN-2.
+The base `w_s` is constant across buckets (so composition cannot shift the curve), but each bucket renormalizes
+over the strata present in it. For readability the curve is **published at `(dur_band × lead_bucket)` granularity**
+in cut 05c (`band_idx` + `band_weight`), from which the global curve is exactly reproducible
+(`curve(b) = Σ_band band_idx·band_weight / Σ_band band_weight`) — see SCEN-2.
 
 **Aggregation outputs.** Per bucket (05a): `n_quotes`, `weighted_median_idx` (= `curve(b)`), and for spread the
 volume-pooled `p25_idx`/`p75_idx`. **Headline index (chart-safe), rebased on the cheapest CONFIDENT bucket:**
@@ -96,31 +107,33 @@ buckets — never a low-confidence one.
 `reports/05-anticipation.sql` runs over `cat_quotes.parquet` JOIN `search_flat.parquet` on `sf.id = cq.search_id`.
 Cuts (each a DuckDB `-markdown` result set with the `--- 05x: … ---` marker, like the merged reports):
 
-- **05a — global anticipation curve.** Columns: `lead_bucket, n_quotes, weighted_median_idx, p25_idx, p75_idx,
-  index_100, low_confidence`. One row per bucket, ordered by the sortable label. `weighted_median_idx` is the
-  per-bucket-renormalized fixed-weight curve (§4); `index_100` rebases on the cheapest *confident* bucket
-  (= 100). The headline curve.
+- **05a — global per-day anticipation curve.** Columns: `lead_bucket, n_quotes, weighted_median_idx, p25_idx,
+  p75_idx, index_100, low_confidence`. One row per bucket, ordered by the sortable label. `weighted_median_idx`
+  is the per-bucket-renormalized fixed-weight per-day curve (§4); `index_100` rebases on the cheapest *confident*
+  bucket (= 100). The headline curve.
 - **05b — actionable metrics (one row), each pinned to a NAMED 05a bucket so it is recomputable from 05a:**
   `sweet_spot_bucket` (argmin `weighted_median_idx` over `n_quotes ≥ 1000` buckets), `sweet_spot_index_100`
-  (= 100), `urgency_3d_pct = round((curve(03_3d)/base − 1)·100)` (the **`03_3d`** bucket, not a pooled ≤3d),
+  (= 100), `urgency_3d_pct = index_100(03_3d) − 100` (the **`03_3d`** bucket, not a pooled ≤3d),
   `velocity_7to2_pct = round((curve(02_2d)/curve(04_4_7d) − 1)·100)` (the **`02_2d`** vs **`04_4_7d`** buckets;
   `04_4_7d` is the 7-day reference since there is no exact 7d bucket — stated explicitly), `n_quotes_total`.
-- **05c — per-(category × bucket) curve inputs, ALL categories.** Per `(category_code, lead_bucket)`: `n_quotes`,
-  `median_idx`, `w_cat` (the base weight). This is the **complete grid** that feeds 05a's weighted curve — every
-  category (~16), so SCEN-2 can reproduce 05a exactly from this cut. (It is a backing table, ~16×≤10 rows.)
-- **05d — per-gama actionable summary (top 6 by n_priced_quotes).** `category_code, category_description,
-  sweet_spot_bucket, min_median_price` (COP), `pct_increase_at_3d`. Drives the per-gama `hbar` chart + narrative;
-  top-6 for readability (the full data lives in 05c).
+- **05c — curve inputs per `(dur_band × lead_bucket)`.** Per `(dur_band, lead_bucket)`: `n_quotes`, `band_idx`
+  (the band's renormalized per-day index), `band_weight` (the constant present-strata weight). This is the grid
+  that feeds 05a's curve — `curve(b) = Σ_band band_idx·band_weight / Σ_band band_weight` — so SCEN-2 reproduces
+  05a exactly from this cut. (A compact backing table, 5×10 rows.)
+- **05d — per-gama actionable summary (top 6 by n_quotes).** `category_code, category_description,
+  sweet_spot_bucket, min_median_ppd` (COP/day), `pct_increase_at_3d`. Each gama's own per-day curve (its duration
+  bands pooled with fixed within-gama weights); drives the per-gama `hbar` chart + narrative; top-6 for readability.
 - **05e — target dates that escalate fastest (point 2).** Per ISO `pickup_week`: `n_searches` (demand) and
-  `escalation_pct = round((curve_week(03_3d) / curve_week(06_15_30d) − 1)·100)` using the same per-gama fixed
-  weights renormalized within the week, ranked desc, top 30. Surfaces holidays/puentes for inventory + Ads.
-  Weeks with `n_searches < 1000` flagged `low_confidence`.
-- **05f — reconciliation, five mutually-exclusive counts (four drop reasons + the analyzed count, in this precedence).** Starting from
-  total priced `cat_quotes` = 2,974,126: `dropped_null_lead` (parent search `pickup_dt` NULL/unparseable →
-  `lead_days` NULL), then `dropped_negative_lead` (`lead_days < 0`), then `dropped_null_price`
+  `escalation_pct = round((curve_week(03_3d) / curve_week(06_15_30d) − 1)·100)` using the same per-day fixed
+  strata weights renormalized within the week, ranked desc, top 30 over confident weeks (`n_searches ≥ 1000`).
+  Surfaces holidays/puentes for inventory + Ads.
+- **05f — reconciliation, six mutually-exclusive counts (five drop reasons + the analyzed count, in this precedence).**
+  Starting from total priced `cat_quotes` = 2,974,126: `dropped_null_lead` (parent search `pickup_dt`
+  NULL/unparseable → `lead_days` NULL), then `dropped_negative_lead` (`lead_days < 0`), then `dropped_null_price`
   (`total_amount` IS NULL OR `<= 0`), then `dropped_null_category` (`category_code` NULL), then
-  `n_quotes_analyzed` (= Σ 05a buckets). The five counts MUST sum to exactly 2,974,126. (`total_amount` is
-  NULLABLE in `materialize.sql`, so `dropped_null_price` can be > 0 — tallied, not assumed zero.)
+  `dropped_bad_duration` (`return_dt` NULL or before pickup → no valid `rental_days`), then `n_quotes_analyzed`
+  (= Σ 05a buckets). The six counts MUST sum to exactly 2,974,126. (All four amount/date inputs are NULLABLE in
+  `materialize.sql`, so each drop reason is tallied, not assumed zero.)
 
 `generate-reports.sh` is extended to run `05-anticipation.sql` and append its block to the committed bundle,
 exactly as it does for 01–04 (same `SET VARIABLE dataset_dir`, atomic publish, PII-free markdown).

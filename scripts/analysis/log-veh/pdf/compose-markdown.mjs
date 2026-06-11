@@ -11,7 +11,7 @@
 
 import { parseBundle } from "./parse-bundle.mjs";
 
-const REPORT_ORDER = ["01", "02", "03", "04"];
+const REPORT_ORDER = ["01", "02", "03", "04", "05"];
 
 // Fixed cut manifest per report — drives deterministic table ordering.
 const REPORT_CUTS = {
@@ -19,6 +19,7 @@ const REPORT_CUTS = {
   "02": ["02a", "02b", "02c"],
   "03": ["03a", "03b", "03c", "03d"],
   "04": ["04a", "04b", "04c", "04d", "04e"],
+  "05": ["05a", "05b", "05c", "05d", "05e", "05f"],
 };
 
 // Columns whose cells hold a branch code that must be relabeled.
@@ -35,6 +36,11 @@ const TEXT_COLUMNS = new Set([
   "error_code",
   "bucket",
   "trip_type",
+  "lead_bucket",
+  "dur_band",
+  "pickup_week",
+  "low_confidence",
+  "sweet_spot_bucket",
 ]);
 
 // Spanish month names — fixed array (no Intl/toLocaleString) to keep output deterministic.

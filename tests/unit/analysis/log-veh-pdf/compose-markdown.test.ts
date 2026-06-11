@@ -52,6 +52,15 @@ describe("composeMarkdown — presentable Markdown report (SCEN-010)", () => {
     expect(md).toContain("ACBED");
   });
 
+  it("SCEN-007: carries the Report 05 heading and its per-day cut tables", () => {
+    const md = composeMarkdown(args);
+    expect(md).toContain("## Anticipación de precios");
+    // the per-(duration band × lead bucket) cut caption, sourced from the bundle marker
+    expect(md).toContain("05c — curve inputs per (duration band × lead bucket)");
+    // a per-day lead bucket value reached a GFM table
+    expect(md).toContain("09_90plus");
+  });
+
   it("omits the heading line when a narrative block has no heading (no bare '## ')", () => {
     const noHeading = narrativeMd.replace("## Demanda por sucursal y mes", "");
     const md = composeMarkdown({ ...args, narrativeMd: noHeading });

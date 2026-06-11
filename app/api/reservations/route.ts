@@ -11,6 +11,10 @@ import { sendReservationNotifications } from "@/lib/email/notifications";
 import { sendStatusWhatsApp } from "@/lib/wati/notifications";
 import { syncReservationToGhl } from "@/lib/ghl/sync";
 import { parseMonthlyMileage } from "@/lib/reservation/mileage-parser";
+import {
+  deriveAttributionChannel,
+  type AttributionInput,
+} from "@/lib/attribution/derive-channel";
 import type { ReservationStatus } from "@/lib/schemas/reservation";
 
 interface ReservationRequestBody {
@@ -48,6 +52,9 @@ interface ReservationRequestBody {
   flight?: boolean | number;
   aeroline?: string;
   flight_number?: string;
+  // Marketing attribution (issue #113). Optional object of raw ad signals;
+  // absent → channel null ("Desconocido"), empty {} → 'direct' ("Directo").
+  attribution?: AttributionInput;
 }
 
 const LOCALIZA_STATUS_MAP: Record<string, ReservationStatus> = {
@@ -138,6 +145,13 @@ export async function POST(request: Request) {
       phone: body.phone,
       email: body.email,
     });
+
+    // 3b. Derive marketing attribution channel (issue #113). Returns null when
+    // `attribution` is absent ("Desconocido"); the raw signals are persisted
+    // verbatim for audit. The derivation is total — never throws — so a
+    // malformed attribution object can never block a booking.
+    const attribution = body.attribution;
+    const attributionChannel = deriveAttributionChannel(attribution);
 
     // 4. Resolve referral
     let referralId: string | null = null;
@@ -295,6 +309,17 @@ export async function POST(request: Request) {
         monthly_mileage: parseMonthlyMileage(body.monthly_mileage),
         notification_required: notificationRequired,
         status,
+        // Marketing attribution (issue #113): 8 raw signals (referrer →
+        // landing_referrer) + the derived channel. All null when absent.
+        utm_source: attribution?.utm_source ?? null,
+        utm_medium: attribution?.utm_medium ?? null,
+        gclid: attribution?.gclid ?? null,
+        gad_source: attribution?.gad_source ?? null,
+        fbclid: attribution?.fbclid ?? null,
+        ttclid: attribution?.ttclid ?? null,
+        msclkid: attribution?.msclkid ?? null,
+        landing_referrer: attribution?.referrer ?? null,
+        attribution_channel: attributionChannel,
       })
       .select("id")
       .single();

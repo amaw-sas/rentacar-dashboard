@@ -134,3 +134,97 @@ describe("POST /api/reservations — customer snapshot (SCEN-002)", () => {
     expect(payload.customer_email_at_booking).not.toBe("body@example.com");
   });
 });
+
+// Issue #113: the route derives a marketing channel from the optional
+// `attribution` object and persists the 8 raw signals + derived channel.
+// Executes the REAL POST handler (monthly booking skips Localiza) and inspects
+// the captured insert payload — proves the route wiring, not just the DB layer.
+describe("POST /api/reservations — attribution channel (issue #113, SCEN-005/006)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.env.RESERVATION_API_KEY = "test-key";
+  });
+
+  async function postWith(bodyExtra: Record<string, unknown>) {
+    const { resolveLocationByCode, findOrCreateCustomer, resolveReferral } =
+      await import("@/lib/api/resolve-references");
+    const { snapshotFromCustomer } = await import("@/lib/queries/customers");
+    const { createAdminClient } = await import("@/lib/supabase/admin");
+
+    vi.mocked(resolveLocationByCode).mockResolvedValue({
+      id: "loc-1",
+      rental_company_id: "rc-1",
+    } as Awaited<ReturnType<typeof resolveLocationByCode>>);
+    vi.mocked(findOrCreateCustomer).mockResolvedValue("cust-1");
+    vi.mocked(resolveReferral).mockResolvedValue(null);
+    vi.mocked(snapshotFromCustomer).mockResolvedValue({
+      customer_name_at_booking: "X",
+      customer_email_at_booking: "x@e.com",
+      customer_phone_at_booking: "1",
+      customer_identification_type_at_booking: "CC",
+      customer_identification_number_at_booking: "1",
+    });
+
+    const sb = makeAdminClient();
+    vi.mocked(createAdminClient).mockReturnValue(
+      sb.client as ReturnType<typeof createAdminClient>,
+    );
+
+    const { POST } = await import("@/app/api/reservations/route");
+    const res = (await POST(makeRequest({ ...REQUEST_BODY, ...bodyExtra }))) as {
+      status: number;
+      body: unknown;
+    };
+    return { res, payload: sb.insert.mock.calls[0]?.[0] };
+  }
+
+  const ATTRIBUTION_COLUMNS = [
+    "utm_source",
+    "utm_medium",
+    "gclid",
+    "gad_source",
+    "fbclid",
+    "ttclid",
+    "msclkid",
+    "landing_referrer",
+    "attribution_channel",
+  ];
+
+  it("SCEN-005: attribution {gclid} → derives google_ads and persists the gclid", async () => {
+    const { res, payload } = await postWith({ attribution: { gclid: "Cj0KCQ-x" } });
+    expect(res.status).toBe(200);
+    expect(payload.attribution_channel).toBe("google_ads");
+    expect(payload.gclid).toBe("Cj0KCQ-x");
+  });
+
+  it("SCEN-006: no attribution → all 9 columns null and response shape unchanged", async () => {
+    const { res, payload } = await postWith({});
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      reserveCode: "res-new",
+      reservationStatus: "mensualidad",
+    });
+    for (const col of ATTRIBUTION_COLUMNS) {
+      expect(payload[col]).toBeNull();
+    }
+  });
+
+  it("empty attribution {} → 'direct' (Directo, not Desconocido)", async () => {
+    const { payload } = await postWith({ attribution: {} });
+    expect(payload.attribution_channel).toBe("direct");
+  });
+
+  it("referrer input maps to the landing_referrer column and derives referral", async () => {
+    const { payload } = await postWith({
+      attribution: { referrer: "https://www.google.com/" },
+    });
+    expect(payload.landing_referrer).toBe("https://www.google.com/");
+    expect(payload.attribution_channel).toBe("referral");
+  });
+
+  it("malformed attribution (non-object) never blocks the booking → channel null", async () => {
+    const { res, payload } = await postWith({ attribution: "not-an-object" });
+    expect(res.status).toBe(200);
+    expect(payload.attribution_channel).toBeNull();
+  });
+});

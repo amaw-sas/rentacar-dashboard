@@ -120,6 +120,17 @@ host is in `OWN_HOSTS`
 through to the all-empty rule) — distinct from `undefined`, which yields `null`
 **Evidence**: return value of `deriveAttributionChannel`
 
+## SCEN-017: every channel has a complete presentation (no unlabeled/uncolored badge)
+**Given**: the shared `channel-meta` module, consumed by the list, detail and analytics surfaces
+**When**: presentation metadata is looked up for every member of `ATTRIBUTION_CHANNELS` and for the
+`null` ("Desconocido") case
+**Then**: each resolves to a non-empty Spanish label (per design §4: Google Ads, Google Display, Meta
+Ads, TikTok Ads, Bing Ads, Orgánico, Referido web, Directo, Otro, Desconocido), a defined badge variant,
+and a defined chart color — no channel can render unlabeled or uncolored; and `ATTRIBUTION_CHANNEL_SET`
+contains exactly the 9 channel literals (for server-side filter validation) while `UNKNOWN_FILTER`
+(`'__unknown__'`) is distinct from every channel literal and from the list `ALL` sentinel
+**Evidence**: the resolved label/variant/color for each channel + null; membership of `ATTRIBUTION_CHANNEL_SET`
+
 ## SCEN-016: derivation is total — malformed input never throws
 **Given**: malformed inputs that an untrusted JSON caller could emit — `null`, a non-object
 (`"foo"`, `42`), and an object with non-string field values (`{ utm_source: 123 }`,

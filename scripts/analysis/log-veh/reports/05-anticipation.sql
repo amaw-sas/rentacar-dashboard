@@ -223,7 +223,8 @@ SELECT
   lead_bucket,
   n_quotes,
   CAST(band_idx AS DECIMAL(10,4))    AS band_idx,
-  CAST(band_weight AS DECIMAL(12,10)) AS band_weight
+  CAST(band_weight AS DECIMAL(12,10)) AS band_weight,
+  CASE WHEN n_quotes < 1000 THEN 'true' ELSE 'false' END AS low_confidence
 FROM band
 ORDER BY dur_band ASC, lead_bucket ASC;
 
@@ -234,16 +235,16 @@ ORDER BY dur_band ASC, lead_bucket ASC;
 -- Per-gama sweet spot uses only that gama's CONFIDENT (n>=1000) buckets.
 -- ---------------------------------------------------------------------------
 SELECT '--- 05d: per-gama summary (top 6 by volume): sweet spot + min median price/day + %@3d ---' AS subsection;
-WITH top6 AS (
-  SELECT s.category_code, d.category_description, s.n_cat
-  FROM (SELECT category_code, SUM(n_strata) AS n_cat FROM strata GROUP BY category_code) s
-  JOIN (SELECT category_code, MIN(category_description) AS category_description FROM a GROUP BY category_code) d
-    ON d.category_code = s.category_code
-  ORDER BY s.n_cat DESC, s.category_code ASC
-  LIMIT 6
-),
-gtot AS (  -- total quotes per gama (for within-gama duration weights)
+WITH gtot AS (  -- total quotes per gama: ranks top6 AND sets the within-gama duration weights
   SELECT category_code, SUM(n_strata) AS n_gama FROM strata GROUP BY category_code
+),
+top6 AS (
+  SELECT g.category_code, d.category_description, g.n_gama AS n_cat
+  FROM gtot g
+  JOIN (SELECT category_code, MIN(category_description) AS category_description FROM a GROUP BY category_code) d
+    ON d.category_code = g.category_code
+  ORDER BY g.n_gama DESC, g.category_code ASC
+  LIMIT 6
 ),
 gcurve AS (  -- per (gama × lead_bucket): pool the gama's duration bands with fixed within-gama weights
   SELECT
@@ -267,7 +268,10 @@ SELECT
   t.category_description,
   gss.sweet_spot_bucket,
   CAST(gp.min_median_ppd AS DECIMAL(16,2))                    AS min_median_ppd,
-  CAST(round((g3.idx_3d / gss.ss_idx - 1) * 100) AS BIGINT)   AS pct_increase_at_3d
+  -- COALESCE guard: g3.idx_3d is non-null for the top-6 (dense 3d bucket), but if a future
+  -- thinner gama lacked a 03_3d cell the LEFT JOIN would yield NULL → the chart's numAt would
+  -- throw and abort the whole render. 0 = "no measurable 3d premium" is a safe sentinel.
+  COALESCE(CAST(round((g3.idx_3d / gss.ss_idx - 1) * 100) AS BIGINT), 0) AS pct_increase_at_3d
 FROM top6 t
 JOIN gss ON gss.category_code = t.category_code AND gss.rn = 1
 JOIN (

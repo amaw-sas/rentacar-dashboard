@@ -6,8 +6,12 @@ import { getFranchiseLogoUrl } from "@/lib/queries/franchises";
 import { NotificationLogTimeline } from "@/components/layout/notification-log-timeline";
 import { BOOKING_TYPE_LABELS, type ReservationStatus } from "@/lib/schemas/reservation";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ReservationStatusActions } from "@/components/layout/reservation-status-actions";
+import { channelMeta } from "@/lib/attribution/channel-meta";
+import type { AttributionChannel } from "@/lib/attribution/derive-channel";
+import { presentRawSignals, type RawSignalRow } from "@/lib/attribution/raw-signals";
 
 const currencyFormatter = new Intl.NumberFormat("es-CO", {
   style: "currency",
@@ -64,6 +68,16 @@ export default async function ReservationDetailPage({
     BOOKING_TYPE_LABELS[
       reservation.booking_type as keyof typeof BOOKING_TYPE_LABELS
     ] ?? reservation.booking_type;
+
+  // `getReservation` is loosely typed (hand-written casts; database.ts is
+  // vestigial). The 9 attribution columns are returned by `select("*")` — read
+  // them through a minimal local view consistent with the file's cast style.
+  const attribution = reservation as unknown as {
+    attribution_channel: AttributionChannel | null;
+  } & RawSignalRow;
+  const attributionChannel = attribution.attribution_channel ?? null;
+  const channelPresentation = channelMeta(attributionChannel);
+  const rawSignals = presentRawSignals(attribution);
 
   return (
     <div className="space-y-6">
@@ -123,6 +137,48 @@ export default async function ReservationDetailPage({
             }
           />
           <Field label="Referido" value={reservation.referrals ? `${reservation.referrals.name} (${reservation.referrals.code})` : reservation.referral_raw ?? "—"} />
+        </CardContent>
+      </Card>
+
+      {/* Origen */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Origen</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div>
+            <Badge variant={channelPresentation.variant}>
+              {channelPresentation.label}
+            </Badge>
+          </div>
+
+          {/* null channel ("Desconocido"): nothing was ever captured → no raw
+              section. `direct`: a muted note. Any other channel: the captured
+              raw signals inside a collapsible <details>. */}
+          {attributionChannel === "direct" && (
+            <p className="text-sm text-muted-foreground">
+              Sin señales capturadas (tráfico directo)
+            </p>
+          )}
+
+          {attributionChannel !== null &&
+            attributionChannel !== "direct" &&
+            rawSignals.length > 0 && (
+              <details className="text-sm">
+                <summary className="cursor-pointer text-muted-foreground">
+                  Señales capturadas
+                </summary>
+                <div className="mt-4 grid gap-6 sm:grid-cols-2">
+                  {rawSignals.map((signal) => (
+                    <Field
+                      key={signal.label}
+                      label={signal.label}
+                      value={signal.value}
+                    />
+                  ))}
+                </div>
+              </details>
+            )}
         </CardContent>
       </Card>
 

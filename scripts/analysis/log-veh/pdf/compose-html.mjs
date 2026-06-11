@@ -33,6 +33,11 @@ const TEXT_COLUMNS = new Set([
   "error_code",
   "bucket",
   "trip_type",
+  "lead_bucket",
+  "dur_band",
+  "pickup_week",
+  "low_confidence",
+  "sweet_spot_bucket",
 ]);
 
 // Fixed cut manifest per report — drives deterministic table ordering.
@@ -41,6 +46,7 @@ const REPORT_CUTS = {
   "02": ["02a", "02b", "02c"],
   "03": ["03a", "03b", "03c", "03d"],
   "04": ["04a", "04b", "04c", "04d", "04e"],
+  "05": ["05a", "05b", "05c", "05d", "05e", "05f"],
 };
 
 // Spanish month names — fixed array (no Intl/toLocaleString) to keep output deterministic.
@@ -67,7 +73,7 @@ function analyzedPeriod(bundle) {
   return from === to ? from : `${from} – ${to}`;
 }
 
-const REPORT_ORDER = ["01", "02", "03", "04"];
+const REPORT_ORDER = ["01", "02", "03", "04", "05"];
 
 function relabel(code, branchLabels) {
   return branchLabels[code] ?? code;
@@ -207,6 +213,23 @@ function chartsFor(report, cuts, branchLabels) {
       hbar(
         cuts["04d"].rows.map((r) => ({ label: r.trip_type, value: numAt(r, "searches") })),
         { title: "Ida y vuelta vs. una vía", color: "#059669" },
+      ),
+    );
+  } else if (report === "05") {
+    // The curve: 05a is stored ascending (00_0d…09_90plus). Reverse to far→near so the
+    // x-axis reads "book early → book last-minute" left→right. y = integer index_100
+    // (the per-day price index, base 100 at the cheapest confident bucket).
+    const curve = cuts["05a"].rows.slice().reverse();
+    out.push(
+      line(
+        curve.map((r) => ({ x: r.lead_bucket, y: numAt(r, "index_100") })),
+        { title: "Curva de anticipación (precio/día, base 100)", color: "#b45309" },
+      ),
+    );
+    out.push(
+      hbar(
+        cuts["05d"].rows.map((r) => ({ label: r.category_description, value: numAt(r, "pct_increase_at_3d") })),
+        { title: "Sobreprecio por día a 3 días vista, por gama (%)", color: "#b45309" },
       ),
     );
   }

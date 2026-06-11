@@ -1,12 +1,13 @@
 // Pure ESM parser for the DuckDB `-markdown` log_veh report bundle (issue #45).
 // No deps, no I/O. Given the bundle markdown string, returns nested cuts of raw-string rows.
 
-// The 19 (report, cut) pairs that MUST all be present and non-empty.
+// The 22 (report, cut) pairs that MUST all be present and non-empty.
 const MANIFEST = [
   ["01", "01a"], ["01", "01b"], ["01", "01c"], ["01", "01d"],
   ["02", "02a"], ["02", "02b"], ["02", "02c"],
   ["03", "03a"], ["03", "03b"], ["03", "03c"], ["03", "03d"],
   ["04", "04a"], ["04", "04b"], ["04", "04c"], ["04", "04d"], ["04", "04e"],
+  ["05", "05a"], ["05", "05b"], ["05", "05c"], ["05", "05d"], ["05", "05e"], ["05", "05f"],
 ];
 
 const REPORT_MARKER = /^=== REPORT (\d+):/;

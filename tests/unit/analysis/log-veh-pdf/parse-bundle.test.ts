@@ -70,6 +70,46 @@ describe("parseBundle — real committed log_veh report bundle", () => {
     expect(numAt({ c: "0.0" }, "c")).toBe(0);
   });
 
+  it("SCEN-007: parses Report 05 cuts 05a–05f from the bundle", () => {
+    const parsed = parseBundle(bundle) as unknown as Bundle;
+    for (const cut of ["05a", "05b", "05c", "05d", "05e", "05f"]) {
+      expect(parsed["05"]?.[cut]?.rows?.length ?? 0).toBeGreaterThan(0);
+    }
+    // 05f reconciles to the full corpus across its six counts.
+    const f = parsed["05"]["05f"].rows[0];
+    const sum =
+      numAt(f, "dropped_null_lead") +
+      numAt(f, "dropped_negative_lead") +
+      numAt(f, "dropped_null_price") +
+      numAt(f, "dropped_null_category") +
+      numAt(f, "dropped_bad_duration") +
+      numAt(f, "n_quotes_analyzed");
+    expect(sum).toBe(2974126);
+  });
+
+  it("SCEN-007: a bundle missing a 05 cut throws naming it (MANIFEST guards 05)", () => {
+    const lines = bundle.split(/\r?\n/);
+    const out: string[] = [];
+    let dropping = false;
+    for (const line of lines) {
+      const t = line.trim();
+      if (/^\| --- 05c:/.test(t)) {
+        dropping = true;
+        continue;
+      }
+      if (dropping) {
+        if (/^\| --- \d+[a-z]:/.test(t) || /^\| === REPORT/.test(t)) {
+          dropping = false;
+          out.push(line);
+          continue;
+        }
+        continue;
+      }
+      out.push(line);
+    }
+    expect(() => parseBundle(out.join("\n"))).toThrow(/05c/);
+  });
+
   it("SCEN-004: removing the 01a table block throws naming the missing cut", () => {
     // Delete the entire 01a block: marker line + header + data rows, up to the next marker.
     const lines = bundle.split(/\r?\n/);

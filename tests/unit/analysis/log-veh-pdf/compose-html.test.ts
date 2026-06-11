@@ -58,6 +58,15 @@ describe("composeHtml — issue #45 PDF report composer", () => {
     expect(h1).toContain("mayo 2026");
   });
 
+  it("SCEN-007: renders Report 05 heading, the curve line chart (integer index_100 ≥100), and the per-gama hbar", () => {
+    const h1 = composeHtml(args);
+    expect(h1).toContain("Anticipación de precios");
+    expect(h1).toContain("Curva de anticipación (precio/día, base 100)");
+    expect(h1).toContain("Sobreprecio por día a 3 días vista, por gama (%)");
+    // The curve's base bucket renders a faithful 3-digit integer label of exactly 100.
+    expect(h1).toMatch(/>100</);
+  });
+
   it("sanity: output is a full HTML document with inline SVG charts", () => {
     const h1 = composeHtml(args);
     expect(h1.toLowerCase().startsWith("<!doctype html")).toBe(true);

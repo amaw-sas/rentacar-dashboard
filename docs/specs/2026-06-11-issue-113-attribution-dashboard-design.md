@@ -191,6 +191,11 @@ non-paid Google traffic, derivation would mislabel it `google_ads`. The capture 
 (Apéndice A) must only populate click-id fields from genuine ad-click query params; this is
 called out so the #121/#35 implementers honor it.
 
+**Paid-social assumption (same caveat):** rule 6 folds `utm_medium ∈ {organic, social}` into
+`organic`. This is correct only if **paid** social always carries a click-id (`fbclid`/`ttclid`)
+or `utm_medium ∈ {cpc, paid}` — never a bare `utm_medium=social`. The capture arms must tag
+paid social as paid; otherwise paid social would mislabel as Orgánico.
+
 ### 3.4 API `/api/reservations`
 
 - Extend `ReservationRequestBody` with optional `attribution?: AttributionInput`.
@@ -207,9 +212,8 @@ called out so the #121/#35 implementers honor it.
   `attributionChannel: string | null` to `ReservationListParams`; parse it in
   `parseListParams` validated against the channel enum (an `ATTRIBUTION_CHANNEL_SET`), so an
   out-of-enum value is ignored. A sentinel for "Desconocido" filtering = `IS NULL`, reserved
-  key `__unknown__`. The planner must confirm `__unknown__` collides with neither the channel
-  enum nor the existing URL-state sentinel `ALL` (`__all__`) in `list-params.ts` — both are
-  double-underscore-wrapped, so the new key must not duplicate an existing one.
+  key `__unknown__`. This is collision-free by construction: `__unknown__` differs from the
+  existing URL-state sentinel `ALL` (`__all__`) and is outside the 9-value channel enum.
 - `queries/reservations.ts`: in `getReservationsPage`, `if (params.attributionChannel)` →
   `.eq("attribution_channel", …)`; the `__unknown__` sentinel → `.is("attribution_channel", null)`.
   Raw columns already arrive via `select("*")`.
@@ -258,7 +262,9 @@ hides the raw section entirely (nothing was ever captured).
   `msclkid`→bing_ads, `ttclid`→tiktok_ads, the rule-6 utm ladder (`utm_medium=cpc`+source,
   `utm_medium=organic`→organic, unknown medium→other), rule-7 external referrer→referral,
   own-domain referrer→direct, absent→`null`, `{}`→`direct`, whitespace-only fields→treated
-  as absent, case-insensitivity. (Mirrors SCEN-1..4, 12..15.)
+  as absent, case-insensitivity. (Mirrors SCEN-1..4, 12..15.) Rule 6 alone fans out to ~7
+  branches (cpc-ladder × source, display × source, organic/social, referral, other), so the
+  full derivation has ~15 test cases — do not under-test rule 6 as a single case.
 - Runtime verification (testing branch): POST with `attribution:{gclid:"x"}` →
   `attribution_channel='google_ads'` + `gclid` persisted; POST without `attribution` → all
   attribution columns NULL, flow unchanged; list shows "Origen" badge, old rows "Desconocido";
@@ -311,8 +317,10 @@ is no data so the dashboard records **Directo** instead of "Desconocido".
   `null`.
 - **SCEN-12 (derive: utm ladder, no click-id):** Given `{utm_source:"google", utm_medium:"cpc"}`,
   then `google_ads`; given `{utm_medium:"organic"}`, then `organic`; given
-  `{utm_source:"bing", utm_medium:"cpc"}`, then `bing_ads`; given `{utm_medium:"foobar"}`,
-  then `other`.
+  `{utm_source:"bing", utm_medium:"cpc"}`, then `bing_ads`; given
+  `{utm_source:"google", utm_medium:"display"}`, then `google_display`; given
+  `{utm_medium:"display"}` (no source), then `other`; given `{utm_medium:"referral"}`, then
+  `referral`; given `{utm_medium:"foobar"}`, then `other`.
 - **SCEN-13 (derive: external referrer → referral):** Given
   `{referrer:"https://www.google.com/"}` (no utm, no click-id), then `referral`.
 - **SCEN-14 (derive: own-domain referrer → direct):** Given

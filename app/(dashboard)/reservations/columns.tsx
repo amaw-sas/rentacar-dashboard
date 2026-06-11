@@ -7,6 +7,8 @@ import { ReturnLink } from "@/components/data-table/return-link";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { CopyableText } from "@/components/ui/copyable-text";
+import { channelMeta } from "@/lib/attribution/channel-meta";
+import type { AttributionChannel } from "@/lib/attribution/derive-channel";
 import {
   STATUS_LABELS,
   isPriorityStatus,
@@ -28,6 +30,7 @@ export type ReservationRow = {
   total_price_localiza: number;
   referral_id: string | null;
   referral_raw: string | null;
+  attribution_channel: AttributionChannel | null;
   customer_name_at_booking?: string | null;
   customer_email_at_booking?: string | null;
   customer_phone_at_booking?: string | null;
@@ -242,6 +245,17 @@ export const columns: ColumnDef<ReservationRow, unknown>[] = [
     cell: ({ getValue }) => (
       <Badge variant="outline">{getValue<string>()}</Badge>
     ),
+  },
+  {
+    id: "origen",
+    accessorKey: "attribution_channel",
+    header: "Origen",
+    // Server-sortable: column id "origen" maps to attribution_channel in
+    // SORTABLE_COLUMNS. enableSorting defaults to true — do not disable.
+    cell: ({ getValue }) => {
+      const meta = channelMeta(getValue<AttributionChannel | null>());
+      return <Badge variant={meta.variant}>{meta.label}</Badge>;
+    },
   },
   {
     id: "referral",

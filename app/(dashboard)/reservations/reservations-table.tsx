@@ -27,6 +27,11 @@ import {
   type ReservationStatus,
 } from "@/lib/schemas/reservation";
 import { ALL } from "@/lib/reservations/list-params";
+import {
+  ATTRIBUTION_CHANNELS,
+  UNKNOWN_FILTER,
+  channelMeta,
+} from "@/lib/attribution/channel-meta";
 import { useReservationsTableUrlState } from "@/hooks/use-reservations-table-url-state";
 import { columns, type ReservationRow } from "./columns";
 
@@ -123,6 +128,27 @@ export function ReservationsTable({
                   {STATUS_LABELS[s as ReservationStatus]}
                 </SelectItem>
               ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="flex flex-col gap-1">
+          <label className="text-xs text-muted-foreground">Origen</label>
+          <Select
+            value={filters.origen}
+            onValueChange={(v) => setFilter("origen", v)}
+          >
+            <SelectTrigger className="w-44">
+              <SelectValue placeholder="Origen" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ALL}>Todos</SelectItem>
+              {ATTRIBUTION_CHANNELS.map((channel) => (
+                <SelectItem key={channel} value={channel}>
+                  {channelMeta(channel).label}
+                </SelectItem>
+              ))}
+              <SelectItem value={UNKNOWN_FILTER}>Desconocido</SelectItem>
             </SelectContent>
           </Select>
         </div>

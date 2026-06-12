@@ -1,10 +1,29 @@
 import { createClient } from "@/lib/supabase/server";
+import { bogotaDayStartISO, bogotaDayEndISO } from "@/lib/date/bogota";
 
 export interface AnalyticsFilters {
+  // `from`/`to` are civil dates "YYYY-MM-DD" in Colombia time (America/Bogota),
+  // matching the Reservations "Creado" filter contract (#115) — NOT raw ISO
+  // instants. They are anchored to the Colombia day boundary before comparing
+  // against the UTC `timestamptz` columns, so a row stamped 22:00 Colombia (the
+  // next UTC day) still falls inside the intended Colombia day. Issue #126.
   from?: string;
   to?: string;
   franchise?: string;
   referral_code?: string;
+}
+
+// Anchors a civil-date range to Colombia day boundaries (#126). `from` becomes
+// the inclusive 00:00-Colombia lower bound, `to` the inclusive 23:59:59.999
+// upper bound, both expressed as UTC instants for comparison against a
+// `timestamptz` column. Shares the helpers with reservations (#115) / dashboard
+// (#114). Generic over the PostgREST builder so it stays type-safe without `any`.
+function applyDateRange<
+  T extends { gte: (c: string, v: string) => T; lte: (c: string, v: string) => T }
+>(query: T, column: string, filters?: AnalyticsFilters): T {
+  if (filters?.from) query = query.gte(column, bogotaDayStartISO(filters.from));
+  if (filters?.to) query = query.lte(column, bogotaDayEndISO(filters.to));
+  return query;
 }
 
 export async function getDemandStats(filters?: AnalyticsFilters) {
@@ -16,12 +35,7 @@ export async function getDemandStats(filters?: AnalyticsFilters) {
     )
     .order("searched_at", { ascending: false });
 
-  if (filters?.from) {
-    query = query.gte("searched_at", filters.from);
-  }
-  if (filters?.to) {
-    query = query.lte("searched_at", filters.to);
-  }
+  query = applyDateRange(query, "searched_at", filters);
   if (filters?.franchise) {
     query = query.eq("franchise", filters.franchise);
   }
@@ -40,12 +54,7 @@ export async function getConversionStats(filters?: AnalyticsFilters) {
     )
     .order("searched_at", { ascending: false });
 
-  if (filters?.from) {
-    query = query.gte("searched_at", filters.from);
-  }
-  if (filters?.to) {
-    query = query.lte("searched_at", filters.to);
-  }
+  query = applyDateRange(query, "searched_at", filters);
   if (filters?.franchise) {
     query = query.eq("franchise", filters.franchise);
   }
@@ -65,12 +74,7 @@ export async function getReferralPerformance(filters?: AnalyticsFilters) {
     .not("referral_code", "is", null)
     .order("searched_at", { ascending: false });
 
-  if (filters?.from) {
-    query = query.gte("searched_at", filters.from);
-  }
-  if (filters?.to) {
-    query = query.lte("searched_at", filters.to);
-  }
+  query = applyDateRange(query, "searched_at", filters);
 
   const { data, error } = await query;
   if (error) throw error;
@@ -98,112 +102,9 @@ export async function getRevenueStats(filters?: AnalyticsFilters) {
     .select(COMMISSION_REVENUE_SELECT)
     .order("created_at", { ascending: false });
 
-  if (filters?.from) {
-    query = query.gte("created_at", filters.from);
-  }
-  if (filters?.to) {
-    query = query.lte("created_at", filters.to);
-  }
+  query = applyDateRange(query, "created_at", filters);
 
   const { data, error } = await query;
   if (error) throw error;
   return data;
-}
-
-export async function getDashboardStats() {
-  const supabase = await createClient();
-
-  const now = new Date();
-  const todayStart = new Date(
-    now.getFullYear(),
-    now.getMonth(),
-    now.getDate()
-  ).toISOString();
-  const weekStart = new Date(
-    now.getFullYear(),
-    now.getMonth(),
-    now.getDate() - now.getDay()
-  ).toISOString();
-  const monthStart = new Date(
-    now.getFullYear(),
-    now.getMonth(),
-    1
-  ).toISOString();
-
-  const [
-    todayReservations,
-    weekReservations,
-    monthReservations,
-    pendingCommissions,
-    invoicedCommissions,
-    paidCommissions,
-    topReferrals,
-  ] = await Promise.all([
-    supabase
-      .from("search_logs")
-      .select("id", { count: "exact", head: true })
-      .eq("converted_to_reservation", true)
-      .gte("searched_at", todayStart),
-    supabase
-      .from("search_logs")
-      .select("id", { count: "exact", head: true })
-      .eq("converted_to_reservation", true)
-      .gte("searched_at", weekStart),
-    supabase
-      .from("search_logs")
-      .select("id", { count: "exact", head: true })
-      .eq("converted_to_reservation", true)
-      .gte("searched_at", monthStart),
-    supabase
-      .from("commissions")
-      .select("amount")
-      .eq("payment_status", "pending"),
-    supabase
-      .from("commissions")
-      .select("amount")
-      .eq("payment_status", "invoiced"),
-    supabase
-      .from("commissions")
-      .select("amount")
-      .eq("payment_status", "paid"),
-    supabase
-      .from("search_logs")
-      .select("referral_code, converted_to_reservation")
-      .not("referral_code", "is", null)
-      .gte("searched_at", monthStart),
-  ]);
-
-  const sumAmounts = (rows: { amount: number }[] | null) =>
-    (rows ?? []).reduce((sum, r) => sum + (r.amount ?? 0), 0);
-
-  const referralMap = new Map<
-    string,
-    { searches: number; reservations: number }
-  >();
-  for (const row of topReferrals.data ?? []) {
-    const code = row.referral_code!;
-    const entry = referralMap.get(code) ?? { searches: 0, reservations: 0 };
-    entry.searches++;
-    if (row.converted_to_reservation) entry.reservations++;
-    referralMap.set(code, entry);
-  }
-
-  const topReferralsList = Array.from(referralMap.entries())
-    .map(([code, stats]) => ({ code, ...stats }))
-    .sort((a, b) => b.reservations - a.reservations)
-    .slice(0, 5);
-
-  return {
-    reservations: {
-      today: todayReservations.count ?? 0,
-      week: weekReservations.count ?? 0,
-      month: monthReservations.count ?? 0,
-    },
-    commissions: {
-      pending: sumAmounts(pendingCommissions.data as { amount: number }[] | null),
-      invoiced: sumAmounts(invoicedCommissions.data as { amount: number }[] | null),
-      paid: sumAmounts(paidCommissions.data as { amount: number }[] | null),
-    },
-    topReferrals: topReferralsList,
-  };
 }

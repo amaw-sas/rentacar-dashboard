@@ -12,7 +12,7 @@ export interface AvailabilityItem {
  */
 export function enrichCategoryDescriptions(
   items: AvailabilityItem[],
-  nameMap: Map<string, string>,
+  nameMap: ReadonlyMap<string, string>,
 ): AvailabilityItem[] {
   return items.map((item) => {
     const es = nameMap.get(item.categoryCode);

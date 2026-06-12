@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("@/lib/supabase/admin", () => ({
   createAdminClient: vi.fn(),
@@ -30,6 +30,12 @@ function createMockSupabase(opts: {
   companyError?: { message: string } | null;
   rows?: CategoryRow[];
   categoriesError?: { message: string } | null;
+  // When true, `from` dispatches builders by table-name argument
+  // (mockImplementation) instead of by call order (mockReturnValueOnce ×2), so a
+  // single client serves N repeated fetches with the same rows. Required for the
+  // cache scenarios where a leaked/concurrent 2nd fetch must reach its assertion
+  // (observe `from` 4×) instead of crashing on an exhausted once-queue (#129).
+  repeating?: boolean;
 }): { client: unknown; spies: MockSpies } {
   const companyResult = {
     data: opts.companyId === undefined ? null : { id: opts.companyId },
@@ -57,10 +63,18 @@ function createMockSupabase(opts: {
   categoriesEq.mockReturnValue(categoriesBuilder);
   const categoriesSelect = vi.fn().mockReturnValue(categoriesBuilder);
 
-  const from = vi
-    .fn()
-    .mockReturnValueOnce({ select: companySelect })
-    .mockReturnValueOnce({ select: categoriesSelect });
+  const from = opts.repeating
+    ? vi
+        .fn()
+        .mockImplementation((table: string) =>
+          table === "rental_companies"
+            ? { select: companySelect }
+            : { select: categoriesSelect },
+        )
+    : vi
+        .fn()
+        .mockReturnValueOnce({ select: companySelect })
+        .mockReturnValueOnce({ select: categoriesSelect });
 
   const client = { from };
 
@@ -89,6 +103,20 @@ async function loadModule(client: unknown) {
   );
   return import("@/lib/api/category-names");
 }
+
+// Point `createAdminClient` at a fresh client so the NEXT fetch (a cache miss or
+// expiry refetch) runs against different rows / an error→success flip, without
+// resetting the module under test. Works because `fetchCategoryNameMap` calls
+// `createAdminClient()` anew on every fetch (it caches the Map, not the client).
+async function rebind(client: unknown) {
+  const { createAdminClient } = await import("@/lib/supabase/admin");
+  vi.mocked(createAdminClient).mockReturnValue(
+    client as unknown as ReturnType<typeof createAdminClient>,
+  );
+}
+
+const RENAMED_ROWS: CategoryRow[] = [{ code: "C", name: "Gama C RENOMBRADA" }];
+const FIXED_NOW = new Date("2026-06-11T00:00:00.000Z").getTime();
 
 describe("getCategoryNameMap", () => {
   beforeEach(() => {
@@ -194,5 +222,137 @@ describe("getCategoryNameMap", () => {
     const { CATEGORY_NAME_COLUMNS } = await loadModule(client);
 
     expect(CATEGORY_NAME_COLUMNS).toEqual(["code", "name"]);
+  });
+});
+
+// Issue #129 — TTL cache + single-flight. Module-level `cache`/`inflight` state is
+// reset between tests by `vi.resetModules()` (load-bearing — see SCEN-009 isolation
+// note); `vi.useRealTimers()` in afterEach prevents fake-clock leakage.
+describe("getCategoryNameMap cache (issue #129)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.resetModules();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // SCEN-009: a second lookup within the TTL is served from cache — the DB is
+  // queried only once. Red (no cache): two fetches → `from` 4×.
+  it("serves a cache hit within the TTL without re-querying the DB", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(FIXED_NOW);
+    const { client, spies } = createMockSupabase({
+      companyId: "loc-uuid-123",
+      rows: SAMPLE_ROWS,
+      repeating: true,
+    });
+    const { getCategoryNameMap } = await loadModule(client);
+
+    const first = await getCategoryNameMap();
+    vi.setSystemTime(FIXED_NOW + 4 * 60_000); // +4 min, still < 5 min TTL
+    const second = await getCategoryNameMap();
+
+    expect(spies.from).toHaveBeenCalledTimes(2); // one fetch only
+    expect([...second.entries()]).toEqual([...first.entries()]);
+  });
+
+  // SCEN-010: once the TTL elapses, the next lookup re-queries and reflects the
+  // new rows. Staleness is bounded by the TTL.
+  it("refetches after the TTL expires and reflects new rows", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(FIXED_NOW);
+    const first = createMockSupabase({
+      companyId: "loc-uuid-123",
+      rows: SAMPLE_ROWS,
+    });
+    const { getCategoryNameMap, CATEGORY_NAME_TTL_MS } =
+      await loadModule(first.client);
+
+    const before = await getCategoryNameMap();
+    expect(before.get("C")).toBe("Gama C Económico Mecánico");
+
+    const refreshed = createMockSupabase({
+      companyId: "loc-uuid-123",
+      rows: RENAMED_ROWS,
+    });
+    await rebind(refreshed.client);
+    vi.setSystemTime(FIXED_NOW + CATEGORY_NAME_TTL_MS); // exactly at expiry (exclusive) → refetch
+    const after = await getCategoryNameMap();
+
+    expect(after.get("C")).toBe("Gama C RENOMBRADA");
+  });
+
+  // SCEN-011: a failed fetch is NOT cached — the next call retries and can succeed.
+  it("does not cache a failure and retries on the next call", async () => {
+    const failing = createMockSupabase({
+      companyId: "loc-uuid-123",
+      companyError: { message: "connection refused" },
+      rows: SAMPLE_ROWS,
+    });
+    const { getCategoryNameMap } = await loadModule(failing.client);
+
+    await expect(getCategoryNameMap()).rejects.toThrow();
+
+    const recovered = createMockSupabase({
+      companyId: "loc-uuid-123",
+      rows: SAMPLE_ROWS,
+    });
+    await rebind(recovered.client);
+    const map = await getCategoryNameMap();
+
+    expect(map.get("C")).toBe("Gama C Económico Mecánico");
+  });
+
+  // SCEN-012: two concurrent cold-start calls share one fetch (single-flight).
+  // Red (no single-flight): two fetches → `from` 4×.
+  it("dedupes concurrent cold-start calls into a single fetch", async () => {
+    const { client, spies } = createMockSupabase({
+      companyId: "loc-uuid-123",
+      rows: SAMPLE_ROWS,
+      repeating: true,
+    });
+    const { getCategoryNameMap } = await loadModule(client);
+
+    const [a, b] = await Promise.all([
+      getCategoryNameMap(),
+      getCategoryNameMap(),
+    ]);
+
+    expect(spies.from).toHaveBeenCalledTimes(2); // one shared fetch
+    expect(a).toBe(b); // same Map instance from the shared in-flight promise
+  });
+
+  // SCEN-013: single-flight still holds on the expiry refetch path — two concurrent
+  // calls after expiry trigger a single shared refetch. Red (no inflight guard):
+  // the refetch client's `from` is called 4×.
+  it("dedupes concurrent calls into a single refetch after expiry", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(FIXED_NOW);
+    const first = createMockSupabase({
+      companyId: "loc-uuid-123",
+      rows: SAMPLE_ROWS,
+    });
+    const { getCategoryNameMap, CATEGORY_NAME_TTL_MS } =
+      await loadModule(first.client);
+
+    await getCategoryNameMap(); // populate cache
+
+    const refetch = createMockSupabase({
+      companyId: "loc-uuid-123",
+      rows: RENAMED_ROWS,
+      repeating: true,
+    });
+    await rebind(refetch.client);
+    vi.setSystemTime(FIXED_NOW + CATEGORY_NAME_TTL_MS); // expired
+    const [a, b] = await Promise.all([
+      getCategoryNameMap(),
+      getCategoryNameMap(),
+    ]);
+
+    expect(refetch.spies.from).toHaveBeenCalledTimes(2); // single shared refetch
+    expect(a).toBe(b);
+    expect(a.get("C")).toBe("Gama C RENOMBRADA");
   });
 });

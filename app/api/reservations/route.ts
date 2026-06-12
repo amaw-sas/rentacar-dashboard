@@ -233,11 +233,23 @@ export async function POST(request: Request) {
             { status: 500 }
           );
         }
-        if (error instanceof ProxyTimeoutError) {
-          // The dashboard never inserts on this path, so there is no phantom on
-          // our side. The booking MAY have completed on Localiza (504 is
-          // ambiguous) — reconciliation is tracked separately (issue #99 SCEN-2).
-          console.error("[reservation] Proxy timeout:", error.message);
+        // A timeout — whether ours (the proxy never answered → ProxyTimeoutError)
+        // or the proxy's own (Localiza slow → it returned 504 {upstream_timeout},
+        // surfacing here as a ProxyError) — converges on ONE retry-safe message.
+        // The dashboard never inserts on this path, so there is no phantom on our
+        // side; the booking MAY have completed on Localiza (504 is ambiguous) —
+        // reconciliation is tracked separately (issue #99 SCEN-2).
+        const isUpstreamTimeout =
+          error instanceof ProxyTimeoutError ||
+          (error instanceof ProxyError &&
+            error.status === 504 &&
+            (error.body as { error?: unknown } | null)?.error ===
+              "upstream_timeout");
+        if (isUpstreamTimeout) {
+          console.error(
+            "[reservation] Upstream timeout:",
+            error instanceof Error ? error.message : String(error)
+          );
           return NextResponse.json(
             {
               error: "upstream_timeout",

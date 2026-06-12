@@ -314,6 +314,34 @@ describe("POST /api/reservations — Localiza proxy integration (issue #99, SCEN
     expect(sb.insert).not.toHaveBeenCalled(); // no phantom on our side
   });
 
+  it("converges a proxy-side 504 upstream_timeout onto the booking-specific message", async () => {
+    const sb = await setupRefs();
+    const { createLocalizaReservation, ProxyError } = await import(
+      "@/lib/reservation/proxy-client"
+    );
+    // Localiza was slow → the proxy returned its own 504 {upstream_timeout},
+    // which surfaces here as a ProxyError, not a ProxyTimeoutError.
+    vi.mocked(createLocalizaReservation).mockRejectedValue(
+      new ProxyError(
+        504,
+        { error: "upstream_timeout", message: "proxy generic timeout msg" },
+        "",
+      ),
+    );
+
+    const { POST } = await import("@/app/api/reservations/route");
+    const res = (await POST(makeRequest(STANDARD_BODY))) as unknown as {
+      status: number;
+      body: { error: string; message: string };
+    };
+
+    expect(res.status).toBe(504);
+    expect(res.body.error).toBe("upstream_timeout");
+    // The booking-specific reassurance, NOT the proxy's endpoint-agnostic message.
+    expect(res.body.message).toContain("Tu reserva NO se creó");
+    expect(sb.insert).not.toHaveBeenCalled();
+  });
+
   it("passes a structured proxy error through with its status and inserts NOTHING", async () => {
     const sb = await setupRefs();
     const { createLocalizaReservation, ProxyError } = await import(

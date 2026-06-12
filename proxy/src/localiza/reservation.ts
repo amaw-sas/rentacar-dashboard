@@ -173,8 +173,10 @@ export async function createReservation(
   headerKey?: string | null,
 ): Promise<{ reserveCode: string; reservationStatus: string }> {
   const key = deriveKey(data, headerKey);
-  return withIdempotency(key, async () => {
-    const config = getConfig();
+  return withIdempotency(
+    key,
+    async () => {
+      const config = getConfig();
     const xml = buildVehResXML({
       token: config.token,
       requestorId: config.requestorId,
@@ -207,7 +209,13 @@ export async function createReservation(
       referenceToken: data.referenceToken,
       rateQualifier: data.rateQualifier,
     });
-  });
+    },
+    // Don't cache a degraded success: an empty reserveCode means Localiza may
+    // have booked but we couldn't parse the ConfID — replaying it would store an
+    // empty code and block the retry that could recover it. Concurrent waiters
+    // still coalesce; only the TTL replay is skipped.
+    { isCacheable: (result) => result.reserveCode !== "" }
+  );
 }
 
 router.post("/", async (req: Request, res: Response): Promise<void> => {

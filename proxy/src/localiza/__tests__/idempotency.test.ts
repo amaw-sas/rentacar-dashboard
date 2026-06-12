@@ -107,6 +107,28 @@ describe("withIdempotency", () => {
     expect(fn).toHaveBeenCalledTimes(2);
   });
 
+  // isCacheable gate: a result failing the predicate coalesces concurrent waiters
+  // but is NOT remembered, so a later call re-executes (recovers a degraded result).
+  it("does not cache a result that fails isCacheable, but still coalesces", async () => {
+    const key = "k-uncacheable";
+    const d = deferred<{ reserveCode: string }>();
+    const fn = vi.fn(() => d.promise);
+    const isCacheable = (r: { reserveCode: string }) => r.reserveCode !== "";
+
+    // Two concurrent waiters share the one execution (coalesce).
+    const a = withIdempotency(key, fn, { isCacheable });
+    const b = withIdempotency(key, fn, { isCacheable });
+    d.resolve({ reserveCode: "" }); // degraded success (empty code)
+    await Promise.all([a, b]);
+    expect(fn).toHaveBeenCalledTimes(1);
+
+    // A later call re-executes because the empty-code result was not cached.
+    const ok = vi.fn(() => Promise.resolve({ reserveCode: "RECOVERED" }));
+    const r = await withIdempotency(key, ok, { isCacheable });
+    expect(ok).toHaveBeenCalledTimes(1);
+    expect(r.reserveCode).toBe("RECOVERED");
+  });
+
   // Resource bound: the success cache must not grow without limit on a long-lived
   // proxy. Past the cap, the OLDEST entry is evicted (FIFO) — observable because
   // a replay of that evicted key re-executes fn instead of serving the cache.

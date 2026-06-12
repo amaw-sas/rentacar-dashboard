@@ -102,9 +102,16 @@ function rememberSuccess(key: string, result: unknown): void {
 //   - an overlapping call awaits the in-flight promise (one upstream call);
 //   - a rejection is NOT cached — coalesced waiters share it, but the next
 //     arrival re-executes fresh (no poisoning).
+//
+// `opts.isCacheable` (default: always) gates the TTL replay only — a result that
+// fails the predicate still coalesces concurrent waiters but is NOT remembered,
+// so a later request re-executes. Used to avoid caching a degraded success (a
+// reservation with an empty code: Localiza may have booked but we couldn't parse
+// the ConfID — replaying the empty code would block recovery).
 export async function withIdempotency<T>(
   key: string,
   fn: () => Promise<T>,
+  opts?: { isCacheable?: (result: T) => boolean },
 ): Promise<T> {
   const cached = cache.get(key);
   if (cached) {
@@ -117,7 +124,9 @@ export async function withIdempotency<T>(
 
   const promise = (async () => {
     const result = await fn();
-    rememberSuccess(key, result);
+    if (!opts?.isCacheable || opts.isCacheable(result)) {
+      rememberSuccess(key, result);
+    }
     return result;
   })();
   inflight.set(key, promise);

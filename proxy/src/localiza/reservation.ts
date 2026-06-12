@@ -1,8 +1,8 @@
 import { Router, Request, Response } from "express";
 import { callLocalizaAPI, getConfig } from "./client";
 import { buildVehResXML } from "./xml-templates";
+import { mapLocalizaError } from "./errors";
 import {
-  LocalizaWarningError,
   buildLocalizaWarning,
   extractErrorMessage,
   extractWarningShortText,
@@ -193,14 +193,7 @@ router.post("/", async (req: Request, res: Response): Promise<void> => {
     });
     res.json(result);
   } catch (error) {
-    if (error instanceof LocalizaWarningError) {
-      res.status(error.httpStatus).json(error.toJSON());
-      return;
-    }
-    console.error("Reservation error:", error);
-    res.status(502).json({
-      error: error instanceof Error ? error.message : "Unknown error",
-    });
+    mapLocalizaError(error, res, "Reservation");
   }
 });
 

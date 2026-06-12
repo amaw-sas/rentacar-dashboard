@@ -15,6 +15,10 @@ import { toast } from "sonner";
 interface ReservationStatusActionsProps {
   reservationId: string;
   currentStatus: ReservationStatus;
+  // When the parent form has unsaved edits, a status change would fire its
+  // notification from stale DB data (issue #90). The detail page omits this
+  // prop (read-only, nothing to lose) → default false preserves behavior.
+  hasUnsavedChanges?: boolean;
 }
 
 const STATUS_VARIANT: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
@@ -45,6 +49,7 @@ const CONSOLIDATED_SOURCES: ReservationStatus[] = [
 export function ReservationStatusActions({
   reservationId,
   currentStatus,
+  hasUnsavedChanges = false,
 }: ReservationStatusActionsProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -53,6 +58,19 @@ export function ReservationStatusActions({
   const validTargets = VALID_TRANSITIONS[currentStatus] ?? [];
 
   async function handleTransition(newStatus: ReservationStatus) {
+    // Guard first: with unsaved form/customer edits, the notification would
+    // render from stale DB data (issue #90). Block before any confirm or
+    // dispatch — the operator must save so the notification matches the screen.
+    if (hasUnsavedChanges) {
+      const message =
+        "Tienes cambios sin guardar en el formulario. Guárdalos antes de cambiar el estado para que la notificación use los datos correctos.";
+      setError(message);
+      toast.error("Cambios sin guardar", {
+        description: "Guarda el formulario antes de cambiar el estado.",
+      });
+      return;
+    }
+
     if (DANGEROUS_TARGETS.includes(newStatus)) {
       const confirmed = window.confirm(
         `¿Cambiar el estado a "${STATUS_LABELS[newStatus]}"? Esta acción es delicada.`

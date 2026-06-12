@@ -216,7 +216,7 @@ export function ReservationsTable({
           <Input
             value={url.searchInput}
             onChange={(e) => setFilter("search", e.target.value)}
-            placeholder="Nombre, ID, email, código…"
+            placeholder="Nombre, ID, email, código, nota…"
             className="min-w-[200px]"
           />
         </div>

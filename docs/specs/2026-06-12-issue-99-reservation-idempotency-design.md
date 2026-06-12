@@ -59,15 +59,25 @@ Añade `signal: AbortSignal.timeout(LOCALIZA_TIMEOUT_MS)` al `fetch`. Cuando el 
 
 `LOCALIZA_TIMEOUT_MS` se lee de env (default 25000). Como `callLocalizaAPI` es compartido, **availability y check-status también ganan un techo de latencia** sin cambiar su contrato — beneficio colateral, riesgo bajo.
 
+**Alcance del presupuesto de timeout:** `AbortSignal.timeout` solo acota la **llamada de red** (`fetch`), no el `await response.text()` ni el `parseStringPromise` que corren *después* de que el fetch resuelve. Para una respuesta enorme/lenta de parsear, el wall-clock del handler puede exceder `LOCALIZA_TIMEOUT_MS`. El invariante 25/28/30 está pensado con holgura: PROXY_TIMEOUT (28s) da ~3s sobre LOCALIZA_TIMEOUT (25s) para absorber parseo + overhead del dedupe.
+
+**Ordering del catch (los tres endpoints heredan el timeout):** como ahora `availability`, `reservation` y `check-status` pueden lanzar `LocalizaTimeoutError`, cada `catch` debe ramificar en orden: `LocalizaWarningError` (→ `httpStatus`) → `LocalizaTimeoutError` (→ **504** estructurado retry-safe) → genérico (→ 502/500 actual). Se centraliza el mapeo en un helper compartido (`mapLocalizaError(error, res)`) para que los tres endpoints respondan 504 ante timeout de forma consistente, en vez de que availability/check-status caigan al 502/500 genérico con el mensaje crudo del error.
+
 ### 2. Proxy — módulo nuevo `proxy/src/localiza/idempotency.ts`
 
 Store en memoria con tres responsabilidades, expuesto como `withIdempotency(key, fn)`:
 
-- **`deriveKey(body, headerKey?)`** — si llega header `Idempotency-Key`, esa **es** la clave (gana sobre el fingerprint). Si no, hash canónico estable de los campos que definen el booking: `{customerDocument, pickupLocation, returnLocation, pickupDateTime, returnDateTime, categoryCode, referenceToken}`. El orden de las claves se normaliza antes de hashear para que el fingerprint sea determinista.
+- **`deriveKey(body, headerKey?)`** — calcula un **fingerprint** = hash canónico de los campos que definen la *intención de booking del usuario*:
+  `{customerDocument, pickupLocation, returnLocation, pickupDateTime, returnDateTime, categoryCode}`.
+  El orden de las claves se normaliza antes de hashear → determinista.
+  - **Campos deliberadamente EXCLUIDOS:** `referenceToken` y `rateQualifier`. Ambos son **artefactos de cotización** (provienen del availability/quote), no de la intención del usuario. Si el operador recarga y el funnel **re-corre availability**, obtiene un `referenceToken`/`rateQualifier` **nuevos** — incluirlos haría que el fingerprint cambiara y el dedupe **fallara silenciosamente** justo en el caso que queremos atrapar (reload+resubmit). Excluirlos hace el dedupe robusto al ciclo de vida del token, que no podemos verificar desde este repo (vive en el frontend Nuxt). También se excluyen `customerName/Email/Phone` (datos de contacto editables que no cambian la identidad del booking; el documento es el ancla de identidad).
+  - **Header explícito:** si llega `Idempotency-Key`, **se combina** con el fingerprint (`key = hash(headerKey + ":" + fingerprint)`), **no lo reemplaza**. Así: mismo key + mismo body → deduplica; mismo key + body distinto → claves distintas → **no** colapsa (nunca devuelve una reserva equivocada). Es forward-compat: hoy nadie envía el header; el fingerprint solo cubre el caso real.
 - **In-flight coalescing** — `Map<key, Promise<Result>>`. Si una clave está en vuelo, un duplicado concurrente **espera la misma promesa** → una sola llamada a Localiza, mismo `reserveCode` para ambos.
 - **Replay de éxito** — `Map<key, {result, expiresAt}>` con TTL `DEDUPE_TTL_MS` (default 60000). Un hit dentro del TTL devuelve el resultado cacheado **sin** llamar a Localiza.
 
-**No envenenar:** los **fallos NO se cachean**. Al rechazar `fn`, se desregistra el in-flight y no se persiste nada → un reintento legítimo posterior procede con una llamada fresca. Solo los éxitos entran al cache TTL.
+**No envenenar:** los **fallos NO se cachean**. Al rechazar `fn`, se desregistra el in-flight y no se persiste nada → un reintento legítimo *posterior* procede con una llamada fresca. Solo los éxitos entran al cache TTL.
+
+**Interacción coalescing + fallo (concurrente):** si R está en vuelo y R' se acopla a la promesa de R, y luego R **rechaza** (timeout/error), R' recibe **el mismo rechazo** (ambos waiters comparten el resultado de la única llamada — comportamiento correcto y retry-safe). La entrada in-flight se elimina al rechazar, de modo que la **siguiente** llegada (no acoplada, ya posterior) reintenta fresca. Es decir: los waiters concurrentes comparten suerte; las llegadas posteriores no heredan el fallo.
 
 Solo envuelve el endpoint **mutante** (`reservation`). `availability` y `check-status` son lecturas — no se deduplican.
 
@@ -101,16 +111,17 @@ El render del toast es del frontend Nuxt (ya sabe manejar `{error, message}` est
 | **SCEN-1a** (coalescing) | Reserva R en vuelo en el proxy | Llega R' con fingerprint idéntico antes de que R resuelva | R' espera a R; ambos reciben el **mismo** `reserveCode`; se hace **1 sola** llamada a Localiza |
 | **SCEN-1b** (replay) | R completó con éxito hace < TTL | Llega R' idéntico | R' devuelve el `reserveCode` cacheado con **0** llamadas a Localiza |
 | **SCEN-1c** (no-poison) | R falló (timeout o error) | Llega R' idéntico después | R' hace una llamada **fresca** a Localiza (el fallo no se cacheó) |
-| **SCEN-1d** (header gana) | Dos requests con el mismo `Idempotency-Key` explícito pero campos de body distintos | Llega el segundo | Se tratan como el mismo intento (la clave explícita manda) |
+| **SCEN-1d** (header combinado, no override) | Dos requests con el mismo `Idempotency-Key` explícito y **mismo** body | Llega el segundo | Deduplican (mismo `reserveCode`). Y: mismo body con `Idempotency-Key` **distintos** → **NO** deduplican (el cliente señala intentos distintos); mismo key con body distinto → **NO** colapsa (nunca devuelve reserva equivocada) |
 | **SCEN-3a** (timeout proxy→Localiza) | Localiza supera `LOCALIZA_TIMEOUT_MS` | El `AbortSignal` dispara | `callLocalizaAPI` lanza `LocalizaTimeoutError`; el endpoint responde **504** estructurado, bajo cualquier kill duro |
 | **SCEN-3b** (timeout dashboard→proxy) | El proxy supera `PROXY_TIMEOUT_MS` | El `AbortSignal` del dashboard dispara | `/api/reservations` responde error retry-safe en < `maxDuration` y **NO inserta** fila en DB |
-| **SCEN-3c** (invariante de config) | Las constantes de timeout | Se evalúan | `LOCALIZA_TIMEOUT < PROXY_TIMEOUT < maxDuration` se cumple |
+
+> **SCEN-3c no es un escenario observable sino un *config-lint*:** un test afirma que las constantes default cumplen `LOCALIZA_TIMEOUT < PROXY_TIMEOUT < maxDuration`. Es una guarda contra una edición futura que rompa el escalonamiento, no una observación de runtime. El comportamiento observable real (el dashboard devuelve el error retry-safe **antes** de un 504 duro) lo carga SCEN-3b.
 
 ## Estrategia de satisfacción (testing)
 
-- **Proxy (vitest, ya configurado en `proxy/`):**
-  - `idempotency.test.ts` — coalescing (SCEN-1a), replay TTL (SCEN-1b), fallo-no-cachea (SCEN-1c), precedencia de header (SCEN-1d), estabilidad del fingerprint (mismo input → misma clave; campo distinto → clave distinta).
-  - `client.test.ts` (o ampliar existente) — timeout de `callLocalizaAPI`: mock de `fetch` que nunca resuelve + signal abortado → lanza `LocalizaTimeoutError` (SCEN-3a). Usar fake timers de vitest.
+- **Proxy (vitest):** el proxy no declara vitest en sus `devDependencies`; el script `test` toma prestado `../node_modules/.bin/vitest` del root → los tests del proxy dependen del install del root (relevante para la versión de fake timers). Tests nuevos:
+  - `idempotency.test.ts` — coalescing (SCEN-1a), replay TTL (SCEN-1b), fallo-no-cachea + interacción concurrente (SCEN-1c), header combinado no-override (SCEN-1d), estabilidad del fingerprint (mismo input → misma clave; campo de intención distinto → clave distinta; **artefacto de cotización distinto → MISMA clave**).
+  - `client.test.ts` (**nuevo**) — timeout de `callLocalizaAPI`: mock de `fetch` que nunca resuelve + signal abortado → lanza `LocalizaTimeoutError` (SCEN-3a). Usar fake timers de vitest.
 - **Dashboard (vitest):**
   - Extraer el call+timeout al proxy a un helper pequeño y testeable; verificar que un proxy que excede el timeout produce el error retry-safe sin insertar (SCEN-3b) y que el header `Idempotency-Key` se reenvía.
   - Test del invariante de constantes (SCEN-3c).
@@ -141,8 +152,9 @@ El render del toast es del frontend Nuxt (ya sabe manejar `{error, message}` est
 
 | Riesgo | Mitigación |
 |--------|-----------|
-| Fingerprint demasiado laxo deduplica reservas legítimamente distintas | El fingerprint incluye `referenceToken` (único por cotización/availability) además de documento+sedes+fechas+categoría; dos reservas genuinamente distintas difieren en al menos un campo. TTL corto (60s) acota la ventana. |
-| Fingerprint demasiado estricto no deduplica el reload+resubmit | El reload reenvía el mismo body (mismos campos) → mismo fingerprint. Verificado contra el shape real del payload del frontend. |
+| Fingerprint demasiado laxo deduplica reservas legítimamente distintas | El único caso de colisión es **el mismo documento + mismas sedes + mismas fechas/horas + misma categoría dentro de 60s**. Eso, en la práctica, **es** un duplicado (la misma persona no reserva el mismo trayecto idéntico dos veces en un minuto); tratarlo como uno solo es el comportamiento deseado. TTL corto (60s) acota la ventana. Una reserva genuinamente distinta cambia al menos un campo de intención (otro documento, otra fecha/hora, otra categoría o sede). |
+| Fingerprint demasiado estricto no deduplica el reload+resubmit | Se excluyen del fingerprint los artefactos de cotización (`referenceToken`, `rateQualifier`): aunque el reload re-corra availability y traiga token nuevo, los campos de intención son idénticos → mismo fingerprint → deduplica. Esto **elimina la dependencia del ciclo de vida del token**, que no es verificable desde este repo. |
+| Reserva fantasma del lado de **Localiza** en un 504 (no eliminada por este PR) | Este PR garantiza "cero fantasma del lado **nuestro**" (no insertamos en fallo) y evita **duplicados** (dedupe). Pero un 504 donde Localiza sí completó la reserva deja **un** fantasma huérfano en Localiza, **no reconciliado** — eso lo cierra SCEN-2 (follow-up). Riesgo residual aceptado y explícito: pasamos de "fantasma + posibles duplicados" a "a lo sumo un fantasma sin duplicar". |
 | Cachear un fallo bloquea reintentos legítimos | Diseño explícito: solo se cachean éxitos; los fallos se desregistran. |
 | Timeout muy agresivo corta reservas lentas pero válidas | Valores generosos (25/28/30s) y env-tunables; suben sin redeploy de código. |
 | El store se pierde al reiniciar el proxy | Aceptado: ventana de amenaza es de segundos; un reinicio justo en esa ventana es improbable y el peor caso degrada al comportamiento actual (sin dedupe), no a algo peor. |

@@ -772,7 +772,9 @@ export function ReservationForm({
                 id="selected_days"
                 type="number"
                 min={1}
-                {...register("selected_days")}
+                {...register("selected_days", {
+                  setValueAs: (v) => (v === "" ? 0 : Number(v)),
+                })}
               />
               {errors.selected_days && (
                 <p className="text-sm text-destructive">
@@ -1033,7 +1035,9 @@ export function ReservationForm({
               id="coverage_days"
               type="number"
               min={0}
-              {...register("coverage_days")}
+              {...register("coverage_days", {
+                setValueAs: (v) => (v === "" ? 0 : Number(v)),
+              })}
             />
           </div>
 
@@ -1075,7 +1079,9 @@ export function ReservationForm({
               id="extra_hours"
               type="number"
               min={0}
-              {...register("extra_hours")}
+              {...register("extra_hours", {
+                setValueAs: (v) => (v === "" ? 0 : Number(v)),
+              })}
             />
           </div>
 

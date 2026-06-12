@@ -778,4 +778,31 @@ describe("ReservationForm — status guard on unsaved changes (issue #90)", () =
     );
     expect(statusSpy).not.toHaveBeenCalled();
   });
+
+  // SCEN-009: editing a numeric register input and reverting it to the EXACT
+  // original value must clear the dirty flag, not leave a permanent block. RHF
+  // compares the DOM string to the numeric default; without valueAsNumber,
+  // "5" !== 5 keeps the field dirty forever (a spurious block).
+  it("does not block after a numeric field is edited then reverted to its original value", async () => {
+    statusSpy.mockResolvedValue({});
+    renderForm({
+      id: EDIT_ID,
+      defaultValues: {
+        customer_id: customers[0].id,
+        status: "nueva",
+        selected_days: 5,
+      } as Parameters<typeof ReservationForm>[0]["defaultValues"],
+    });
+
+    const dias = screen.getByLabelText("Días reservados");
+    fireEvent.change(dias, { target: { value: "7" } }); // dirty
+    fireEvent.change(dias, { target: { value: "5" } }); // revert to default
+
+    fireEvent.click(screen.getByRole("button", { name: "Reservado" }));
+
+    await waitFor(() =>
+      expect(statusSpy).toHaveBeenCalledWith(EDIT_ID, "reservado"),
+    );
+    expect(screen.queryByText(/cambios sin guardar/i)).toBeNull();
+  });
 });

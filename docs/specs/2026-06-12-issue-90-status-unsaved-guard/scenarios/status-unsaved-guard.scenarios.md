@@ -17,7 +17,8 @@ con datos viejos, sin señal de error.
 Fix: el componente de estado recibe un prop opcional `hasUnsavedChanges?: boolean`
 (default `false`). Si es `true`, el clic en un botón de estado **no dispara**
 nada (ni `window.confirm`, ni la acción): muestra un aviso inline + toast pidiendo
-guardar primero. El formulario calcula `hasUnsavedChanges = isDirty || isCustomerDirty`
+guardar primero. El formulario calcula
+`hasUnsavedChanges = Object.keys(dirtyFields).length > 0 || isCustomerDirty`
 (react-hook-form + el draft de contacto ya existente) y lo pasa al componente. La
 página de detalle (solo lectura) omite el prop → comportamiento intacto.
 
@@ -154,3 +155,23 @@ lugar/franquicia/categoría; tras el clic en el botón de estado,
 `updateReservationStatus` con `not.toHaveBeenCalled()` y el aviso en el DOM. Red
 verificado: sin `{ shouldDirty: true }` en esos `setValue`, el cambio es invisible
 a `dirtyFields`, el guard no bloquea y el spy se llama (el footgun original del #90).
+
+## SCEN-009: editar y revertir un campo numérico al valor exacto NO bloquea
+
+**Given**: el formulario de edición donde el operador escribe en un input numérico
+`register` (p. ej. "Días reservados", default `5`) un valor distinto y luego lo
+**revierte al valor exacto original** (`5`→`7`→`5`), dejando el form sin cambio
+neto.
+**When**: pulsa un botón de transición de estado.
+**Then**: `updateReservationStatus` **sí** se llama. Revertir al valor persistido
+limpia el dirty del campo; el guard no debe quedar bloqueado por un cambio que ya
+no existe.
+
+**Evidence**: test en `tests/unit/components/reservation-form.test.tsx` que monta
+con `selected_days: 5`, cambia el input a `7` y luego de vuelta a `5`, y hace clic
+en el botón de estado; `updateReservationStatus` con `toHaveBeenCalled()` y sin
+aviso en el DOM. Red verificado: sin `{ valueAsNumber: true }` en el `register`,
+RHF compara el string del DOM (`"5"`) contra el number del default (`5`); como
+`"5" !== 5` el campo queda en `dirtyFields` para siempre y el guard bloquea
+(fricción: fuerza un guardado no-op). Con `valueAsNumber` el valor revertido
+coincide con el default y el dirty se limpia.

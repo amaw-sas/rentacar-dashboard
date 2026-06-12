@@ -134,3 +134,23 @@ con `hasUnsavedChanges` en `true`: spy `updateReservationStatus` con
 el texto del aviso en el DOM y `toast.error` con `toHaveBeenCalled()`. Red
 verificado: sin el short-circuit el spy se llama (y para el target peligroso
 aparece el confirm).
+
+## SCEN-008: editar un campo persistido por `setValue` bloquea el cambio de estado
+
+**Given**: el formulario de edición donde el operador edita un campo que se
+persiste con `setValue` (no con `register`) — la clase que incluye el **lugar de
+recogida** (el caso exacto de la evidencia del issue, Ibagué→Neiva), franquicia,
+categoría y los checkboxes de adicionales — y **no** pulsa "Guardar cambios".
+**When**: pulsa un botón de transición de estado.
+**Then**: `updateReservationStatus` **no** se llama y aparece el aviso. Los
+campos editados por `setValue` deben contar como cambios sin guardar igual que
+los `register`.
+
+**Evidence**: test en `tests/unit/components/reservation-form.test.tsx`. Como
+Radix Select no renderiza opciones en jsdom, el test conduce el camino `setValue`
+equivalente vía el checkbox "Conductor adicional" (`setValue("extra_driver", …)`),
+que comparte el wiring `setValue(..., { shouldDirty: true })` con los Selects de
+lugar/franquicia/categoría; tras el clic en el botón de estado,
+`updateReservationStatus` con `not.toHaveBeenCalled()` y el aviso en el DOM. Red
+verificado: sin `{ shouldDirty: true }` en esos `setValue`, el cambio es invisible
+a `dirtyFields`, el guard no bloquea y el spy se llama (el footgun original del #90).

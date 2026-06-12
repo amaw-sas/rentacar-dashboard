@@ -140,7 +140,7 @@ export function ReservationForm({
     watch,
     setError,
     control,
-    formState: { errors, isSubmitting },
+    formState: { errors, isSubmitting, dirtyFields },
   } = useForm<ReservationFormData>({
     resolver: zodResolver(reservationSchema) as Resolver<ReservationFormData>,
     defaultValues: {
@@ -245,6 +245,16 @@ export function ReservationForm({
       ),
     [customerDraft, customerSnapshot],
   );
+
+  // Issue #90: a status change fires its notification from live DB data. If the
+  // operator has unsaved reservation-form OR customer-contact edits, that
+  // notification would carry stale values. Block the status button until saved.
+  // Use `dirtyFields` (not `formState.isDirty`): RHF only populates it after a
+  // real change event, so it is immune to the string-vs-number mount mismatch
+  // of the numeric inputs (`register` emits strings, defaults are numbers) that
+  // would make `isDirty` report a false positive on a freshly loaded form.
+  const hasUnsavedChanges =
+    Object.keys(dirtyFields).length > 0 || isCustomerDirty;
 
   const setContactField = (
     field: keyof CustomerContactDraft,
@@ -368,7 +378,10 @@ export function ReservationForm({
               options={customerOptions}
               value={customerId}
               onChange={(value) =>
-                setValue("customer_id", value, { shouldValidate: true })
+                setValue("customer_id", value, {
+                  shouldValidate: true,
+                  shouldDirty: true,
+                })
               }
               getId={(c) => c.id}
               getLabel={(c) => `${c.first_name} ${c.last_name}`.trim()}
@@ -492,6 +505,7 @@ export function ReservationForm({
             <ReservationStatusActions
               reservationId={id}
               currentStatus={persistedStatus}
+              hasUnsavedChanges={hasUnsavedChanges}
             />
           </CardContent>
         </Card>
@@ -509,7 +523,9 @@ export function ReservationForm({
             <Label htmlFor="category_code">Categoría</Label>
             <Select
               value={categoryCode ?? ""}
-              onValueChange={(value) => setValue("category_code", value)}
+              onValueChange={(value) =>
+                setValue("category_code", value, { shouldDirty: true })
+              }
               disabled={!rentalCompanyId}
             >
               <SelectTrigger id="category_code" className="w-full min-w-0">
@@ -545,7 +561,9 @@ export function ReservationForm({
             <Label htmlFor="rental_company_id">Rentadora</Label>
             <Select
               value={rentalCompanyId}
-              onValueChange={(value) => setValue("rental_company_id", value)}
+              onValueChange={(value) =>
+                setValue("rental_company_id", value, { shouldDirty: true })
+              }
             >
               <SelectTrigger id="rental_company_id">
                 <SelectValue placeholder="Seleccionar rentadora" />
@@ -570,7 +588,7 @@ export function ReservationForm({
             <Select
               value={bookingType}
               onValueChange={(value: (typeof BOOKING_TYPES)[number]) =>
-                setValue("booking_type", value)
+                setValue("booking_type", value, { shouldDirty: true })
               }
             >
               <SelectTrigger id="booking_type">
@@ -656,7 +674,9 @@ export function ReservationForm({
               <Label htmlFor="pickup_location_id">Lugar recogida</Label>
               <Select
                 value={pickupLocationId}
-                onValueChange={(value) => setValue("pickup_location_id", value)}
+                onValueChange={(value) =>
+                  setValue("pickup_location_id", value, { shouldDirty: true })
+                }
               >
                 <SelectTrigger id="pickup_location_id">
                   <SelectValue placeholder="Seleccionar ubicación" />
@@ -702,7 +722,9 @@ export function ReservationForm({
               <Label htmlFor="return_location_id">Lugar retorno</Label>
               <Select
                 value={returnLocationId}
-                onValueChange={(value) => setValue("return_location_id", value)}
+                onValueChange={(value) =>
+                  setValue("return_location_id", value, { shouldDirty: true })
+                }
               >
                 <SelectTrigger id="return_location_id">
                   <SelectValue placeholder="Seleccionar ubicación" />
@@ -774,7 +796,7 @@ export function ReservationForm({
             <Select
               value={franchise}
               onValueChange={(value: (typeof FRANCHISES)[number]) =>
-                setValue("franchise", value)
+                setValue("franchise", value, { shouldDirty: true })
               }
             >
               <SelectTrigger id="franchise">
@@ -800,7 +822,9 @@ export function ReservationForm({
             <Select
               value={referralId ?? "none"}
               onValueChange={(value) =>
-                setValue("referral_id", value === "none" ? null : value)
+                setValue("referral_id", value === "none" ? null : value, {
+                  shouldDirty: true,
+                })
               }
               disabled={isEditing}
             >
@@ -870,7 +894,9 @@ export function ReservationForm({
               id="total_insurance"
               checked={totalInsurance}
               onCheckedChange={(checked) =>
-                setValue("total_insurance", checked === true)
+                setValue("total_insurance", checked === true, {
+                  shouldDirty: true,
+                })
               }
             />
             <Label htmlFor="total_insurance" className="cursor-pointer">
@@ -894,7 +920,9 @@ export function ReservationForm({
               id="extra_driver"
               checked={extraDriver}
               onCheckedChange={(checked) =>
-                setValue("extra_driver", checked === true)
+                setValue("extra_driver", checked === true, {
+                  shouldDirty: true,
+                })
               }
             />
             <Label htmlFor="extra_driver" className="cursor-pointer">
@@ -907,7 +935,9 @@ export function ReservationForm({
               id="baby_seat"
               checked={babySeat}
               onCheckedChange={(checked) =>
-                setValue("baby_seat", checked === true)
+                setValue("baby_seat", checked === true, {
+                  shouldDirty: true,
+                })
               }
             />
             <Label htmlFor="baby_seat" className="cursor-pointer">
@@ -920,7 +950,7 @@ export function ReservationForm({
               id="wash"
               checked={washValue}
               onCheckedChange={(checked) =>
-                setValue("wash", checked === true)
+                setValue("wash", checked === true, { shouldDirty: true })
               }
             />
             <Label htmlFor="wash" className="cursor-pointer">

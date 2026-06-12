@@ -213,7 +213,7 @@ describe("getReservationsPage — query construction", () => {
     expect(rec.reservations.lte).toContainEqual(["pickup_date", "2026-06-30"]);
   });
 
-  it("searches the snapshot columns + code, never the live customers join (issue #26, SCEN-004)", async () => {
+  it("searches the snapshot columns + code + nota, never the live customers join (issue #26, #109, SCEN-004/SCEN-1)", async () => {
     await run("q=lopez");
     expect(rec.reservations.or).toHaveLength(1);
     const expr = rec.reservations.or[0];
@@ -223,6 +223,7 @@ describe("getReservationsPage — query construction", () => {
       "customer_email_at_booking",
       "customer_phone_at_booking",
       "reservation_code",
+      "nota",
     ]) {
       expect(expr).toContain(`${col}.ilike.*lopez*`);
     }

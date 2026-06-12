@@ -22,12 +22,17 @@ const STATUS_SET = new Set<string>(RESERVATION_STATUSES);
 // shows, never the live `customers` join. Prod has 0 NULLs in the four identity
 // columns so snapshot-only search is complete; reservation_code may be NULL
 // (those rows simply don't match a code search, which is correct).
+// `nota` (issue #109): native operational-note column on reservations — the
+// operator's own free text shown on the row, so searching it does not reopen the
+// #26 hole (that was about the live join, not native columns). NULL notes simply
+// don't match, which is correct.
 export const SEARCH_COLUMNS = [
   "customer_name_at_booking",
   "customer_identification_number_at_booking",
   "customer_email_at_booking",
   "customer_phone_at_booking",
   "reservation_code",
+  "nota",
 ] as const;
 
 // Maps a @tanstack column id (serialized into `?sort=<id>:<dir>`) to the real DB

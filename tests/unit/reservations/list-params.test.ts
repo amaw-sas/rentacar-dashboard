@@ -164,20 +164,26 @@ describe("sanitizeSearchTerm — PostgREST safety (SCEN-012)", () => {
   });
 });
 
-describe("SEARCH_COLUMNS — snapshot-keyed search (issue #26)", () => {
-  it("targets the booking-time snapshot columns, never the live customers join", () => {
+describe("SEARCH_COLUMNS — snapshot-keyed search (issue #26) + nota (issue #109)", () => {
+  it("targets the booking-time snapshot columns, the reservation code, and the operational note", () => {
     expect(SEARCH_COLUMNS).toEqual([
       "customer_name_at_booking",
       "customer_identification_number_at_booking",
       "customer_email_at_booking",
       "customer_phone_at_booking",
       "reservation_code",
+      "nota",
     ]);
     // Guard against a regression that re-introduces live-join search, which
     // would let an operator match a value (post-edit name) shown nowhere on the
-    // row — the exact bug #26's snapshot guards against.
+    // row — the exact bug #26's snapshot guards against. `nota` is a native
+    // reservations column (not a join), so it keeps this invariant. SCEN-2.
     for (const col of SEARCH_COLUMNS) {
       expect(col.startsWith("customers.")).toBe(false);
     }
+  });
+
+  it("includes nota so an operator can find a reservation by its operational note (issue #109, SCEN-1)", () => {
+    expect(SEARCH_COLUMNS).toContain("nota");
   });
 });

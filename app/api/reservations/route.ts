@@ -12,10 +12,23 @@ import { sendStatusWhatsApp } from "@/lib/wati/notifications";
 import { syncReservationToGhl } from "@/lib/ghl/sync";
 import { parseMonthlyMileage } from "@/lib/reservation/mileage-parser";
 import {
+  createLocalizaReservation,
+  ProxyTimeoutError,
+  ProxyConfigError,
+  ProxyError,
+} from "@/lib/reservation/proxy-client";
+import {
   deriveAttributionChannel,
   type AttributionInput,
 } from "@/lib/attribution/derive-channel";
 import type { ReservationStatus } from "@/lib/schemas/reservation";
+
+// Fail fast and cleanly instead of hanging into Vercel's hard 504 (issue #99).
+// PROXY_TIMEOUT_MS (28s) sits below this so createLocalizaReservation aborts and
+// returns a retry-safe error before the function is killed. MUST be a literal —
+// Next.js segment config is statically analyzed and rejects an imported const —
+// so it mirrors proxy-client's MAX_DURATION_S; a test guards against drift.
+export const maxDuration = 30;
 
 interface ReservationRequestBody {
   fullname: string;
@@ -189,69 +202,70 @@ export async function POST(request: Request) {
         );
       }
 
-      const proxyUrl = process.env.LOCALIZA_PROXY_URL;
-      const proxyApiKey = process.env.PROXY_API_KEY;
-
-      if (!proxyUrl || !proxyApiKey) {
-        console.error("[reservation] Missing LOCALIZA_PROXY_URL or PROXY_API_KEY");
-        return NextResponse.json(
-          { error: "Configuración del servidor incompleta" },
-          { status: 500 }
-        );
-      }
-
       const pickupDateTime = `${body.pickup_date}T${body.pickup_hour}:00`;
       const returnDateTime = `${body.return_date}T${body.return_hour}:00`;
 
-      const proxyResponse = await fetch(`${proxyUrl}/api/localiza/reservation`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": proxyApiKey,
-        },
-        body: JSON.stringify({
-          pickupLocation: body.pickup_location,
-          returnLocation: body.return_location,
-          pickupDateTime,
-          returnDateTime,
-          categoryCode: body.category,
-          referenceToken: body.reference_token,
-          rateQualifier: body.rate_qualifier,
-          customerName: body.fullname,
-          customerEmail: body.email,
-          customerPhone: body.phone,
-          customerDocument: body.identification,
-        }),
-      });
-
-      if (!proxyResponse.ok) {
-        const errorBody = await proxyResponse.text();
-        console.error(`[reservation] Proxy error ${proxyResponse.status}:`, errorBody);
-        // Pass structured {error, message, shortText} from the proxy through
-        // unchanged so the Nuxt client (useMessages.createErrorMessage) can
-        // render the matching toast. Only wrap into a generic envelope when
-        // the body is not parseable JSON (network/HTML error).
-        try {
-          const parsed = JSON.parse(errorBody);
-          if (parsed && typeof parsed === "object" && typeof parsed.error === "string") {
-            return NextResponse.json(parsed, { status: proxyResponse.status });
-          }
-        } catch {
-          // fall through to the generic response below
-        }
-        return NextResponse.json(
-          { error: "Error al crear la reserva en Localiza" },
-          { status: 502 }
+      try {
+        const proxyResult = await createLocalizaReservation(
+          {
+            pickupLocation: body.pickup_location,
+            returnLocation: body.return_location,
+            pickupDateTime,
+            returnDateTime,
+            categoryCode: body.category,
+            referenceToken: body.reference_token,
+            rateQualifier: body.rate_qualifier,
+            customerName: body.fullname,
+            customerEmail: body.email,
+            customerPhone: body.phone,
+            customerDocument: body.identification,
+          },
+          { idempotencyKey: request.headers.get("x-idempotency-key") ?? undefined }
         );
+
+        reserveCode = proxyResult.reserveCode;
+        status = LOCALIZA_STATUS_MAP[proxyResult.reservationStatus] ?? "pendiente";
+      } catch (error) {
+        if (error instanceof ProxyConfigError) {
+          console.error("[reservation] Missing LOCALIZA_PROXY_URL or PROXY_API_KEY");
+          return NextResponse.json(
+            { error: "Configuración del servidor incompleta" },
+            { status: 500 }
+          );
+        }
+        if (error instanceof ProxyTimeoutError) {
+          // The dashboard never inserts on this path, so there is no phantom on
+          // our side. The booking MAY have completed on Localiza (504 is
+          // ambiguous) — reconciliation is tracked separately (issue #99 SCEN-2).
+          console.error("[reservation] Proxy timeout:", error.message);
+          return NextResponse.json(
+            {
+              error: "upstream_timeout",
+              message:
+                "El sistema de reservas está demorando más de lo normal. Tu reserva NO se creó; espera unos minutos e inténtalo de nuevo.",
+            },
+            { status: 504 }
+          );
+        }
+        if (error instanceof ProxyError) {
+          console.error(`[reservation] Proxy error ${error.status}:`, error.rawText);
+          // Pass the proxy's structured {error, message, shortText} through
+          // unchanged so the Nuxt client renders the matching toast. Wrap into a
+          // generic 502 when the body is not parseable JSON (network/HTML error).
+          if (
+            error.body &&
+            typeof error.body === "object" &&
+            typeof (error.body as { error?: unknown }).error === "string"
+          ) {
+            return NextResponse.json(error.body, { status: error.status });
+          }
+          return NextResponse.json(
+            { error: "Error al crear la reserva en Localiza" },
+            { status: 502 }
+          );
+        }
+        throw error; // unexpected — bubble to the outer 500 handler
       }
-
-      const proxyResult = await proxyResponse.json() as {
-        reserveCode: string;
-        reservationStatus: string;
-      };
-
-      reserveCode = proxyResult.reserveCode;
-      status = LOCALIZA_STATUS_MAP[proxyResult.reservationStatus] ?? "pendiente";
     }
 
     // 6. Determine booking_type

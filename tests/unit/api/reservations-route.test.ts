@@ -37,6 +37,14 @@ vi.mock("next/server", () => ({
   NextResponse: { json: (body: unknown, init?: { status?: number }) => ({ body, status: init?.status ?? 200 }) },
   after: vi.fn(),
 }));
+// Partial mock: keep the REAL error classes + constants (the route does
+// `error instanceof ProxyTimeoutError`, which only matches the same class), spy
+// only on createLocalizaReservation so the standard-booking proxy hop is driven.
+vi.mock("@/lib/reservation/proxy-client", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/lib/reservation/proxy-client")>();
+  return { ...actual, createLocalizaReservation: vi.fn() };
+});
 
 /**
  * Chainable Supabase admin stub for the insert path:
@@ -239,5 +247,155 @@ describe("POST /api/reservations — attribution channel (issue #113, SCEN-005/0
     expect(payload.gclid).toBeNull();
     // A valid string field is preserved.
     expect(payload.fbclid).toBe("ok");
+  });
+});
+
+// Issue #99: a STANDARD reservation (selected_days < 30) calls the Localiza proxy
+// via createLocalizaReservation. The route maps its typed errors to HTTP without
+// ever inserting a row on the failure path (the dashboard never creates a phantom
+// on our side).
+describe("POST /api/reservations — Localiza proxy integration (issue #99, SCEN-3B)", () => {
+  const STANDARD_BODY = {
+    ...REQUEST_BODY,
+    selected_days: 5, // < 30 → standard flow, hits the proxy
+    reference_token: "TOK-1",
+    rate_qualifier: "RATE-1",
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.env.RESERVATION_API_KEY = "test-key";
+  });
+
+  async function setupRefs() {
+    const { resolveLocationByCode, findOrCreateCustomer, resolveReferral } =
+      await import("@/lib/api/resolve-references");
+    const { snapshotFromCustomer } = await import("@/lib/queries/customers");
+    const { createAdminClient } = await import("@/lib/supabase/admin");
+
+    vi.mocked(resolveLocationByCode).mockResolvedValue({
+      id: "loc-1",
+      rental_company_id: "rc-1",
+    } as Awaited<ReturnType<typeof resolveLocationByCode>>);
+    vi.mocked(findOrCreateCustomer).mockResolvedValue("cust-1");
+    vi.mocked(resolveReferral).mockResolvedValue(null);
+    vi.mocked(snapshotFromCustomer).mockResolvedValue({
+      customer_name_at_booking: "X",
+      customer_email_at_booking: "x@e.com",
+      customer_phone_at_booking: "1",
+      customer_identification_type_at_booking: "CC",
+      customer_identification_number_at_booking: "1",
+    });
+
+    const sb = makeAdminClient();
+    vi.mocked(createAdminClient).mockReturnValue(
+      sb.client as ReturnType<typeof createAdminClient>,
+    );
+    return sb;
+  }
+
+  it("SCEN-3B: a proxy timeout returns 504 upstream_timeout and inserts NOTHING", async () => {
+    const sb = await setupRefs();
+    const { createLocalizaReservation, ProxyTimeoutError } = await import(
+      "@/lib/reservation/proxy-client"
+    );
+    vi.mocked(createLocalizaReservation).mockRejectedValue(
+      new ProxyTimeoutError("proxy too slow"),
+    );
+
+    const { POST } = await import("@/app/api/reservations/route");
+    const res = (await POST(makeRequest(STANDARD_BODY))) as unknown as {
+      status: number;
+      body: { error: string };
+    };
+
+    expect(res.status).toBe(504);
+    expect(res.body.error).toBe("upstream_timeout");
+    expect(sb.insert).not.toHaveBeenCalled(); // no phantom on our side
+  });
+
+  it("passes a structured proxy error through with its status and inserts NOTHING", async () => {
+    const sb = await setupRefs();
+    const { createLocalizaReservation, ProxyError } = await import(
+      "@/lib/reservation/proxy-client"
+    );
+    vi.mocked(createLocalizaReservation).mockRejectedValue(
+      new ProxyError(
+        500,
+        { error: "no_available_categories_error", message: "Sin disponibilidad" },
+        "",
+      ),
+    );
+
+    const { POST } = await import("@/app/api/reservations/route");
+    const res = (await POST(makeRequest(STANDARD_BODY))) as unknown as {
+      status: number;
+      body: { error: string };
+    };
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe("no_available_categories_error");
+    expect(sb.insert).not.toHaveBeenCalled();
+  });
+
+  it("inserts the reservation with the proxy reserveCode + mapped status on success", async () => {
+    const sb = await setupRefs();
+    const { createLocalizaReservation } = await import(
+      "@/lib/reservation/proxy-client"
+    );
+    vi.mocked(createLocalizaReservation).mockResolvedValue({
+      reserveCode: "LZ-777",
+      reservationStatus: "Reserved",
+    });
+
+    const { POST } = await import("@/app/api/reservations/route");
+    const res = (await POST(makeRequest(STANDARD_BODY))) as unknown as {
+      status: number;
+      body: { reserveCode: string; reservationStatus: string };
+    };
+
+    expect(res.status).toBe(200);
+    expect(res.body.reserveCode).toBe("LZ-777");
+    const payload = sb.insert.mock.calls[0][0];
+    expect(payload.reservation_code).toBe("LZ-777");
+    expect(payload.status).toBe("reservado"); // Reserved → reservado
+  });
+
+  it("route maxDuration matches proxy-client MAX_DURATION_S (no drift)", async () => {
+    // maxDuration must be a literal for Next's static segment-config analysis, so
+    // it can't import MAX_DURATION_S directly — this guards the two from drifting.
+    const route = await import("@/app/api/reservations/route");
+    const { MAX_DURATION_S } = await import("@/lib/reservation/proxy-client");
+    expect(route.maxDuration).toBe(MAX_DURATION_S);
+  });
+
+  it("forwards the inbound x-idempotency-key to the proxy client", async () => {
+    await setupRefs();
+    const { createLocalizaReservation } = await import(
+      "@/lib/reservation/proxy-client"
+    );
+    vi.mocked(createLocalizaReservation).mockResolvedValue({
+      reserveCode: "LZ-1",
+      reservationStatus: "Reserved",
+    });
+
+    const req = {
+      headers: {
+        get: (k: string) =>
+          k === "x-api-key"
+            ? "test-key"
+            : k === "x-idempotency-key"
+              ? "IDEM-42"
+              : null,
+      },
+      json: async () => STANDARD_BODY,
+    } as unknown as Request;
+
+    const { POST } = await import("@/app/api/reservations/route");
+    await POST(req);
+
+    expect(vi.mocked(createLocalizaReservation).mock.calls[0][1]).toEqual({
+      idempotencyKey: "IDEM-42",
+    });
   });
 });

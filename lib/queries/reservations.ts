@@ -33,12 +33,71 @@ function searchOrExpr(term: string): string {
   return SEARCH_COLUMNS.map((c) => `${c}.ilike.${pattern}`).join(",");
 }
 
+// Issue #105: the count strategy gates on table size. count:exact runs a second
+// full Seq Scan (the filtered COUNT(*)) on every list render — ~7.6ms at 13k,
+// scaling linearly (~60ms at 100k). Below the threshold that's noise and we keep
+// exact totals; at/above it we switch to PostgREST's planned count (planner
+// estimate, no scan) and the header renders "~N" (the `approximate` flag).
+const PLANNED_COUNT_THRESHOLD = 100_000;
+
+// reltuples is slow-moving and only gates a coarse threshold, so we cache it.
+// Without this, every render would pay an extra RPC round-trip to skip a count
+// we aren't even skipping yet (< 100k) — a net regression today. Per-instance
+// staleness of minutes near the boundary is irrelevant to a 100k gate.
+//
+// The cache is intentionally a single module-level value shared across requests:
+// reltuples is a whole-table statistic, independent of the caller or any RLS
+// filter, so there is nothing per-user to leak. Do NOT copy this shape for a
+// value that varies by request/tenant.
+const ROW_ESTIMATE_TTL_MS = 5 * 60_000;
+let rowEstimateCache: { value: number; at: number } | null = null;
+
+// Test-only: clears the module-level estimate cache so cases can exercise both
+// sides of the gate independently.
+export function __resetReservationsRowEstimateCache() {
+  rowEstimateCache = null;
+}
+
+// Planner row estimate for reservations (reltuples), via the #105 RPC. Instant —
+// no scan — which is the point: probing the size must not cost what the planned
+// count saves. Fails open to 0 (→ exact, today's behavior) so a stats probe can
+// never break the list; the failure isn't cached, so the next render retries.
+async function reservationsRowEstimate(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+): Promise<number> {
+  const now = Date.now();
+  if (rowEstimateCache && now - rowEstimateCache.at < ROW_ESTIMATE_TTL_MS) {
+    return rowEstimateCache.value;
+  }
+  const { data, error } = await supabase.rpc("reservations_estimated_count");
+  if (error) {
+    // Surface the degradation: a persistent error here (e.g. the #060 migration
+    // missing in an env) silently pins the list to exact. Don't cache it, so the
+    // next render retries.
+    console.warn("reservations_estimated_count probe failed:", error.message);
+    return 0;
+  }
+  // Fold a never-analyzed sentinel (-1, already clamped in SQL) or any malformed
+  // non-finite body to 0 → exact, and keep NaN out of the cache so the
+  // retry-on-failure invariant holds for a malformed success too.
+  const value = Number(data ?? 0);
+  if (!Number.isFinite(value) || value < 0) return 0;
+  rowEstimateCache = { value, at: now };
+  return value;
+}
+
 // Server-side paginated/filtered/sorted reservations list (issue #100). Returns
-// exactly one page of rows plus the exact total for pagination, instead of the
-// whole table — the previous unbounded fetch shipped ~26 MB (13k rows) to the
-// client on every list render and save.
+// exactly one page of rows plus the total for pagination, instead of the whole
+// table — the previous unbounded fetch shipped ~26 MB (13k rows) to the client
+// on every list render and save. `approximate` is true when the total comes
+// from the planned count (#105) instead of an exact COUNT(*).
 export async function getReservationsPage(params: ReservationListParams) {
   const supabase = await createClient();
+
+  // Kick off the size probe concurrently with the (optional) city resolution
+  // below — on a cache hit it resolves instantly; on a miss it overlaps the
+  // locations round-trip instead of serializing behind it.
+  const estimatePromise = reservationsRowEstimate(supabase);
 
   // City lives on locations, not reservations. Resolve the city to its pickup
   // location ids (≤32 locations) and filter reservations by them — keeps the
@@ -55,9 +114,34 @@ export async function getReservationsPage(params: ReservationListParams) {
     pickupLocationIds = (locs ?? []).map((l) => l.id as string);
   }
 
+  // count:planned returns the planner's estimate for the FILTERED query, which is
+  // routinely wrong for selective predicates — an undercount makes rows past the
+  // estimated last page unreachable, an overcount yields phantom empty pages. So
+  // planned is only safe on the unfiltered "browse all" path, where it ≈ the
+  // whole-table reltuples and is accurate. Any narrowing filter/search keeps the
+  // exact count, which is cheap on a small filtered set. (Issue #105.)
+  const hasNarrowingQuery = Boolean(
+    params.franchise ||
+      params.status ||
+      params.referralId ||
+      params.cityId ||
+      params.createdFrom ||
+      params.createdTo ||
+      params.pickupFrom ||
+      params.pickupTo ||
+      params.attributionChannel ||
+      params.search,
+  );
+
+  const estimate = await estimatePromise;
+  const countMode: "exact" | "planned" =
+    estimate >= PLANNED_COUNT_THRESHOLD && !hasNarrowingQuery
+      ? "planned"
+      : "exact";
+
   let q = supabase
     .from("reservations")
-    .select(RESERVATION_SELECT, { count: "exact" });
+    .select(RESERVATION_SELECT, { count: countMode });
 
   if (params.franchise) q = q.eq("franchise", params.franchise);
   if (params.status) q = q.eq("status", params.status);
@@ -96,7 +180,11 @@ export async function getReservationsPage(params: ReservationListParams) {
 
   const { data, error, count } = await q;
   if (error) throw error;
-  return { rows: data ?? [], total: count ?? 0 };
+  return {
+    rows: data ?? [],
+    total: count ?? 0,
+    approximate: countMode === "planned",
+  };
 }
 
 export async function getCustomerReservations(customerId: string) {

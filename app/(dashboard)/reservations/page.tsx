@@ -59,6 +59,7 @@ export default async function ReservationsPage({
       <ReservationsTable
         data={page.rows as unknown as ReservationRow[]}
         total={page.total}
+        approximate={page.approximate}
         pageCount={pageCount}
         referrals={referralOptions}
         cities={cityOptions}

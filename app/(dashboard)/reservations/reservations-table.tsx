@@ -41,8 +41,11 @@ type CityOption = { id: string; name: string };
 interface ReservationsTableProps {
   // One server-rendered page of rows (already filtered, sorted, paginated).
   data: ReservationRow[];
-  // Exact total of the filtered result set, for the count label + pagination.
+  // Total of the filtered result set, for the count label + pagination. Exact
+  // below the #105 size gate; a planner estimate at/above it (see `approximate`).
   total: number;
+  // #105: true when `total` is the planned (approximate) count — render "~N".
+  approximate?: boolean;
   pageCount: number;
   referrals: ReferralOption[];
   cities: CityOption[];
@@ -51,6 +54,7 @@ interface ReservationsTableProps {
 export function ReservationsTable({
   data,
   total,
+  approximate = false,
   pageCount,
   referrals,
   cities,
@@ -306,7 +310,10 @@ export function ReservationsTable({
       </div>
 
       <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">{total} resultado(s)</p>
+        <p className="text-sm text-muted-foreground">
+          {approximate ? "~" : ""}
+          {total} resultado(s)
+        </p>
         <div className="flex items-center gap-2">
           <Button
             variant="outline"

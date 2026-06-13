@@ -1,6 +1,7 @@
 import { Router, Request, Response } from "express";
 import { callLocalizaAPI, getConfig } from "./client";
 import { buildVehRetResXML } from "./xml-templates";
+import { mapLocalizaError } from "./errors";
 import { logLocalizaUpstream } from "./warnings";
 
 const router = Router();
@@ -66,10 +67,7 @@ router.post("/", async (req: Request, res: Response): Promise<void> => {
     const result = extractReservationStatus(parsed, { reservationCode });
     res.json(result);
   } catch (error) {
-    console.error("Check status error:", error);
-    res.status(502).json({
-      error: error instanceof Error ? error.message : "Unknown error",
-    });
+    mapLocalizaError(error, res, "Check status");
   }
 });
 

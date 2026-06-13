@@ -423,7 +423,17 @@ export function ReservationForm({
 
             <div className="space-y-2">
               <Label htmlFor="customer_id_type">Tipo identificación</Label>
+              {/*
+                Radix Select renders <SelectValue> from the value present at
+                mount; a value applied later (the re-seed effect, or a customer
+                switch) is NOT reflected in the trigger text. The draft starts
+                as EMPTY_CONTACT ("CC"), so only CC ever displayed — every other
+                stored type (CE/NIT/PP/TI) fell back to the placeholder (#140).
+                Keying the Select on the value forces a remount whenever it
+                changes, so the trigger always re-resolves to the seeded type.
+              */}
               <Select
+                key={customerDraft.identification_type}
                 value={customerDraft.identification_type}
                 onValueChange={(value) =>
                   setContactField("identification_type", value)

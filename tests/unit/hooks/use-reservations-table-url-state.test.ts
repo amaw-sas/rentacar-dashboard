@@ -112,21 +112,43 @@ describe("useReservationsTableUrlState — URL parsing (Steps 3+4)", () => {
     expect(result.current.filters.origen).toBe(ALL);
   });
 
-  it("SCEN-006 hydration: ?sort=pickup_date:asc maps with PRIORITY_SORT pinned", () => {
-    setUrl("sort=pickup_date:asc");
+  it("SCEN-006 hydration: ?sort=pickup:asc maps with PRIORITY_SORT pinned", () => {
+    setUrl("sort=pickup:asc");
     const { result } = renderHook(() => useReservationsTableUrlState());
 
     expect(result.current.sorting).toEqual([
       PRIORITY_SORT,
-      { id: "pickup_date", desc: false },
+      { id: "pickup", desc: false },
     ]);
   });
 
-  it("SCEN-006 hydration: ?sort=invalid is ignored, falls to PRIORITY_SORT only", () => {
-    setUrl("sort=col:bogus");
+  // Issue #104: a sort id absent from the shared SORTABLE_COLUMNS whitelist —
+  // a disabled snapshot column (customer/identification/phone/email/valor_oc)
+  // lingering in a pre-#104 bookmark, or any hand-edited value — must resolve to
+  // the default order, NOT enter the sorting state. Otherwise getIsSorted()
+  // would paint a sort arrow on an enableSorting:false header while the server
+  // sorts by created_at, a UI that lies about the order. parseSorting now
+  // mirrors the server's parseSort fallback, so the rendered arrow tells the
+  // truth (and the pre-existing referral/total_with_tax case is fixed too).
+  it("SCEN-006 hydration: a non-whitelisted/disabled sort id falls back to default", () => {
+    for (const stale of ["customer:asc", "valor_oc:desc", "pickup_date:asc"]) {
+      setUrl(`sort=${stale}`);
+      const { result } = renderHook(() => useReservationsTableUrlState());
+      expect(result.current.sorting, stale).toEqual([
+        PRIORITY_SORT,
+        ...DEFAULT_USER_SORT,
+      ]);
+    }
+  });
+
+  it("SCEN-006 hydration: an invalid sort direction falls back to default", () => {
+    setUrl("sort=pickup:bogus");
     const { result } = renderHook(() => useReservationsTableUrlState());
 
-    expect(result.current.sorting).toEqual([PRIORITY_SORT]);
+    expect(result.current.sorting).toEqual([
+      PRIORITY_SORT,
+      ...DEFAULT_USER_SORT,
+    ]);
   });
 
   it("SCEN-004 partial DateRange: only created_from yields { from, to: undefined }", () => {
@@ -340,18 +362,18 @@ describe("useReservationsTableUrlState — setters", () => {
     act(() => {
       result.current.onSortingChange([
         PRIORITY_SORT,
-        { id: "pickup_date", desc: false },
+        { id: "pickup", desc: false },
       ]);
     });
 
     const url = lastReplaceUrl();
     expect(url).not.toMatch(/priority/);
     const qs = new URLSearchParams(url.split("?")[1] ?? "");
-    expect(qs.get("sort")).toBe("pickup_date:asc");
+    expect(qs.get("sort")).toBe("pickup:asc");
   });
 
   it("SCEN-005 default user sort drops the URL sort key", () => {
-    setUrl("sort=pickup_date:asc");
+    setUrl("sort=pickup:asc");
     const { result } = renderHook(() => useReservationsTableUrlState());
 
     act(() => {
@@ -364,7 +386,7 @@ describe("useReservationsTableUrlState — setters", () => {
   });
 
   it("SCEN-005 sort=[] (just PRIORITY_SORT) drops the URL sort key", () => {
-    setUrl("sort=pickup_date:asc");
+    setUrl("sort=pickup:asc");
     const { result } = renderHook(() => useReservationsTableUrlState());
 
     act(() => {
@@ -398,19 +420,19 @@ describe("useReservationsTableUrlState — setters", () => {
     act(() => {
       result.current.onSortingChange([
         PRIORITY_SORT,
-        { id: "pickup_date", desc: true },
+        { id: "pickup", desc: true },
       ]);
     });
 
     const url = lastReplaceUrl();
     const qs = new URLSearchParams(url.split("?")[1] ?? "");
-    expect(qs.get("sort")).toBe("pickup_date:desc");
+    expect(qs.get("sort")).toBe("pickup:desc");
     expect(qs.get("status")).toBe("pendiente");
     expect(qs.has("page")).toBe(false);
   });
 
   it("SCEN-008 page change preserves filters and sort", () => {
-    setUrl("status=pendiente&sort=pickup_date:asc");
+    setUrl("status=pendiente&sort=pickup:asc");
     const { result } = renderHook(() => useReservationsTableUrlState());
 
     act(() => {
@@ -420,7 +442,7 @@ describe("useReservationsTableUrlState — setters", () => {
     const url = lastReplaceUrl();
     const qs = new URLSearchParams(url.split("?")[1] ?? "");
     expect(qs.get("status")).toBe("pendiente");
-    expect(qs.get("sort")).toBe("pickup_date:asc");
+    expect(qs.get("sort")).toBe("pickup:asc");
     expect(qs.get("page")).toBe("2");
   });
 
@@ -437,7 +459,7 @@ describe("useReservationsTableUrlState — setters", () => {
 
   it("SCEN-013 clearAll writes /reservations clean", () => {
     setUrl(
-      "franchise=alquilatucarro&q=ana&sort=pickup_date:asc&page=3&status=pendiente",
+      "franchise=alquilatucarro&q=ana&sort=pickup:asc&page=3&status=pendiente",
     );
     const { result, rerender } = renderHook(() =>
       useReservationsTableUrlState(),

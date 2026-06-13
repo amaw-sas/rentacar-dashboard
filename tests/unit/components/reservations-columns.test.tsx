@@ -337,9 +337,27 @@ describe("reservations columns (legacy parity)", () => {
       expect(container.textContent).toBe(formatter.format(152300));
     });
 
-    it("does not opt out of sorting", () => {
+    // Issue #104: valor_oc maps to total_price_localiza, which has no order
+    // index — sorting by it forced a full-table heapsort. Product dropped its
+    // server-sortability, so the header must opt out of sorting (no arrow, emits
+    // no ?sort= the server would ignore).
+    it("opts out of sorting (#104 — no order index for total_price_localiza)", () => {
       const col = columns.find((c) => c.id === "valor_oc");
-      expect(col).not.toHaveProperty("enableSorting", false);
+      expect(col).toHaveProperty("enableSorting", false);
     });
+  });
+
+  // Issue #104: the four snapshot-identity columns and valor_oc were dropped
+  // from SORTABLE_COLUMNS (no order index → full-table heapsort). Their headers
+  // must go inert so they neither render a misleading sort arrow nor emit a
+  // ?sort= the server silently falls back to DEFAULT_SORT on. origen stays
+  // sortable (it maps to the indexed attribution_channel) — guarded separately.
+  describe("dropped snapshot sort columns go inert (#104)", () => {
+    for (const id of ["customer", "identification", "phone", "email", "valor_oc"]) {
+      it(`${id} opts out of sorting`, () => {
+        const col = columns.find((c) => c.id === id);
+        expect(col).toHaveProperty("enableSorting", false);
+      });
+    }
   });
 });

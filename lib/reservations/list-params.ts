@@ -39,6 +39,18 @@ export const SEARCH_COLUMNS = [
 // column it orders by. Ids absent here are derived/joined (referral,
 // total_with_tax) and fall back to DEFAULT_SORT. Mirrors the sortable columns in
 // columns.tsx.
+//
+// Issue #104: the five snapshot-identity sort keys (customer/identification/
+// phone/email → customer_*_at_booking, valor_oc → total_price_localiza) were
+// REMOVED. None has an order index, and the only sort index
+// (idx_reservations_priority_created: is_priority DESC, created_at DESC)
+// presorts only is_priority, so ordering by a snapshot column degraded to a
+// full-table top-N heapsort (measured 42ms @ 13k rows, ~1.6s @ 500k). Product
+// chose to drop server-sortability rather than carry up to ten composite
+// asc/desc indexes — operators locate these rows via the #102 trgm search, not
+// by sorting. The matching headers set enableSorting:false in columns.tsx;
+// keeping them out here is the server-side half (a hand-edited ?sort= the
+// client no longer emits still falls back to DEFAULT_SORT).
 export const SORTABLE_COLUMNS: Record<string, string> = {
   created_at: "created_at",
   pickup: "pickup_date",
@@ -46,11 +58,6 @@ export const SORTABLE_COLUMNS: Record<string, string> = {
   category_code: "category_code",
   franchise: "franchise",
   status: "status",
-  valor_oc: "total_price_localiza",
-  customer: "customer_name_at_booking",
-  identification: "customer_identification_number_at_booking",
-  phone: "customer_phone_at_booking",
-  email: "customer_email_at_booking",
   origen: "attribution_channel",
 };
 

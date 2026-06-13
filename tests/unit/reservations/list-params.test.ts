@@ -98,14 +98,26 @@ describe("parseListParams — sort whitelist + fallback (SCEN-011)", () => {
       column: "pickup_date",
       ascending: true,
     });
-    expect(parse("sort=valor_oc:desc").sort).toEqual({
-      column: "total_price_localiza",
+    expect(parse("sort=reservation_code:desc").sort).toEqual({
+      column: "reservation_code",
       ascending: false,
     });
-    expect(parse("sort=customer:asc").sort).toEqual({
-      column: "customer_name_at_booking",
-      ascending: true,
-    });
+  });
+
+  // Issue #104: the five snapshot-identity sort keys (customer/identification/
+  // phone/email/valor_oc) were dropped from the whitelist. They have no order
+  // index, so sorting by them forced a full-table heapsort (42ms @ 13k rows,
+  // linear growth). Product chose to drop server-sortability rather than carry
+  // five composite indexes (operators find these rows via the #102 trgm search,
+  // not by sorting). They now fall back to DEFAULT_SORT — defense-in-depth so a
+  // hand-edited `?sort=customer:asc` link the client no longer emits is still
+  // ignored by the server. The matching headers go inert (enableSorting:false)
+  // in reservations-columns.test.tsx.
+  it("falls back to default sort for the dropped snapshot columns (#104)", () => {
+    for (const id of ["customer", "identification", "phone", "email", "valor_oc"]) {
+      expect(parse(`sort=${id}:asc`).sort, id).toEqual(DEFAULT_SORT);
+      expect(parse(`sort=${id}:desc`).sort, id).toEqual(DEFAULT_SORT);
+    }
   });
 
   it("maps the origen sort key to attribution_channel (SCEN-009)", () => {

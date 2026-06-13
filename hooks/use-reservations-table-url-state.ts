@@ -18,6 +18,7 @@ import {
   ATTRIBUTION_CHANNEL_SET,
   UNKNOWN_FILTER,
 } from "@/lib/attribution/channel-meta";
+import { SORTABLE_COLUMNS } from "@/lib/reservations/list-params";
 
 export const ALL = "__all__";
 export const PRIORITY_SORT = { id: "priority", desc: false } as const;
@@ -122,14 +123,26 @@ function parseDateRange(
   return { from, to };
 }
 
+// Mirrors the server's parseSort (lib/reservations/list-params.ts): a sort id is
+// honored only if it is in the shared SORTABLE_COLUMNS whitelist with a valid
+// direction; anything else resolves to the default order. The whitelist check is
+// the half that makes a disabled column truly inert (issue #104): the client can
+// no longer emit ?sort= for a non-sortable column, but a hand-edited or
+// pre-#104-bookmarked ?sort=customer:asc would otherwise enter TanStack's sorting
+// state and paint a sort arrow on an enableSorting:false header while the server
+// silently sorts by created_at — a UI that lies about the order. Falling every
+// reject path back to the same default the server uses (DEFAULT_USER_SORT =
+// created_at desc) keeps the rendered arrow truthful and fixes the identical
+// pre-existing case for referral / total_with_tax (disabled since #100).
 function parseSorting(params: URLSearchParams): SortingState {
+  const fallback: SortingState = [PRIORITY_SORT, ...DEFAULT_USER_SORT];
   const raw = params.get("sort");
-  if (!raw) return [PRIORITY_SORT, ...DEFAULT_USER_SORT];
+  if (!raw) return fallback;
   const parts = raw.split(":");
-  if (parts.length !== 2) return [PRIORITY_SORT];
+  if (parts.length !== 2) return fallback;
   const [id, dir] = parts;
-  if (!id || !COLUMN_ID_RE.test(id)) return [PRIORITY_SORT];
-  if (!SORT_DIRS.has(dir)) return [PRIORITY_SORT];
+  if (!id || !COLUMN_ID_RE.test(id) || !(id in SORTABLE_COLUMNS)) return fallback;
+  if (!SORT_DIRS.has(dir)) return fallback;
   return [PRIORITY_SORT, { id, desc: dir === "desc" }];
 }
 

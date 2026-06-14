@@ -1,14 +1,5 @@
 import { Suspense } from "react";
-import {
-  CalendarCheck,
-  CalendarMinus,
-  CalendarDays,
-  CalendarRange,
-  CarFront,
-  Clock,
-  FileText,
-  Wallet,
-} from "lucide-react";
+import { CalendarCheck, CarFront, Clock, FileText, Wallet } from "lucide-react";
 import Link from "next/link";
 import { StatCard } from "@/components/charts/stat-card";
 import { Badge } from "@/components/ui/badge";
@@ -20,7 +11,7 @@ import {
 } from "@/components/ui/card";
 import {
   getReservationCounts,
-  getUsedThisMonth,
+  getUsedCounts,
   getReservationDailySeries,
   getCommissionSummary,
   getTopReferrals,
@@ -38,7 +29,8 @@ import {
 import { getFranchises } from "@/lib/queries/franchises";
 import { STATUS_LABELS } from "@/lib/schemas/reservation";
 import { DashboardPeriodSelector } from "./dashboard-period-selector";
-import { DashboardTrendCharts } from "./dashboard-trend-charts";
+import { FranchiseLineChart } from "./dashboard-trend-charts";
+import { DashboardMetricCard, type MetricItem } from "./dashboard-metric-card";
 
 const STATUS_VARIANT: Record<
   string,
@@ -103,15 +95,16 @@ export default async function DashboardPage({
     (f) => f.status === "active"
   );
   const activeCodes = activeFranchises.map((f) => f.code);
-  const [reservationCounts, usedThisMonth, dailySeries] = await Promise.all([
+  const [reservationCounts, usedCounts, dailySeries] = await Promise.all([
     getReservationCounts(activeCodes),
-    getUsedThisMonth(activeCodes),
+    getUsedCounts(activeCodes),
     getReservationDailySeries(activeCodes, fromYMD, toYMD),
   ]);
 
-  // Civil dates for the pre-filtered reservations-list links. Closed-range cards
-  // (hoy/ayer) pass both bounds; "since now" cards (semana/mes) pass only a lower
-  // bound. Utilizadas filters by Recogida (pickup_date), matching its count.
+  // Civil dates for the pre-filtered reservations-list links. Created metrics
+  // filter Creación (created_at); used metrics filter Recogida (pickup_date) with
+  // status='utilizado'. Closed-range rows (hoy/ayer) pass both bounds; "since
+  // now" rows (semana/mes created) pass only a lower bound.
   const today = bogotaTodayYMD();
   const yesterday = bogotaYesterdayYMD();
   const weekStart = bogotaStartOfWeekYMD();
@@ -120,54 +113,79 @@ export default async function DashboardPage({
   const reservationsHref = (params: Record<string, string>) =>
     `/reservations?${new URLSearchParams(params).toString()}`;
 
+  const franchiseRefs = activeFranchises.map((f) => ({
+    code: f.code,
+    label: f.display_name,
+  }));
+
+  const createdItems: MetricItem[] = [
+    {
+      label: "Hoy",
+      value: reservationCounts.today.total,
+      href: reservationsHref({ created_from: today, created_to: today }),
+    },
+    {
+      label: "Ayer",
+      value: reservationCounts.yesterday.total,
+      href: reservationsHref({ created_from: yesterday, created_to: yesterday }),
+    },
+    {
+      label: "Esta semana",
+      value: reservationCounts.week.total,
+      href: reservationsHref({ created_from: weekStart }),
+    },
+    {
+      label: "Este mes",
+      value: reservationCounts.month.total,
+      href: reservationsHref({ created_from: monthStart }),
+    },
+  ];
+
+  const usedItems: MetricItem[] = [
+    {
+      label: "Hoy",
+      value: usedCounts.today.total,
+      href: reservationsHref({
+        status: "utilizado",
+        pickup_from: today,
+        pickup_to: today,
+      }),
+    },
+    {
+      label: "Ayer",
+      value: usedCounts.yesterday.total,
+      href: reservationsHref({
+        status: "utilizado",
+        pickup_from: yesterday,
+        pickup_to: yesterday,
+      }),
+    },
+    {
+      label: "Esta semana",
+      value: usedCounts.week.total,
+      href: reservationsHref({
+        status: "utilizado",
+        pickup_from: weekStart,
+        pickup_to: today,
+      }),
+    },
+    {
+      label: "Este mes",
+      value: usedCounts.month.total,
+      href: reservationsHref({
+        status: "utilizado",
+        pickup_from: monthStart,
+        pickup_to: monthEnd,
+      }),
+    },
+  ];
+
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
 
-      {/* Stat cards */}
+      {/* Commission stat cards */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <StatCard
-          title="Reservas hoy"
-          value={reservationCounts.today.total}
-          icon={CalendarCheck}
-          description="Creadas hoy"
-          href={reservationsHref({ created_from: today, created_to: today })}
-        />
-        <StatCard
-          title="Reservas ayer"
-          value={reservationCounts.yesterday.total}
-          icon={CalendarMinus}
-          description="Creadas ayer"
-          href={reservationsHref({
-            created_from: yesterday,
-            created_to: yesterday,
-          })}
-        />
-        <StatCard
-          title="Reservas esta semana"
-          value={reservationCounts.week.total}
-          icon={CalendarDays}
-          description="Desde el lunes"
-          href={reservationsHref({ created_from: weekStart })}
-        />
-        <StatCard
-          title="Reservas este mes"
-          value={reservationCounts.month.total}
-          icon={CalendarRange}
-          description="Mes en curso"
-          href={reservationsHref({ created_from: monthStart })}
-        />
-        <StatCard
-          title="Utilizadas este mes"
-          value={usedThisMonth.total}
-          icon={CarFront}
-          description="Recogidas este mes"
-          href={reservationsHref({
-            status: "utilizado",
-            pickup_from: monthStart,
-            pickup_to: monthEnd,
-          })}
-        />
         <StatCard
           title="Comisiones pendientes"
           value={copFormat.format(commissionSummary.pending)}
@@ -188,23 +206,54 @@ export default async function DashboardPage({
         />
       </div>
 
-      {/* Trend charts: per-franchise created & used over the selected period */}
+      {/* Per-franchise reservations: a period-summary card paired with a wider
+          trend chart, one row per metric (created / used). The period selector
+          drives both charts' date range; the cards show fixed periods. */}
       <div className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-lg font-semibold tracking-tight">
-            Tendencia por franquicia
+            Reservas por franquicia
           </h2>
           <Suspense fallback={<div className="h-9" />}>
             <DashboardPeriodSelector period={period} from={fromYMD} to={toYMD} />
           </Suspense>
         </div>
-        <DashboardTrendCharts
-          series={dailySeries}
-          franchises={activeFranchises.map((f) => ({
-            code: f.code,
-            label: f.display_name,
-          }))}
-        />
+
+        {/* Created */}
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
+          <DashboardMetricCard
+            title="Reservas creadas"
+            icon={CalendarCheck}
+            items={createdItems}
+          />
+          <div className="lg:col-span-3">
+            <FranchiseLineChart
+              title="Reservas creadas"
+              description="Por día y franquicia"
+              series={dailySeries}
+              franchises={franchiseRefs}
+              metric="created_count"
+            />
+          </div>
+        </div>
+
+        {/* Used */}
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
+          <DashboardMetricCard
+            title="Reservas utilizadas"
+            icon={CarFront}
+            items={usedItems}
+          />
+          <div className="lg:col-span-3">
+            <FranchiseLineChart
+              title="Reservas utilizadas"
+              description="Recogidas por día y franquicia"
+              series={dailySeries}
+              franchises={franchiseRefs}
+              metric="used_count"
+            />
+          </div>
+        </div>
       </div>
 
       {/* Bottom sections */}

@@ -3,6 +3,11 @@ import {
   bogotaStartOfDayISO,
   bogotaStartOfWeekISO,
   bogotaStartOfMonthISO,
+  bogotaDayStartISO,
+  bogotaDayEndISO,
+  bogotaYesterdayYMD,
+  bogotaStartOfMonthYMD,
+  bogotaEndOfMonthYMD,
 } from "@/lib/date/bogota";
 
 export interface PeriodCount {
@@ -12,14 +17,15 @@ export interface PeriodCount {
 
 export interface ReservationCounts {
   today: PeriodCount;
+  yesterday: PeriodCount;
   week: PeriodCount;
   month: PeriodCount;
 }
 
-// Counts reservations created in each period (today / this week / this month),
-// with a per-franchise breakdown. Period cutoffs are anchored to Colombia time
-// (see lib/date/bogota). Only the given active franchise codes are counted, so
-// `total` always equals the sum of `byFranchise`.
+// Counts reservations created in each period (today / yesterday / this week /
+// this month), with a per-franchise breakdown. Period cutoffs are anchored to
+// Colombia time (see lib/date/bogota). Only the given active franchise codes are
+// counted, so `total` always equals the sum of `byFranchise`.
 //
 // Uses head/count queries (one per franchise per period) instead of fetching
 // rows: counting happens in Postgres, so it never hits PostgREST's max_rows cap
@@ -29,14 +35,21 @@ export async function getReservationCounts(
 ): Promise<ReservationCounts> {
   const supabase = await createClient();
 
-  const countSince = async (sinceISO: string): Promise<PeriodCount> => {
+  // `untilISO` bounds closed ranges (yesterday); open-ended periods (today/week/
+  // month = "since X until now") pass only `sinceISO`.
+  const countCreatedRange = async (
+    sinceISO: string,
+    untilISO?: string
+  ): Promise<PeriodCount> => {
     const entries = await Promise.all(
       activeCodes.map(async (code) => {
-        const { count, error } = await supabase
+        let query = supabase
           .from("reservations")
           .select("id", { count: "exact", head: true })
           .gte("created_at", sinceISO)
           .eq("franchise", code);
+        if (untilISO) query = query.lte("created_at", untilISO);
+        const { count, error } = await query;
         if (error) throw error;
         return [code, count ?? 0] as const;
       })
@@ -47,13 +60,52 @@ export async function getReservationCounts(
     return { total, byFranchise };
   };
 
-  const [today, week, month] = await Promise.all([
-    countSince(bogotaStartOfDayISO()),
-    countSince(bogotaStartOfWeekISO()),
-    countSince(bogotaStartOfMonthISO()),
+  const yesterdayYMD = bogotaYesterdayYMD();
+
+  const [today, yesterday, week, month] = await Promise.all([
+    countCreatedRange(bogotaStartOfDayISO()),
+    countCreatedRange(
+      bogotaDayStartISO(yesterdayYMD),
+      bogotaDayEndISO(yesterdayYMD)
+    ),
+    countCreatedRange(bogotaStartOfWeekISO()),
+    countCreatedRange(bogotaStartOfMonthISO()),
   ]);
 
-  return { today, week, month };
+  return { today, yesterday, week, month };
+}
+
+// Counts reservations USED this month, keyed by pickup_date (the day the car is
+// picked up) AND status='utilizado' — NOT created_at. A reservation created in a
+// prior month but picked up this month counts here: this is the "cars actually
+// used this month" metric, deliberately distinct from getReservationCounts,
+// which is creation-based. Bounds are civil "YYYY-MM-DD" dates because
+// pickup_date is a `date` column (mirrors the reservations list Recogida filter,
+// lib/queries/reservations.ts). Per-franchise breakdown like the period counts.
+export async function getUsedThisMonth(
+  activeCodes: string[]
+): Promise<PeriodCount> {
+  const supabase = await createClient();
+  const from = bogotaStartOfMonthYMD();
+  const to = bogotaEndOfMonthYMD();
+
+  const entries = await Promise.all(
+    activeCodes.map(async (code) => {
+      const { count, error } = await supabase
+        .from("reservations")
+        .select("id", { count: "exact", head: true })
+        .eq("status", "utilizado")
+        .gte("pickup_date", from)
+        .lte("pickup_date", to)
+        .eq("franchise", code);
+      if (error) throw error;
+      return [code, count ?? 0] as const;
+    })
+  );
+
+  const byFranchise: Record<string, number> = Object.fromEntries(entries);
+  const total = entries.reduce((acc, [, n]) => acc + n, 0);
+  return { total, byFranchise };
 }
 
 export async function getCommissionSummary() {

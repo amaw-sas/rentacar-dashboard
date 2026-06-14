@@ -1,7 +1,9 @@
 import {
   CalendarCheck,
+  CalendarMinus,
   CalendarDays,
   CalendarRange,
+  CarFront,
   Clock,
   FileText,
   Wallet,
@@ -17,11 +19,19 @@ import {
 } from "@/components/ui/card";
 import {
   getReservationCounts,
+  getUsedThisMonth,
   getCommissionSummary,
   getTopReferrals,
   getRecentReservations,
   type PeriodCount,
 } from "@/lib/queries/dashboard";
+import {
+  bogotaTodayYMD,
+  bogotaYesterdayYMD,
+  bogotaStartOfWeekYMD,
+  bogotaStartOfMonthYMD,
+  bogotaEndOfMonthYMD,
+} from "@/lib/date/bogota";
 import { getFranchises } from "@/lib/queries/franchises";
 import { STATUS_LABELS } from "@/lib/schemas/reservation";
 
@@ -66,9 +76,11 @@ export default async function DashboardPage() {
   const activeFranchises = (franchises ?? []).filter(
     (f) => f.status === "active"
   );
-  const reservationCounts = await getReservationCounts(
-    activeFranchises.map((f) => f.code)
-  );
+  const activeCodes = activeFranchises.map((f) => f.code);
+  const [reservationCounts, usedThisMonth] = await Promise.all([
+    getReservationCounts(activeCodes),
+    getUsedThisMonth(activeCodes),
+  ]);
 
   // display_name labels per active franchise, including those with 0 this period.
   const breakdownFor = (period: PeriodCount) =>
@@ -76,6 +88,17 @@ export default async function DashboardPage() {
       label: f.display_name,
       value: period.byFranchise[f.code] ?? 0,
     }));
+
+  // Civil dates for the pre-filtered reservations-list links. Closed-range cards
+  // (hoy/ayer) pass both bounds; "since now" cards (semana/mes) pass only a lower
+  // bound. Utilizadas filters by Recogida (pickup_date), matching its count.
+  const today = bogotaTodayYMD();
+  const yesterday = bogotaYesterdayYMD();
+  const weekStart = bogotaStartOfWeekYMD();
+  const monthStart = bogotaStartOfMonthYMD();
+  const monthEnd = bogotaEndOfMonthYMD();
+  const reservationsHref = (params: Record<string, string>) =>
+    `/reservations?${new URLSearchParams(params).toString()}`;
 
   return (
     <div className="space-y-6">
@@ -89,6 +112,18 @@ export default async function DashboardPage() {
           icon={CalendarCheck}
           description="Creadas hoy"
           breakdown={breakdownFor(reservationCounts.today)}
+          href={reservationsHref({ created_from: today, created_to: today })}
+        />
+        <StatCard
+          title="Reservas ayer"
+          value={reservationCounts.yesterday.total}
+          icon={CalendarMinus}
+          description="Creadas ayer"
+          breakdown={breakdownFor(reservationCounts.yesterday)}
+          href={reservationsHref({
+            created_from: yesterday,
+            created_to: yesterday,
+          })}
         />
         <StatCard
           title="Reservas esta semana"
@@ -96,6 +131,7 @@ export default async function DashboardPage() {
           icon={CalendarDays}
           description="Desde el lunes"
           breakdown={breakdownFor(reservationCounts.week)}
+          href={reservationsHref({ created_from: weekStart })}
         />
         <StatCard
           title="Reservas este mes"
@@ -103,6 +139,19 @@ export default async function DashboardPage() {
           icon={CalendarRange}
           description="Mes en curso"
           breakdown={breakdownFor(reservationCounts.month)}
+          href={reservationsHref({ created_from: monthStart })}
+        />
+        <StatCard
+          title="Utilizadas este mes"
+          value={usedThisMonth.total}
+          icon={CarFront}
+          description="Recogidas este mes"
+          breakdown={breakdownFor(usedThisMonth)}
+          href={reservationsHref({
+            status: "utilizado",
+            pickup_from: monthStart,
+            pickup_to: monthEnd,
+          })}
         />
         <StatCard
           title="Comisiones pendientes"

@@ -26,6 +26,7 @@ export type AttributionChannel =
   | "google_display"
   | "meta_ads"
   | "tiktok_ads"
+  | "tiktok_organic"
   | "bing_ads"
   | "organic"
   | "referral"
@@ -123,9 +124,18 @@ export function deriveAttributionChannel(
     return "meta_ads";
   }
 
-  // Rule 5: TikTok.
-  if (ttclid !== undefined || (utmSource !== undefined && TIKTOK_SOURCES.has(utmSource))) {
+  // Rule 5: TikTok — paid vs organic.
+  // `ttclid` is the ad click-id (auto-tagged on PAID clicks only), so it is a
+  // reliable paid signal → tiktok_ads. A `tiktok` utm_source without it is an
+  // organic bio/profile link → tiktok_organic, unless the medium says paid
+  // (cpc/ppc/…), which keeps it in tiktok_ads. (Contrast Meta: `fbclid` is
+  // appended to organic clicks too, so Meta cannot be split this way — see #147.)
+  if (ttclid !== undefined) {
     return "tiktok_ads";
+  }
+  if (utmSource !== undefined && TIKTOK_SOURCES.has(utmSource)) {
+    if (utmMedium !== undefined && PAID_MEDIUMS.has(utmMedium)) return "tiktok_ads";
+    return "tiktok_organic";
   }
 
   // Rule 6: no click-id, but a utm_medium is present.

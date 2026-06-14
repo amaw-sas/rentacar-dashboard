@@ -37,6 +37,58 @@ describe("deriveAttributionChannel", () => {
     });
   });
 
+  describe("SCEN-T (#147): TikTok splits into paid (Ads) vs organic", () => {
+    it("ttclid present → tiktok_ads (ad click-id is paid-only, auto-tagged)", () => {
+      expect(deriveAttributionChannel({ ttclid: "x" })).toBe("tiktok_ads");
+    });
+
+    it("ttclid wins even with an organic-looking utm_medium", () => {
+      expect(
+        deriveAttributionChannel({
+          ttclid: "x",
+          utm_source: "tiktok",
+          utm_medium: "organic",
+        }),
+      ).toBe("tiktok_ads");
+    });
+
+    it("{utm_source: tiktok} alone → tiktok_organic (bio / profile link)", () => {
+      expect(deriveAttributionChannel({ utm_source: "tiktok" })).toBe(
+        "tiktok_organic",
+      );
+    });
+
+    it("{utm_source: tiktok, utm_medium: organico} → tiktok_organic (real bio URL, Spanish medium)", () => {
+      expect(
+        deriveAttributionChannel({ utm_source: "tiktok", utm_medium: "organico" }),
+      ).toBe("tiktok_organic");
+    });
+
+    it("{utm_source: tiktok, utm_medium: cpc} → tiktok_ads (paid medium keeps it Ads)", () => {
+      expect(
+        deriveAttributionChannel({ utm_source: "tiktok", utm_medium: "cpc" }),
+      ).toBe("tiktok_ads");
+    });
+
+    it("source alias 'tt' without ttclid → tiktok_organic", () => {
+      expect(deriveAttributionChannel({ utm_source: "tt" })).toBe(
+        "tiktok_organic",
+      );
+    });
+
+    it("source alias 'ttads' without ttclid → tiktok_organic", () => {
+      expect(deriveAttributionChannel({ utm_source: "ttads" })).toBe(
+        "tiktok_organic",
+      );
+    });
+
+    it("{utm_source: tiktok, utm_medium: paid} → tiktok_ads (any paid medium)", () => {
+      expect(
+        deriveAttributionChannel({ utm_source: "tiktok", utm_medium: "paid" }),
+      ).toBe("tiktok_ads");
+    });
+  });
+
   describe("SCEN-004: empty object is Directo, absent is Desconocido", () => {
     it("{} → direct", () => {
       expect(deriveAttributionChannel({})).toBe("direct");

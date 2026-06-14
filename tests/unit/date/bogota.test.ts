@@ -5,6 +5,11 @@ import {
   bogotaStartOfMonthISO,
   bogotaDayStartISO,
   bogotaDayEndISO,
+  bogotaTodayYMD,
+  bogotaYesterdayYMD,
+  bogotaStartOfWeekYMD,
+  bogotaStartOfMonthYMD,
+  bogotaEndOfMonthYMD,
 } from "@/lib/date/bogota";
 
 // Colombia is UTC-5 fixed (no DST), so every "start" instant is 05:00Z of the
@@ -104,6 +109,87 @@ describe("bogota date boundaries", () => {
       expect(upperEdge >= start && upperEdge <= end).toBe(true);
       expect(justBelow >= start).toBe(false);
       expect(justAbove <= end).toBe(false);
+    });
+  });
+
+  // Civil-date helpers (issue #114 dashboard cards): plain "YYYY-MM-DD" in
+  // Colombia time, used for URL date params and the pickup_date (`date` column)
+  // filter. All anchored to the Bogota calendar date, not the UTC one.
+  describe("bogotaTodayYMD", () => {
+    it("returns the Colombia calendar date, not the UTC one", () => {
+      // 22:00 Jun 9 Colombia == 03:00Z Jun 10. Must read as Jun 9, not Jun 10.
+      const now = new Date("2026-06-09T22:00:00-05:00");
+      expect(bogotaTodayYMD(now)).toBe("2026-06-09");
+    });
+  });
+
+  describe("bogotaYesterdayYMD", () => {
+    it("returns the prior Colombia day", () => {
+      const now = new Date("2026-06-09T12:00:00-05:00");
+      expect(bogotaYesterdayYMD(now)).toBe("2026-06-08");
+    });
+
+    it("uses the Colombia date even late at night (22:00 → still prior day)", () => {
+      const now = new Date("2026-06-09T22:00:00-05:00"); // 03:00Z Jun 10
+      expect(bogotaYesterdayYMD(now)).toBe("2026-06-08");
+    });
+
+    it("crosses the month boundary (Jun 1 → May 31)", () => {
+      expect(bogotaYesterdayYMD(new Date("2026-06-01T12:00:00-05:00"))).toBe(
+        "2026-05-31"
+      );
+    });
+
+    it("crosses the year boundary (Jan 1 2027 → Dec 31 2026)", () => {
+      expect(bogotaYesterdayYMD(new Date("2027-01-01T12:00:00-05:00"))).toBe(
+        "2026-12-31"
+      );
+    });
+  });
+
+  describe("bogotaStartOfWeekYMD", () => {
+    it("returns Monday for a Tuesday", () => {
+      expect(bogotaStartOfWeekYMD(new Date("2026-06-09T12:00:00-05:00"))).toBe(
+        "2026-06-08"
+      );
+    });
+
+    it("wraps Sunday back to the prior Monday", () => {
+      expect(bogotaStartOfWeekYMD(new Date("2026-06-14T12:00:00-05:00"))).toBe(
+        "2026-06-08"
+      );
+    });
+  });
+
+  describe("bogotaStartOfMonthYMD / bogotaEndOfMonthYMD", () => {
+    it("spans the full current month (June → 01..30)", () => {
+      const now = new Date("2026-06-09T12:00:00-05:00");
+      expect(bogotaStartOfMonthYMD(now)).toBe("2026-06-01");
+      expect(bogotaEndOfMonthYMD(now)).toBe("2026-06-30");
+    });
+
+    it("handles a 31-day month (July → 31)", () => {
+      expect(bogotaEndOfMonthYMD(new Date("2026-07-15T12:00:00-05:00"))).toBe(
+        "2026-07-31"
+      );
+    });
+
+    it("handles February in a non-leap year (28)", () => {
+      expect(bogotaEndOfMonthYMD(new Date("2026-02-10T12:00:00-05:00"))).toBe(
+        "2026-02-28"
+      );
+    });
+
+    it("handles February in a leap year (29)", () => {
+      expect(bogotaEndOfMonthYMD(new Date("2028-02-10T12:00:00-05:00"))).toBe(
+        "2028-02-29"
+      );
+    });
+
+    it("handles December (end-of-year rollover → 31)", () => {
+      expect(bogotaEndOfMonthYMD(new Date("2026-12-10T12:00:00-05:00"))).toBe(
+        "2026-12-31"
+      );
     });
   });
 });

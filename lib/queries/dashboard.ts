@@ -5,7 +5,9 @@ import {
   bogotaStartOfMonthISO,
   bogotaDayStartISO,
   bogotaDayEndISO,
+  bogotaTodayYMD,
   bogotaYesterdayYMD,
+  bogotaStartOfWeekYMD,
   bogotaStartOfMonthYMD,
   bogotaEndOfMonthYMD,
 } from "@/lib/date/bogota";
@@ -75,37 +77,56 @@ export async function getReservationCounts(
   return { today, yesterday, week, month };
 }
 
-// Counts reservations USED this month, keyed by pickup_date (the day the car is
-// picked up) AND status='utilizado' — NOT created_at. A reservation created in a
-// prior month but picked up this month counts here: this is the "cars actually
-// used this month" metric, deliberately distinct from getReservationCounts,
-// which is creation-based. Bounds are civil "YYYY-MM-DD" dates because
-// pickup_date is a `date` column (mirrors the reservations list Recogida filter,
-// lib/queries/reservations.ts). Per-franchise breakdown like the period counts.
-export async function getUsedThisMonth(
+// Counts reservations USED in each period (today / yesterday / this week / this
+// month), keyed by pickup_date (the day the car is picked up) AND
+// status='utilizado' — NOT created_at. A reservation created in a prior month
+// but picked up this month counts in `month`: this is the "cars actually used"
+// metric, deliberately distinct from getReservationCounts (creation-based).
+// Bounds are civil "YYYY-MM-DD" dates because pickup_date is a `date` column
+// (mirrors the reservations list Recogida filter, lib/queries/reservations.ts).
+// `month` spans the full calendar month; the shorter periods run up to today.
+export async function getUsedCounts(
   activeCodes: string[]
-): Promise<PeriodCount> {
+): Promise<ReservationCounts> {
   const supabase = await createClient();
-  const from = bogotaStartOfMonthYMD();
-  const to = bogotaEndOfMonthYMD();
 
-  const entries = await Promise.all(
-    activeCodes.map(async (code) => {
-      const { count, error } = await supabase
-        .from("reservations")
-        .select("id", { count: "exact", head: true })
-        .eq("status", "utilizado")
-        .gte("pickup_date", from)
-        .lte("pickup_date", to)
-        .eq("franchise", code);
-      if (error) throw error;
-      return [code, count ?? 0] as const;
-    })
-  );
+  const countUsedRange = async (
+    fromYMD: string,
+    toYMD: string
+  ): Promise<PeriodCount> => {
+    const entries = await Promise.all(
+      activeCodes.map(async (code) => {
+        const { count, error } = await supabase
+          .from("reservations")
+          .select("id", { count: "exact", head: true })
+          .eq("status", "utilizado")
+          .gte("pickup_date", fromYMD)
+          .lte("pickup_date", toYMD)
+          .eq("franchise", code);
+        if (error) throw error;
+        return [code, count ?? 0] as const;
+      })
+    );
 
-  const byFranchise: Record<string, number> = Object.fromEntries(entries);
-  const total = entries.reduce((acc, [, n]) => acc + n, 0);
-  return { total, byFranchise };
+    const byFranchise: Record<string, number> = Object.fromEntries(entries);
+    const total = entries.reduce((acc, [, n]) => acc + n, 0);
+    return { total, byFranchise };
+  };
+
+  const today = bogotaTodayYMD();
+  const yesterday = bogotaYesterdayYMD();
+  const weekStart = bogotaStartOfWeekYMD();
+  const monthStart = bogotaStartOfMonthYMD();
+  const monthEnd = bogotaEndOfMonthYMD();
+
+  const [todayCount, yesterdayCount, week, month] = await Promise.all([
+    countUsedRange(today, today),
+    countUsedRange(yesterday, yesterday),
+    countUsedRange(weekStart, today),
+    countUsedRange(monthStart, monthEnd),
+  ]);
+
+  return { today: todayCount, yesterday: yesterdayCount, week, month };
 }
 
 // One row per (day, franchise) over [fromYMD, toYMD], with both the created and

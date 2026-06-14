@@ -56,7 +56,7 @@ vi.mock("@/lib/supabase/server", () => ({
 
 import {
   getReservationCounts,
-  getUsedThisMonth,
+  getUsedCounts,
   getReservationDailySeries,
 } from "@/lib/queries/dashboard";
 
@@ -141,21 +141,30 @@ describe("getReservationDailySeries", () => {
   });
 });
 
-describe("getUsedThisMonth", () => {
-  it("filters status='utilizado' on a pickup_date range and sums by franchise", async () => {
+describe("getUsedCounts", () => {
+  it("labels periods and sums the per-franchise breakdown", async () => {
     countFor = (q) => (franchiseOf(q) === "GR" ? 4 : franchiseOf(q) === "C" ? 1 : 0);
 
-    const u = await getUsedThisMonth(["GR", "C"]);
+    const u = await getUsedCounts(["GR", "C"]);
 
-    expect(u.byFranchise).toEqual({ GR: 4, C: 1 });
-    expect(u.total).toBe(5);
+    expect(u.today.byFranchise).toEqual({ GR: 4, C: 1 });
+    expect(u.today.total).toBe(5);
+    expect(u.yesterday.total).toBe(5);
+    expect(u.week.total).toBe(5);
+    expect(u.month.total).toBe(5);
+  });
 
-    expect(queries).toHaveLength(2);
+  it("counts every period by pickup_date + status='utilizado', never created_at", async () => {
+    countFor = () => 0;
+    await getUsedCounts(["GR", "C"]);
+
+    // 4 periods × 2 franchises = 8 count queries, each a closed pickup_date range.
+    expect(queries).toHaveLength(8);
     for (const q of queries) {
       expect(q.eq).toContainEqual(["status", "utilizado"]);
       expect(q.gte.some(([c]) => c === "pickup_date")).toBe(true);
       expect(q.lte.some(([c]) => c === "pickup_date")).toBe(true);
-      // Used-this-month is recogida-based, NOT creation-based.
+      // Used counts are recogida-based, NOT creation-based.
       expect(q.gte.some(([c]) => c === "created_at")).toBe(false);
     }
   });

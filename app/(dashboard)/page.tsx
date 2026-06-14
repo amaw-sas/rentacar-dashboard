@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import {
   CalendarCheck,
   CalendarMinus,
@@ -20,10 +21,10 @@ import {
 import {
   getReservationCounts,
   getUsedThisMonth,
+  getReservationDailySeries,
   getCommissionSummary,
   getTopReferrals,
   getRecentReservations,
-  type PeriodCount,
 } from "@/lib/queries/dashboard";
 import {
   bogotaTodayYMD,
@@ -31,9 +32,13 @@ import {
   bogotaStartOfWeekYMD,
   bogotaStartOfMonthYMD,
   bogotaEndOfMonthYMD,
+  resolveDashboardRange,
+  type DashboardPeriod,
 } from "@/lib/date/bogota";
 import { getFranchises } from "@/lib/queries/franchises";
 import { STATUS_LABELS } from "@/lib/schemas/reservation";
+import { DashboardPeriodSelector } from "./dashboard-period-selector";
+import { DashboardTrendCharts } from "./dashboard-trend-charts";
 
 const STATUS_VARIANT: Record<
   string,
@@ -61,10 +66,31 @@ const copFormat = new Intl.NumberFormat("es-CO", {
   maximumFractionDigits: 0,
 });
 
-export default async function DashboardPage() {
-  // Franchises drive the count breakdown and its labels. Only getReservationCounts
-  // depends on them, so fetch franchises alongside the independent queries and
-  // chain just the counts off the resolved list — keeps everything else parallel.
+export default async function DashboardPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  // Trend-chart period comes from the URL (?period & optional from/to). The
+  // selector writes these; the server resolves the range so it stays the source
+  // of truth. Default: current week.
+  const sp = await searchParams;
+  const readParam = (key: string): string | undefined => {
+    const value = sp[key];
+    return Array.isArray(value) ? value[0] : value;
+  };
+  const periodParam = readParam("period");
+  const period: DashboardPeriod =
+    periodParam === "month" || periodParam === "custom" ? periodParam : "week";
+  const { fromYMD, toYMD } = resolveDashboardRange(
+    period,
+    readParam("from"),
+    readParam("to")
+  );
+
+  // Franchises drive the chart series and its labels. Only the count/series
+  // queries depend on them, so fetch franchises alongside the independent
+  // queries and chain those off the resolved list — keeps everything else parallel.
   const [franchises, commissionSummary, topReferrals, recentReservations] =
     await Promise.all([
       getFranchises(),
@@ -77,17 +103,11 @@ export default async function DashboardPage() {
     (f) => f.status === "active"
   );
   const activeCodes = activeFranchises.map((f) => f.code);
-  const [reservationCounts, usedThisMonth] = await Promise.all([
+  const [reservationCounts, usedThisMonth, dailySeries] = await Promise.all([
     getReservationCounts(activeCodes),
     getUsedThisMonth(activeCodes),
+    getReservationDailySeries(activeCodes, fromYMD, toYMD),
   ]);
-
-  // display_name labels per active franchise, including those with 0 this period.
-  const breakdownFor = (period: PeriodCount) =>
-    activeFranchises.map((f) => ({
-      label: f.display_name,
-      value: period.byFranchise[f.code] ?? 0,
-    }));
 
   // Civil dates for the pre-filtered reservations-list links. Closed-range cards
   // (hoy/ayer) pass both bounds; "since now" cards (semana/mes) pass only a lower
@@ -111,7 +131,6 @@ export default async function DashboardPage() {
           value={reservationCounts.today.total}
           icon={CalendarCheck}
           description="Creadas hoy"
-          breakdown={breakdownFor(reservationCounts.today)}
           href={reservationsHref({ created_from: today, created_to: today })}
         />
         <StatCard
@@ -119,7 +138,6 @@ export default async function DashboardPage() {
           value={reservationCounts.yesterday.total}
           icon={CalendarMinus}
           description="Creadas ayer"
-          breakdown={breakdownFor(reservationCounts.yesterday)}
           href={reservationsHref({
             created_from: yesterday,
             created_to: yesterday,
@@ -130,7 +148,6 @@ export default async function DashboardPage() {
           value={reservationCounts.week.total}
           icon={CalendarDays}
           description="Desde el lunes"
-          breakdown={breakdownFor(reservationCounts.week)}
           href={reservationsHref({ created_from: weekStart })}
         />
         <StatCard
@@ -138,7 +155,6 @@ export default async function DashboardPage() {
           value={reservationCounts.month.total}
           icon={CalendarRange}
           description="Mes en curso"
-          breakdown={breakdownFor(reservationCounts.month)}
           href={reservationsHref({ created_from: monthStart })}
         />
         <StatCard
@@ -146,7 +162,6 @@ export default async function DashboardPage() {
           value={usedThisMonth.total}
           icon={CarFront}
           description="Recogidas este mes"
-          breakdown={breakdownFor(usedThisMonth)}
           href={reservationsHref({
             status: "utilizado",
             pickup_from: monthStart,
@@ -170,6 +185,25 @@ export default async function DashboardPage() {
           value={copFormat.format(commissionSummary.paid)}
           icon={Wallet}
           description="Cobradas"
+        />
+      </div>
+
+      {/* Trend charts: per-franchise created & used over the selected period */}
+      <div className="space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-lg font-semibold tracking-tight">
+            Tendencia por franquicia
+          </h2>
+          <Suspense fallback={<div className="h-9" />}>
+            <DashboardPeriodSelector period={period} from={fromYMD} to={toYMD} />
+          </Suspense>
+        </div>
+        <DashboardTrendCharts
+          series={dailySeries}
+          franchises={activeFranchises.map((f) => ({
+            code: f.code,
+            label: f.display_name,
+          }))}
         />
       </div>
 

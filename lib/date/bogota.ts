@@ -85,3 +85,39 @@ export function bogotaStartOfWeekISO(now: Date = new Date()): string {
 export function bogotaStartOfMonthISO(now: Date = new Date()): string {
   return bogotaDayStartISO(bogotaStartOfMonthYMD(now));
 }
+
+// Period presets for the dashboard trend charts.
+export type DashboardPeriod = "week" | "month" | "custom";
+
+const YMD_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+// Resolves a dashboard trend-chart period to inclusive civil "YYYY-MM-DD"
+// Bogota dates, ready to pass to reservation_daily_series(p_from, p_to).
+//   week  -> Monday of this week .. today
+//   month -> first of this month .. today   (today, not month-end, so the chart
+//            never trails future days at 0)
+//   custom-> the URL params, swapped to from <= to; falls back to "week" when a
+//            param is missing or malformed.
+export function resolveDashboardRange(
+  period: DashboardPeriod,
+  fromParam?: string,
+  toParam?: string,
+  now: Date = new Date()
+): { fromYMD: string; toYMD: string } {
+  const today = bogotaTodayYMD(now);
+
+  if (period === "custom") {
+    if (fromParam && toParam && YMD_RE.test(fromParam) && YMD_RE.test(toParam)) {
+      return fromParam <= toParam
+        ? { fromYMD: fromParam, toYMD: toParam }
+        : { fromYMD: toParam, toYMD: fromParam };
+    }
+    return { fromYMD: bogotaStartOfWeekYMD(now), toYMD: today };
+  }
+
+  if (period === "month") {
+    return { fromYMD: bogotaStartOfMonthYMD(now), toYMD: today };
+  }
+
+  return { fromYMD: bogotaStartOfWeekYMD(now), toYMD: today };
+}

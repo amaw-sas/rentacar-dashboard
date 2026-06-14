@@ -15,6 +15,11 @@ interface Q {
 let queries: Q[] = [];
 let countFor: (q: Q) => number = () => 0;
 
+// Captured args of the last supabase.rpc(name, params) call, plus the rows it
+// resolves to — lets the daily-series test assert the RPC contract.
+let rpcCall: { name: string; params: unknown } | null = null;
+let rpcRows: unknown[] = [];
+
 function makeChain() {
   const q: Q = { eq: [], gte: [], lte: [] };
   queries.push(q);
@@ -40,12 +45,19 @@ function makeChain() {
 }
 
 vi.mock("@/lib/supabase/server", () => ({
-  createClient: async () => ({ from: () => makeChain() }),
+  createClient: async () => ({
+    from: () => makeChain(),
+    rpc: async (name: string, params: unknown) => {
+      rpcCall = { name, params };
+      return { data: rpcRows, error: null };
+    },
+  }),
 }));
 
 import {
   getReservationCounts,
   getUsedThisMonth,
+  getReservationDailySeries,
 } from "@/lib/queries/dashboard";
 
 const franchiseOf = (q: Q) =>
@@ -54,6 +66,8 @@ const franchiseOf = (q: Q) =>
 beforeEach(() => {
   queries = [];
   countFor = () => 0;
+  rpcCall = null;
+  rpcRows = [];
 });
 
 describe("getReservationCounts", () => {
@@ -90,6 +104,40 @@ describe("getReservationCounts", () => {
     ).toBe(false);
     // Exactly the two "ayer" queries (one per franchise) have an upper bound.
     expect(queries.filter((q) => q.lte.length > 0)).toHaveLength(2);
+  });
+});
+
+describe("getReservationDailySeries", () => {
+  it("calls the reservation_daily_series RPC with the range and franchises", async () => {
+    await getReservationDailySeries(["GR", "C"], "2026-06-08", "2026-06-14");
+
+    expect(rpcCall?.name).toBe("reservation_daily_series");
+    expect(rpcCall?.params).toEqual({
+      p_from: "2026-06-08",
+      p_to: "2026-06-14",
+      p_franchises: ["GR", "C"],
+    });
+  });
+
+  it("returns the RPC rows unchanged (created & used per day/franchise)", async () => {
+    rpcRows = [
+      { day: "2026-06-08", franchise: "GR", created_count: 2, used_count: 1 },
+      { day: "2026-06-08", franchise: "C", created_count: 0, used_count: 3 },
+    ];
+
+    const series = await getReservationDailySeries(
+      ["GR", "C"],
+      "2026-06-08",
+      "2026-06-08"
+    );
+
+    expect(series).toEqual(rpcRows);
+  });
+
+  it("returns [] when the RPC yields no rows", async () => {
+    rpcRows = [];
+    const series = await getReservationDailySeries(["GR"], "2026-06-08", "2026-06-08");
+    expect(series).toEqual([]);
   });
 });
 

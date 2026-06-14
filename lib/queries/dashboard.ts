@@ -108,6 +108,35 @@ export async function getUsedThisMonth(
   return { total, byFranchise };
 }
 
+// One row per (day, franchise) over [fromYMD, toYMD], with both the created and
+// used counts — the input to the dashboard trend charts. Aggregation happens in
+// Postgres via the reservation_daily_series RPC (migration 061): created counts
+// bucket by created_at in Bogota time (so they reconcile with getReservationCounts)
+// and used counts by pickup_date + status='utilizado' (like getUsedThisMonth).
+// The RPC returns a full day×franchise grid (zeros included), so a missing
+// (day, franchise) still arrives as 0 and the line plots a point, not a gap.
+export interface DailySeriesPoint {
+  day: string; // "YYYY-MM-DD" Bogota civil date
+  franchise: string; // franchise code
+  created_count: number;
+  used_count: number;
+}
+
+export async function getReservationDailySeries(
+  activeCodes: string[],
+  fromYMD: string,
+  toYMD: string
+): Promise<DailySeriesPoint[]> {
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("reservation_daily_series", {
+    p_from: fromYMD,
+    p_to: toYMD,
+    p_franchises: activeCodes,
+  });
+  if (error) throw error;
+  return (data ?? []) as DailySeriesPoint[];
+}
+
 export async function getCommissionSummary() {
   const supabase = await createClient();
 

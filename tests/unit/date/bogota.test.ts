@@ -10,6 +10,7 @@ import {
   bogotaStartOfWeekYMD,
   bogotaStartOfMonthYMD,
   bogotaEndOfMonthYMD,
+  resolveDashboardRange,
 } from "@/lib/date/bogota";
 
 // Colombia is UTC-5 fixed (no DST), so every "start" instant is 05:00Z of the
@@ -189,6 +190,47 @@ describe("bogota date boundaries", () => {
     it("handles December (end-of-year rollover → 31)", () => {
       expect(bogotaEndOfMonthYMD(new Date("2026-12-10T12:00:00-05:00"))).toBe(
         "2026-12-31"
+      );
+    });
+  });
+
+  // Trend-chart period resolution. Bounds are inclusive Bogota civil dates; the
+  // upper bound is "today" (not month/week end) so the chart never trails future
+  // days at 0.
+  describe("resolveDashboardRange", () => {
+    const tuesday = new Date("2026-06-09T12:00:00-05:00");
+
+    it("week → Monday of this week .. today", () => {
+      expect(resolveDashboardRange("week", undefined, undefined, tuesday)).toEqual(
+        { fromYMD: "2026-06-08", toYMD: "2026-06-09" }
+      );
+    });
+
+    it("month → first of this month .. today", () => {
+      expect(
+        resolveDashboardRange("month", undefined, undefined, tuesday)
+      ).toEqual({ fromYMD: "2026-06-01", toYMD: "2026-06-09" });
+    });
+
+    it("custom → uses the given valid params verbatim", () => {
+      expect(
+        resolveDashboardRange("custom", "2026-05-01", "2026-05-31", tuesday)
+      ).toEqual({ fromYMD: "2026-05-01", toYMD: "2026-05-31" });
+    });
+
+    it("custom → swaps a reversed range so from <= to", () => {
+      expect(
+        resolveDashboardRange("custom", "2026-05-31", "2026-05-01", tuesday)
+      ).toEqual({ fromYMD: "2026-05-01", toYMD: "2026-05-31" });
+    });
+
+    it("custom → falls back to week when a param is missing or malformed", () => {
+      const week = { fromYMD: "2026-06-08", toYMD: "2026-06-09" };
+      expect(resolveDashboardRange("custom", "2026-05-01", undefined, tuesday)).toEqual(
+        week
+      );
+      expect(resolveDashboardRange("custom", "nope", "2026-05-01", tuesday)).toEqual(
+        week
       );
     });
   });

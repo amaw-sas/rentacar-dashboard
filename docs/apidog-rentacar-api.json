@@ -46,11 +46,20 @@
           "categoryDescription": { "type": "string", "example": "Gama C Económico Mecánico", "description": "Nombre de la gama (categoría) en español, traducido en origen desde el catálogo curado de Localiza. Cae al texto crudo de Localiza si la gama aún no está curada." },
           "totalAmount": { "type": "number", "example": 400000 },
           "estimatedTotalAmount": { "type": "number", "example": 476000 },
-          "vehicleDayCharge": { "type": "number", "example": 100000 },
-          "numberDays": { "type": "number", "example": 4 },
-          "taxFeeAmount": { "type": "number", "example": 40000 },
-          "IVAFeeAmount": { "type": "number", "example": 36000 },
-          "returnFeeAmount": { "type": "number", "example": 0 },
+          "vehicleDayCharge": { "type": "number", "example": 100000, "description": "Tarifa diaria del vehículo (solo display)." },
+          "numberDays": { "type": "number", "example": 4, "description": "Días que cotiza Localiza. NO se usa como selected_days; este se calcula del rango de fechas." },
+          "coverageUnitCharge": { "type": "number", "example": 10000, "description": "Cargo unitario de cobertura básica (solo display)." },
+          "coverageQuantity": { "type": "number", "example": 4, "description": "Días de cobertura básica. Se mapea a coverage_days en la reserva." },
+          "coverageTotalAmount": { "type": "number", "example": 40000, "description": "Total de cobertura básica. Se mapea a coverage_price." },
+          "extraHoursQuantity": { "type": "number", "example": 0, "description": "Horas extra cotizadas. Se mapea a extra_hours." },
+          "extraHoursUnityAmount": { "type": "number", "example": 0, "description": "Cargo unitario de hora extra (solo display)." },
+          "extraHoursTotalAmount": { "type": "number", "example": 0, "description": "Total de horas extra. Se mapea a extra_hours_price." },
+          "taxFeeAmount": { "type": "number", "example": 40000, "description": "Tarifa administrativa. Se mapea a tax_fee." },
+          "taxFeePercentage": { "type": "number", "example": 10, "description": "Porcentaje de la tarifa administrativa (solo display)." },
+          "IVAFeeAmount": { "type": "number", "example": 36000, "description": "IVA. Se mapea a iva_fee." },
+          "returnFeeAmount": { "type": "number", "example": 0, "description": "Cargo por devolución en sede distinta. Se mapea a return_fee." },
+          "discountAmount": { "type": "number", "example": 0, "description": "Monto de descuento aplicado (solo display)." },
+          "discountPercentage": { "type": "number", "example": 0, "description": "Porcentaje de descuento aplicado (solo display)." },
           "referenceToken": {
             "type": "string",
             "description": "Token requerido para crear reserva — se extrae automáticamente al body"
@@ -146,6 +155,26 @@
   },
   "security": [{ "ApiKeyAuth": [] }],
   "paths": {
+    "/api/mcp/{transport}": {
+      "post": {
+        "summary": "Servidor MCP de reservas (Streamable HTTP)",
+        "description": "Endpoint del servidor MCP (Model Context Protocol) para clientes de IA. **No es REST**: habla JSON-RPC sobre Streamable HTTP vía `mcp-handler`. Expone dos herramientas — `buscar_disponibilidad` y `crear_solicitud_reserva` — que envuelven el mismo flujo Localiza de `/api/reservations(/availability)`. El estado de cotización viaja como un `quote` opaco entre ambas (servidor stateless). Autenticación `x-api-key` con el secreto **`MCP_API_KEY`** (distinto de `RESERVATION_API_KEY`). Detalle de registro y uso del conector en el runbook (`docs/specs/issue-72-mcp-reservas/runbook.md`).",
+        "tags": ["MCP"],
+        "parameters": [
+          {
+            "name": "transport",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "example": "mcp" },
+            "description": "Segmento de transporte que resuelve mcp-handler (Streamable HTTP)."
+          }
+        ],
+        "responses": {
+          "200": { "description": "Respuesta JSON-RPC / stream MCP" },
+          "401": { "description": "x-api-key ausente o incorrecta" }
+        }
+      }
+    },
     "/api/locations": {
       "get": {
         "summary": "Directorio público de sedes",

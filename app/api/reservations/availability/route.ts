@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { getCategoryNameMap } from "@/lib/api/category-names";
-import { enrichCategoryDescriptions } from "@/lib/api/availability-enrichment";
+import { searchAvailability } from "@/lib/api/availability-service";
+import { serviceErrorToResponse } from "@/lib/api/service-error";
 
 export async function POST(request: Request) {
   // Validate API key
@@ -12,10 +12,9 @@ export async function POST(request: Request) {
     );
   }
 
-  const proxyUrl = process.env.LOCALIZA_PROXY_URL;
-  const proxyApiKey = process.env.PROXY_API_KEY;
-
-  if (!proxyUrl || !proxyApiKey) {
+  // Preserve the original ordering: the proxy-config guard runs before body
+  // parsing, so a misconfigured server 500s regardless of the body shape.
+  if (!process.env.LOCALIZA_PROXY_URL || !process.env.PROXY_API_KEY) {
     console.error("[availability] Missing LOCALIZA_PROXY_URL or PROXY_API_KEY");
     return NextResponse.json(
       { error: "Configuración del servidor incompleta" },
@@ -49,51 +48,14 @@ export async function POST(request: Request) {
   }
 
   try {
-    const proxyResponse = await fetch(`${proxyUrl}/api/localiza/availability`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": proxyApiKey,
-      },
-      body: JSON.stringify({ pickupLocation, returnLocation, pickupDateTime, returnDateTime }),
+    const result = await searchAvailability({
+      pickupLocation,
+      returnLocation,
+      pickupDateTime,
+      returnDateTime,
     });
-
-    if (!proxyResponse.ok) {
-      const errorBody = await proxyResponse.text();
-      console.error(`[availability] Proxy error ${proxyResponse.status}:`, errorBody);
-      // Localiza business errors are serialized by the proxy as structured
-      // {error, message, shortText} JSON — forward verbatim so the Nuxt client
-      // can render the matching toast. Only fall back to the generic envelope
-      // when the body is not parseable (network/HTML error pages).
-      try {
-        const parsed = JSON.parse(errorBody);
-        if (parsed && typeof parsed === "object" && typeof parsed.error === "string") {
-          return NextResponse.json(parsed, { status: proxyResponse.status });
-        }
-      } catch {
-        // fall through to the generic response below
-      }
-      return NextResponse.json(
-        { error: "Error al consultar disponibilidad" },
-        { status: 502 }
-      );
-    }
-
-    const data = await proxyResponse.json();
-    if (Array.isArray(data)) {
-      try {
-        const nameMap = await getCategoryNameMap();
-        return NextResponse.json(enrichCategoryDescriptions(data, nameMap));
-      } catch (e) {
-        console.error("[availability] category enrichment failed, serving raw:", e);
-      }
-    }
-    return NextResponse.json(data);
-  } catch (error) {
-    console.error("[availability] Request failed:", error);
-    return NextResponse.json(
-      { error: "Error al conectar con el servicio de disponibilidad" },
-      { status: 502 }
-    );
+    return NextResponse.json(result);
+  } catch (e) {
+    return serviceErrorToResponse(e);
   }
 }

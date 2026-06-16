@@ -74,7 +74,8 @@ El segmento final (`/mcp`) es el `[transport]` que resuelve `mcp-handler`.
 
    Devuelve, por gama, `{ categoria, descripcion, dias, precio_total, precio_a_pagar, iva, quote }`.
 
-   - `hora` (opcional, default `10:00`) se aplica a recogida y devolución.
+   - `hora_recogida` y `hora_devolucion` (opcionales, formato HH:mm 24h, default
+     `10:00` cada una). Para alquileres del mismo día, usa horas distintas.
    - `sede` (opcional) desambigua ciudades con varias sedes.
 
 2. La IA elige una gama y llama `crear_solicitud_reserva` con ese `quote` más los

@@ -215,6 +215,83 @@ describe("buscar_disponibilidad (SCEN-110..112)", () => {
     });
     expect(res.isError).toBe(true);
   });
+
+  // SCEN-121 — non-positive duration → clean isError, no throw, no service call.
+  it("SCEN-121: same-day/inverted/invalid range → isError without throwing or calling the service", async () => {
+    // same day, same default hour → 0 duration
+    const sameDay = await buscarDisponibilidad({
+      ciudad: "bogota",
+      fecha_recogida: "2026-07-01",
+      fecha_devolucion: "2026-07-01",
+    });
+    expect(sameDay.isError).toBe(true);
+    expect(textOf(sameDay)).toMatch(/posterior a la recogida/i);
+
+    // inverted range
+    const inverted = await buscarDisponibilidad({
+      ciudad: "bogota",
+      fecha_recogida: "2026-07-05",
+      fecha_devolucion: "2026-07-01",
+    });
+    expect(inverted.isError).toBe(true);
+
+    // unparseable date
+    const badDate = await buscarDisponibilidad({
+      ciudad: "bogota",
+      fecha_recogida: "2026-13-45",
+      fecha_devolucion: "2026-13-46",
+    });
+    expect(badDate.isError).toBe(true);
+
+    expect(vi.mocked(searchAvailability)).not.toHaveBeenCalled();
+  });
+
+  // SCEN-122 — out-of-range hour → clean isError (shape regex alone would pass).
+  it("SCEN-122: out-of-range hour → isError, no invalid datetime", async () => {
+    for (const bad of ["25:00", "10:60"]) {
+      const res = await buscarDisponibilidad({
+        ciudad: "bogota",
+        fecha_recogida: "2026-07-01",
+        fecha_devolucion: "2026-07-05",
+        hora_recogida: bad,
+      });
+      expect(res.isError).toBe(true);
+      expect(textOf(res)).toMatch(/HH:mm/i);
+    }
+    expect(vi.mocked(searchAvailability)).not.toHaveBeenCalled();
+  });
+
+  // SCEN-123 — a malformed availability item is skipped, valid ones still served.
+  it("SCEN-123: malformed item is skipped, valid categories still returned", async () => {
+    const malformed = { ...ITEM, categoryCode: "X", returnFeeAmount: undefined };
+    vi.mocked(searchAvailability).mockResolvedValue([
+      malformed as unknown as AvailabilityItem,
+      ITEM,
+    ]);
+    const res = await buscarDisponibilidad({
+      ciudad: "bogota",
+      fecha_recogida: "2026-07-01",
+      fecha_devolucion: "2026-07-05",
+    });
+    expect(res.isError).toBeFalsy();
+    const payload = JSON.parse(textOf(res));
+    expect(payload.categorias).toHaveLength(1);
+    expect(payload.categorias[0].categoria).toBe("C");
+  });
+
+  // SCEN-123 (all-fail facet) — every item unpriceable → clean isError.
+  it("SCEN-123: all items unpriceable → isError", async () => {
+    const bad = { ...ITEM, totalAmount: undefined };
+    vi.mocked(searchAvailability).mockResolvedValue([
+      bad as unknown as AvailabilityItem,
+    ]);
+    const res = await buscarDisponibilidad({
+      ciudad: "bogota",
+      fecha_recogida: "2026-07-01",
+      fecha_devolucion: "2026-07-05",
+    });
+    expect(res.isError).toBe(true);
+  });
 });
 
 describe("crear_solicitud_reserva (SCEN-113..117)", () => {
@@ -232,7 +309,8 @@ describe("crear_solicitud_reserva (SCEN-113..117)", () => {
       ciudad: "bogota",
       fecha_recogida: "2026-07-01",
       fecha_devolucion: "2026-07-05",
-      hora: "08:30",
+      hora_recogida: "08:30",
+      hora_devolucion: "08:30",
     });
     return JSON.parse(textOf(res)).categorias[0].quote;
   }

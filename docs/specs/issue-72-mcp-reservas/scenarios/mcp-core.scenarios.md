@@ -110,6 +110,32 @@ autentica por `x-api-key` (no fully-public). Los prefijos existentes intactos (d
 **Then**: `isError: true` con el texto ES del payload (`shortText ?? message ?? error`)
 **Evidence**: salida `isError` con el mensaje ES
 
+### SCEN-121: rango no-positivo → isError limpio (no excepción) — regresión review #72
+**Given**: `buscar_disponibilidad` con duración no-positiva — mismo día con `hora_recogida == hora_devolucion`,
+rango invertido (devolución antes que recogida), o fecha inválida (`2026-13-45`)
+**When**: se ejecuta (la regla de los funnels da `selected_days = 0`)
+**Then**: `isError: true` con mensaje ES ("la devolución debe ser posterior a la recogida"); **NO** lanza
+excepción no capturada ni llama a `searchAvailability`. `encodeQuote` nunca recibe `selected_days = 0`
+**Evidence**: salida `isError`; sin throw; spy de `searchAvailability` con 0 llamadas
+
+### SCEN-122: hora fuera de rango → isError limpio — regresión review #72
+**Given**: `hora_recogida` u `hora_devolucion` con formato de dígitos pero fuera de rango (`25:00`, `10:60`)
+**When**: se ejecuta
+**Then**: `isError: true` con mensaje ES sobre formato HH:mm 24h; **NO** construye un datetime inválido ni lanza
+**Evidence**: salida `isError`
+
+### SCEN-123: item de disponibilidad inválido se omite (degradación) — regresión review #72
+**Given**: el proxy devuelve un array con un item al que le falta un campo numérico (→ `NaN` en el pricing)
+junto a items válidos
+**When**: se construyen las categorías
+**Then**: el item inválido se **omite** (no rompe la respuesta); se devuelven las gamas que cotizaron bien;
+si **ninguna** cotiza, `isError` limpio
+**Evidence**: salida con las categorías válidas; el item NaN ausente; caso all-fail → `isError`
+
+> Nota: el `hora` único del diseño original se separó en `hora_recogida`/`hora_devolucion` (ambas default
+> 10:00) para permitir alquileres del mismo día — el `hora` único hacía toda búsqueda mismo-día degenerar
+> a duración 0. SCEN-110 usa los defaults (mismo resultado que antes).
+
 ---
 
 ## Step 7 — Tool `crear_solicitud_reserva` (`lib/api/mcp/tools.ts`)

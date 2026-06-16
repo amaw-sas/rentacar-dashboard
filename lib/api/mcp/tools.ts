@@ -206,12 +206,14 @@ export const buscarDisponibilidadInputSchema = {
     .string()
     .min(1)
     .describe("Fecha de devolución en formato YYYY-MM-DD."),
-  hora: z
+  hora_recogida: z
     .string()
     .optional()
-    .describe(
-      "Hora HH:mm aplicada a recogida y devolución (Fase 1 usa la misma). Default 10:00.",
-    ),
+    .describe("Hora de recogida HH:mm (24h). Default 10:00."),
+  hora_devolucion: z
+    .string()
+    .optional()
+    .describe("Hora de devolución HH:mm (24h). Default 10:00."),
   sede: z
     .string()
     .optional()
@@ -224,15 +226,39 @@ interface BuscarDisponibilidadArgs {
   ciudad: string;
   fecha_recogida: string;
   fecha_devolucion: string;
-  hora?: string;
+  hora_recogida?: string;
+  hora_devolucion?: string;
   sede?: string;
+}
+
+/**
+ * Validate an optional HH:mm (24h) hour. Returns the normalized "HH:mm" string,
+ * the default when absent, or null when present-but-out-of-range. The shape
+ * regex alone is not enough — "25:00"/"10:60" pass it but produce an Invalid Date
+ * downstream, so the range check is what prevents a corrupt datetime.
+ */
+function normalizeHora(h: string | undefined): string | null {
+  if (h === undefined || h === "") return "10:00";
+  const m = h.match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) return null;
+  const hh = Number(m[1]);
+  const mm = Number(m[2]);
+  if (hh > 23 || mm > 59) return null;
+  return `${String(hh).padStart(2, "0")}:${m[2]}`;
 }
 
 export async function buscarDisponibilidad(
   args: BuscarDisponibilidadArgs,
 ): Promise<CallToolResult> {
-  const { ciudad, fecha_recogida, fecha_devolucion, hora, sede } = args;
-  const hh = hora && /^\d{2}:\d{2}$/.test(hora) ? hora : "10:00";
+  const { ciudad, fecha_recogida, fecha_devolucion, sede } = args;
+
+  const horaR = normalizeHora(args.hora_recogida);
+  const horaD = normalizeHora(args.hora_devolucion);
+  if (horaR === null || horaD === null) {
+    return errorResult(
+      "La hora debe tener formato HH:mm de 24 horas, p. ej. 09:00 o 18:30.",
+    );
+  }
 
   let directory: LocationDirectoryItem[];
   try {
@@ -250,9 +276,18 @@ export async function buscarDisponibilidad(
     );
   }
 
-  const pickupDateTime = `${fecha_recogida}T${hh}:00`;
-  const returnDateTime = `${fecha_devolucion}T${hh}:00`;
+  const pickupDateTime = `${fecha_recogida}T${horaR}:00`;
+  const returnDateTime = `${fecha_devolucion}T${horaD}:00`;
   const selected_days = computeSelectedDays(pickupDateTime, returnDateTime);
+
+  // Non-positive duration (same instant, inverted range, or an unparseable date
+  // → NaN → 0). computeSelectedDays stays faithful to the funnel rule (0 here);
+  // we turn that into a clean ES error instead of letting encodeQuote throw.
+  if (selected_days <= 0) {
+    return errorResult(
+      "Revisa las fechas y horas: la devolución debe ser posterior a la recogida.",
+    );
+  }
 
   let result: unknown;
   try {
@@ -276,29 +311,43 @@ export async function buscarDisponibilidad(
     );
   }
 
-  const categorias = items.map((item) => {
-    const pricing = deriveStandardPricing(item);
-    const quote = encodeQuote({
-      pickupLocation: code,
-      returnLocation: code,
-      pickupDateTime,
-      returnDateTime,
-      selected_days,
-      categoryCode: item.categoryCode,
-      referenceToken: item.referenceToken,
-      rateQualifier: item.rateQualifier,
-      ...pricing,
-    });
-    return {
-      categoria: item.categoryCode,
-      descripcion: item.categoryDescription,
-      dias: selected_days,
-      precio_total: pricing.total_price,
-      precio_a_pagar: pricing.total_price_to_pay,
-      iva: pricing.iva_fee,
-      quote,
-    };
-  });
+  // Build a quote per category. A malformed item (missing numeric field → NaN →
+  // encodeQuote's zod rejects it) is SKIPPED, not allowed to crash the whole
+  // response — degrade to the categories that priced cleanly.
+  const categorias: Array<Record<string, unknown>> = [];
+  for (const item of items) {
+    try {
+      const pricing = deriveStandardPricing(item);
+      const quote = encodeQuote({
+        pickupLocation: code,
+        returnLocation: code,
+        pickupDateTime,
+        returnDateTime,
+        selected_days,
+        categoryCode: item.categoryCode,
+        referenceToken: item.referenceToken,
+        rateQualifier: item.rateQualifier,
+        ...pricing,
+      });
+      categorias.push({
+        categoria: item.categoryCode,
+        descripcion: item.categoryDescription,
+        dias: selected_days,
+        precio_total: pricing.total_price,
+        precio_a_pagar: pricing.total_price_to_pay,
+        iva: pricing.iva_fee,
+        quote,
+      });
+    } catch {
+      // skip the unpriceable category
+    }
+  }
+
+  if (categorias.length === 0) {
+    return errorResult(
+      "No pude preparar la cotización para las gamas disponibles. Intenta de nuevo más tarde.",
+    );
+  }
 
   return jsonResult({ sede: code, dias: selected_days, categorias });
 }

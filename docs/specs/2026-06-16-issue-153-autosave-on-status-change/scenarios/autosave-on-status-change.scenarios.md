@@ -229,3 +229,48 @@ habilitado (no `disabled`) y `updateReservationStatus` `not.toHaveBeenCalled()`;
 tras el 2º clic, `updateReservationStatus` `toHaveBeenCalled()`. Red verificado: si
 una bandera de carga no se limpia en el fallo, el input queda deshabilitado y el
 reintento es imposible → el assert de "habilitado" falla.
+
+## SCEN-014: durante el autoguardado en vuelo los botones de estado quedan deshabilitados (anti doble-dispatch)
+
+Hallazgo del gate de calidad (edge-case): el `await onBeforeStatusChange()` corre
+ANTES de `startTransition`, así que `isPending` es `false` durante el guardado. Con
+guardados lentos documentados (20s–2min, #100), un segundo clic dispararía un
+segundo guardado y un segundo cambio de estado → notificaciones duplicadas.
+
+**Given**: `ReservationStatusActions` con un `onBeforeStatusChange` que aún no
+resuelve (guardado en vuelo).
+**When**: el operador pulsa un botón de estado y, antes de que el callback
+resuelva, intenta pulsar otra vez (mismo u otro target).
+**Then**: tras el primer clic los botones de estado quedan **deshabilitados**
+mientras el autoguardado está en vuelo; el segundo clic no dispara un segundo
+`onBeforeStatusChange` ni un segundo `updateReservationStatus`. Al resolver, el
+flujo despacha el estado **una sola vez**.
+
+**Evidence**: test en `tests/unit/components/reservation-status-actions.test.tsx`
+con `onBeforeStatusChange` mockeado devolviendo una promesa controlada (deferred):
+tras el 1er clic los botones están `disabled` y un 2º clic no incrementa las
+llamadas; al resolver `true`, `updateReservationStatus` se llama exactamente 1×.
+Red verificado: sin la bandera `autosaving` (disable solo por `isPending`), los
+botones quedan habilitados durante el await y el 2º clic dispara una 2ª llamada.
+
+## SCEN-015: contacto inválido aborta antes de persistir el formulario (sin medio-commit)
+
+Hallazgo del gate de calidad (edge-case): si el form se persiste y luego el
+contacto falla por validación, la reserva queda escrita, el estado no cambia y el
+dirty del form se limpia → el operador cree que no pasó nada. Pre-validar el
+contacto antes de escribir el form evita el medio-commit.
+
+**Given**: el formulario con un campo `register` del form editado (dirty) **y** el
+contacto del cliente editado a un valor **inválido** (p. ej. email malformado que
+`customerContactSchema` rechaza).
+**When**: pulsa un botón de transición de estado.
+**Then**: `updateReservation` **no** se llama (no se persiste el form),
+`updateCustomerContact` **no** se llama, `updateReservationStatus` **no** se llama,
+y se muestra el error del contacto. El form no queda medio-guardado.
+
+**Evidence**: test en `tests/unit/components/reservation-form.test.tsx` que edita
+"Días reservados" y pone un email inválido en el contacto, luego pulsa estado.
+`updateReservation`, `updateCustomerContact` y `updateReservationStatus` todos
+`not.toHaveBeenCalled()`; el `customerError` visible en el DOM. Red verificado: si
+el orquestador persiste el form antes de validar el contacto, `updateReservation`
+se llama 1× y el assert de "no persiste el form" falla.

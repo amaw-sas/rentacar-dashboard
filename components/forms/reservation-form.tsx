@@ -120,6 +120,19 @@ function contactFromCustomer(
   };
 }
 
+// Single source of truth for serializing the reservation form into FormData:
+// skip null/undefined, stringify everything else. Used by both the submit path
+// and the status-change autosave so they stay byte-for-byte identical.
+function buildReservationFormData(values: ReservationFormData): FormData {
+  const fd = new FormData();
+  for (const [key, value] of Object.entries(values)) {
+    if (value != null) {
+      fd.append(key, String(value));
+    }
+  }
+  return fd;
+}
+
 export function ReservationForm({
   defaultValues,
   id,
@@ -140,6 +153,10 @@ export function ReservationForm({
     watch,
     setError,
     control,
+    trigger,
+    getValues,
+    reset,
+    formState,
     formState: { errors, isSubmitting, dirtyFields },
   } = useForm<ReservationFormData>({
     resolver: zodResolver(reservationSchema) as Resolver<ReservationFormData>,
@@ -246,16 +263,6 @@ export function ReservationForm({
     [customerDraft, customerSnapshot],
   );
 
-  // Issue #90: a status change fires its notification from live DB data. If the
-  // operator has unsaved reservation-form OR customer-contact edits, that
-  // notification would carry stale values. Block the status button until saved.
-  // Use `dirtyFields` (not `formState.isDirty`): RHF only populates it after a
-  // real change event, so it is immune to the string-vs-number mount mismatch
-  // of the numeric inputs (`register` emits strings, defaults are numbers) that
-  // would make `isDirty` report a false positive on a freshly loaded form.
-  const hasUnsavedChanges =
-    Object.keys(dirtyFields).length > 0 || isCustomerDirty;
-
   const setContactField = (
     field: keyof CustomerContactDraft,
     value: string,
@@ -263,14 +270,17 @@ export function ReservationForm({
     setCustomerDraft((prev) => ({ ...prev, [field]: value }));
   };
 
-  async function handleSaveCustomer() {
-    if (!customerId) return;
+  // Returns true only when the contact persisted. Used both by the "Guardar
+  // cliente" button (which ignores the boolean) and by the status-change
+  // orchestrator (issue #153), which aborts the status change on false.
+  async function handleSaveCustomer(): Promise<boolean> {
+    if (!customerId) return false;
     setCustomerError(null);
 
     const parsed = customerContactSchema.safeParse(customerDraft);
     if (!parsed.success) {
       setCustomerError(parsed.error.issues[0].message);
-      return;
+      return false;
     }
 
     setSavingCustomer(true);
@@ -286,7 +296,7 @@ export function ReservationForm({
 
       if (result.error) {
         setCustomerError(result.error);
-        return;
+        return false;
       }
 
       // Snapshot AND draft = exactly-persisted (trimmed) values: dirty resets
@@ -298,11 +308,13 @@ export function ReservationForm({
       setCustomerDraft(parsed.data);
       setCustomerSnapshot(parsed.data);
       router.refresh();
+      return true;
     } catch {
       // The action threw (transport/server failure) instead of returning
       // {error}. Without this, savingCustomer would stay true forever and
       // freeze the customer section with no error shown.
       setCustomerError("No se pudo guardar el cliente. Intenta de nuevo.");
+      return false;
     } finally {
       setSavingCustomer(false);
     }
@@ -330,12 +342,7 @@ export function ReservationForm({
   }, [bookingType, extraDriver, babySeat, washValue, totalInsurance, setValue]);
 
   async function onSubmit(data: ReservationFormData) {
-    const formData = new FormData();
-    for (const [key, value] of Object.entries(data)) {
-      if (value != null) {
-        formData.append(key, String(value));
-      }
-    }
+    const formData = buildReservationFormData(data);
 
     const result = isEditing
       ? await updateReservation(id, formData)
@@ -359,6 +366,66 @@ export function ReservationForm({
       message: `Revisa los campos con error — ${details}`,
     });
   }
+
+  // Issue #153: persist the reservation form in place (no navigation) for the
+  // status-change autosave. Returns true only on success. We use `trigger()`
+  // (not `handleSubmit`, which resolves void) so the async caller can branch on
+  // the validation result.
+  async function persistReservation(): Promise<boolean> {
+    // Localized invariant: the in-place save only exists on edit (the status
+    // buttons only render when editing). Guard here so the `id` is non-null
+    // without a `!` assertion leaking down.
+    if (!id) return false;
+
+    const valid = await trigger();
+    if (!valid) {
+      // Read errors FRESH from formState — the `errors` destructured above is
+      // closed over and may be stale inside this async function.
+      onInvalid(
+        formState.errors as Record<string, { message?: string } | undefined>,
+      );
+      return false;
+    }
+
+    const fd = buildReservationFormData(getValues());
+
+    const result = await updateReservation(id, fd);
+    if (result.error) {
+      setError("root", { message: result.error });
+      return false;
+    }
+
+    // Reset to the just-saved values so `dirtyFields` clears — a subsequent
+    // status change won't re-save an unchanged form (SCEN-012).
+    reset(getValues());
+    return true;
+  }
+
+  // Orchestrator handed to ReservationStatusActions. Autosaves whatever is dirty
+  // before the status dispatch; resolving false aborts it. A no-op (nothing
+  // dirty) resolves true.
+  //
+  // Pre-validate the customer DRAFT before writing the form (SCEN-015): if the
+  // contact is invalid we must abort BEFORE persisting the reservation, or the
+  // form half-commits (written + dirty cleared) while the contact and status
+  // never change — the operator sees no error and assumes nothing happened.
+  // handleSaveCustomer still re-parses internally; this guard only fast-fails.
+  const onBeforeStatusChange = async (): Promise<boolean> => {
+    if (isCustomerDirty) {
+      const parsed = customerContactSchema.safeParse(customerDraft);
+      if (!parsed.success) {
+        setCustomerError(parsed.error.issues[0].message);
+        return false;
+      }
+    }
+    if (Object.keys(dirtyFields).length > 0) {
+      if (!(await persistReservation())) return false;
+    }
+    if (isCustomerDirty) {
+      if (!(await handleSaveCustomer())) return false;
+    }
+    return true;
+  };
 
   const persistedStatus = (defaultValues?.status ?? "nueva") as ReservationStatus;
 
@@ -505,7 +572,7 @@ export function ReservationForm({
             <ReservationStatusActions
               reservationId={id}
               currentStatus={persistedStatus}
-              hasUnsavedChanges={hasUnsavedChanges}
+              onBeforeStatusChange={onBeforeStatusChange}
             />
           </CardContent>
         </Card>

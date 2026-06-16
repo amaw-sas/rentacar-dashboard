@@ -7,7 +7,10 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { ReservationForm } from "@/components/forms/reservation-form";
-import { updateReservationStatus } from "@/lib/actions/reservations";
+import {
+  updateReservation,
+  updateReservationStatus,
+} from "@/lib/actions/reservations";
 
 const { refreshSpy, updateCustomerContactSpy } = vi.hoisted(() => ({
   refreshSpy: vi.fn(),
@@ -617,37 +620,121 @@ describe("ReservationForm — issue #75: linked customer outside the getCustomer
   });
 });
 
-// Issue #90: the status transition button reads the reservation live from the
-// DB. If the operator has unsaved form/customer edits, the notification would
-// fire with stale data. The form must block the status change until saved.
-describe("ReservationForm — status guard on unsaved changes (issue #90)", () => {
+// Issue #153 (supersedes #90 SCEN-001..003, 005, 007, 008): the status
+// transition button reads the reservation live from the DB. Instead of BLOCKING
+// on unsaved form/customer edits (#90), the form now AUTOSAVES whatever is dirty
+// (form via updateReservation + reset, customer contact via handleSaveCustomer)
+// BEFORE dispatching the status — so the notification still fires with fresh
+// data. If the save fails, the status change is aborted and the error is shown.
+describe("ReservationForm — autosave on status change (issue #153)", () => {
   const statusSpy = vi.mocked(updateReservationStatus);
+  const updateReservationSpy = vi.mocked(updateReservation);
   const EDIT_ID = "55555555-5555-5555-5555-555555555555";
+
+  // reservationSchema validates the relation fields with zod `.uuid()`, which in
+  // zod 4 enforces the version/variant nibbles — so the repeated-digit ids used
+  // elsewhere ("11111111-…") FAIL. The autosave tests must mount a form whose
+  // trigger() actually passes, so this block uses RFC-4122-compliant ids
+  // (version 4, variant 8) for every zod-validated relation.
+  const validCustomers = [
+    {
+      id: "11111111-1111-4111-8111-111111111111",
+      first_name: "Daniela",
+      last_name: "Carreño",
+      identification_type: "CC",
+      identification_number: "1007489090",
+      phone: "+57 312 4366514",
+      email: "dc005241@gmail.com",
+    },
+  ];
+  const validRentalCompanies = [
+    { id: "22222222-2222-4222-8222-222222222222", name: "Localiza" },
+  ];
+  const validLocations = [
+    { id: "33333333-3333-4333-8333-333333333333", name: "Manizales Mall Plaza" },
+  ];
+  const validVehicleCategories = [
+    {
+      id: "55555555-5555-4555-8555-555555555555",
+      code: "ECON",
+      name: "Económico",
+      rental_company_id: validRentalCompanies[0].id,
+      status: "active",
+    },
+  ];
+
+  // A fully-valid mounted reservation: every required field (uuids + dates +
+  // hours + selected_days) satisfies reservationSchema, so persistReservation's
+  // trigger() passes and the form actually saves. Tests that need an INVALID
+  // form (SCEN-005) clear a single required field after mount.
+  const VALID_EDIT = {
+    customer_id: validCustomers[0].id,
+    rental_company_id: validRentalCompanies[0].id,
+    pickup_location_id: validLocations[0].id,
+    return_location_id: validLocations[0].id,
+    category_code: validVehicleCategories[0].code,
+    pickup_date: "2026-07-01",
+    pickup_hour: "10:00",
+    return_date: "2026-07-05",
+    return_hour: "10:00",
+    selected_days: 5,
+    status: "nueva",
+  } as Parameters<typeof ReservationForm>[0]["defaultValues"];
+
+  const renderValid = (
+    overrides?: Partial<NonNullable<Parameters<typeof ReservationForm>[0]["defaultValues"]>>,
+  ) =>
+    render(
+      <ReservationForm
+        id={EDIT_ID}
+        defaultValues={{
+          ...VALID_EDIT,
+          ...overrides,
+        } as Parameters<typeof ReservationForm>[0]["defaultValues"]}
+        customers={validCustomers}
+        rentalCompanies={validRentalCompanies}
+        locations={validLocations}
+        referrals={referrals}
+        vehicleCategories={validVehicleCategories}
+      />,
+    );
 
   afterEach(() => {
     cleanup();
     statusSpy.mockReset();
+    updateReservationSpy.mockReset();
+    updateCustomerContactSpy.mockReset();
   });
 
-  // SCEN-001: editing a reservation form field (no save) blocks the status change.
-  it("blocks the status change when a form field has unsaved edits", async () => {
+  // SCEN-001: editing a `register` form field autosaves the reservation
+  // (updateReservation) BEFORE dispatching the status (updateReservationStatus).
+  it("autosaves the form then changes the status when a register field is edited", async () => {
+    updateReservationSpy.mockResolvedValue({});
     statusSpy.mockResolvedValue({});
-    renderForm({ id: EDIT_ID, defaultStatus: "nueva" });
+    renderValid({ selected_days: 5 });
 
-    fireEvent.change(screen.getByLabelText("Código de reserva"), {
-      target: { value: "NEWCODE123" },
+    fireEvent.change(screen.getByLabelText("Días reservados"), {
+      target: { value: "7" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Reservado" }));
 
     await waitFor(() =>
-      expect(screen.getByText(/cambios sin guardar/i)).toBeInTheDocument(),
+      expect(statusSpy).toHaveBeenCalledWith(EDIT_ID, "reservado"),
     );
-    expect(statusSpy).not.toHaveBeenCalled();
+    expect(updateReservationSpy).toHaveBeenCalled();
+    // Save ran before the status dispatch.
+    expect(
+      updateReservationSpy.mock.invocationCallOrder[0],
+    ).toBeLessThan(statusSpy.mock.invocationCallOrder[0]);
+    // The new value reached the persisted FormData.
+    const [, fd] = updateReservationSpy.mock.calls[0];
+    expect((fd as FormData).get("selected_days")).toBe("7");
   });
 
-  // SCEN-002: editing the inline customer contact (no "Guardar cliente") blocks
-  // the status change, even with the reservation form itself clean.
-  it("blocks the status change when the customer contact has unsaved edits", async () => {
+  // SCEN-002: editing the inline customer contact autosaves it
+  // (updateCustomerContact) BEFORE the status dispatch.
+  it("autosaves the customer contact then changes the status", async () => {
+    updateCustomerContactSpy.mockResolvedValue({});
     statusSpy.mockResolvedValue({});
     renderForm({
       id: EDIT_ID,
@@ -658,18 +745,53 @@ describe("ReservationForm — status guard on unsaved changes (issue #90)", () =
     });
 
     fireEvent.change(screen.getByLabelText("Email"), {
-      target: { value: "singuardar@mail.com" },
+      target: { value: "nuevo@mail.com" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Reservado" }));
 
     await waitFor(() =>
-      expect(screen.getByText(/cambios sin guardar/i)).toBeInTheDocument(),
+      expect(statusSpy).toHaveBeenCalledWith(EDIT_ID, "reservado"),
     );
-    expect(statusSpy).not.toHaveBeenCalled();
+    expect(updateCustomerContactSpy).toHaveBeenCalled();
+    expect(
+      updateCustomerContactSpy.mock.invocationCallOrder[0],
+    ).toBeLessThan(statusSpy.mock.invocationCallOrder[0]);
   });
 
-  // SCEN-003: with nothing unsaved, the status change fires normally.
-  it("fires the status change when there are no unsaved edits", async () => {
+  // SCEN-003: both form and contact dirty → both persist before the status,
+  // which fires exactly once.
+  it("autosaves both the form and the contact before the status change", async () => {
+    updateReservationSpy.mockResolvedValue({});
+    updateCustomerContactSpy.mockResolvedValue({});
+    statusSpy.mockResolvedValue({});
+    renderValid({ selected_days: 5 });
+
+    fireEvent.change(screen.getByLabelText("Días reservados"), {
+      target: { value: "7" },
+    });
+    fireEvent.change(screen.getByLabelText("Email"), {
+      target: { value: "nuevo@mail.com" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Reservado" }));
+
+    await waitFor(() =>
+      expect(statusSpy).toHaveBeenCalledWith(EDIT_ID, "reservado"),
+    );
+    expect(updateReservationSpy).toHaveBeenCalled();
+    expect(updateCustomerContactSpy).toHaveBeenCalled();
+    expect(statusSpy).toHaveBeenCalledTimes(1);
+    expect(
+      updateReservationSpy.mock.invocationCallOrder[0],
+    ).toBeLessThan(statusSpy.mock.invocationCallOrder[0]);
+    expect(
+      updateCustomerContactSpy.mock.invocationCallOrder[0],
+    ).toBeLessThan(statusSpy.mock.invocationCallOrder[0]);
+  });
+
+  // SCEN-004: nothing dirty → no autosave (no-op), status fires directly.
+  it("does not autosave when nothing is dirty", async () => {
+    updateReservationSpy.mockResolvedValue({});
+    updateCustomerContactSpy.mockResolvedValue({});
     statusSpy.mockResolvedValue({});
     renderForm({
       id: EDIT_ID,
@@ -684,13 +806,78 @@ describe("ReservationForm — status guard on unsaved changes (issue #90)", () =
     await waitFor(() =>
       expect(statusSpy).toHaveBeenCalledWith(EDIT_ID, "reservado"),
     );
-    expect(screen.queryByText(/cambios sin guardar/i)).toBeNull();
+    expect(updateReservationSpy).not.toHaveBeenCalled();
+    expect(updateCustomerContactSpy).not.toHaveBeenCalled();
   });
 
-  // SCEN-004: regression guard for RHF false-dirty. A freshly mounted edit form
-  // with realistic numeric defaults (selected_days/coverage_days/extra_hours are
-  // numbers, but `register` emits strings) must NOT be considered dirty on mount.
-  it("does not block on a freshly loaded form with numeric defaults (no false-dirty)", async () => {
+  // SCEN-005: an invalid required form field (empty "Día recogida") aborts —
+  // the form does not persist, the status is not dispatched, and a validation
+  // error shows in the root error slot.
+  it("aborts the status change when the form is invalid", async () => {
+    updateReservationSpy.mockResolvedValue({});
+    statusSpy.mockResolvedValue({});
+    renderValid();
+
+    // Clear a required field → zod .min(1) fails.
+    fireEvent.change(screen.getByLabelText("Día recogida"), {
+      target: { value: "" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Reservado" }));
+
+    await waitFor(() =>
+      expect(screen.getByText(/Revisa los campos con error/i)).toBeInTheDocument(),
+    );
+    expect(updateReservationSpy).not.toHaveBeenCalled();
+    expect(statusSpy).not.toHaveBeenCalled();
+  });
+
+  // SCEN-006: a server error from updateReservation aborts — the status is not
+  // dispatched and the error is shown in the root slot.
+  it("aborts the status change when the save returns a server error", async () => {
+    updateReservationSpy.mockResolvedValue({ error: "boom" });
+    statusSpy.mockResolvedValue({});
+    renderValid({ selected_days: 5 });
+
+    fireEvent.change(screen.getByLabelText("Días reservados"), {
+      target: { value: "7" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Reservado" }));
+
+    await waitFor(() => expect(updateReservationSpy).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(screen.getByText("boom")).toBeInTheDocument(),
+    );
+    expect(statusSpy).not.toHaveBeenCalled();
+  });
+
+  // SCEN-007 (form half): a dangerous target with a dirty field — cancelling the
+  // window.confirm aborts before ANY save or status dispatch.
+  it("does not autosave or change status when a dangerous-target confirm is cancelled", async () => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    updateReservationSpy.mockResolvedValue({});
+    updateCustomerContactSpy.mockResolvedValue({});
+    statusSpy.mockResolvedValue({});
+    renderValid({ selected_days: 5 });
+
+    fireEvent.change(screen.getByLabelText("Días reservados"), {
+      target: { value: "7" },
+    });
+    // "Cancelado" is a dangerous target → triggers window.confirm.
+    fireEvent.click(screen.getByRole("button", { name: "Cancelado" }));
+
+    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    expect(updateReservationSpy).not.toHaveBeenCalled();
+    expect(updateCustomerContactSpy).not.toHaveBeenCalled();
+    expect(statusSpy).not.toHaveBeenCalled();
+
+    confirmSpy.mockRestore();
+  });
+
+  // SCEN-008: regression guard for RHF false-dirty. A freshly mounted edit form
+  // with realistic numeric defaults (numbers vs `register` strings) must NOT be
+  // considered dirty → no spurious autosave; the status still fires.
+  it("does not autosave on a freshly loaded form with numeric defaults (no false-dirty)", async () => {
+    updateReservationSpy.mockResolvedValue({});
     statusSpy.mockResolvedValue({});
     renderForm({
       id: EDIT_ID,
@@ -704,86 +891,19 @@ describe("ReservationForm — status guard on unsaved changes (issue #90)", () =
       } as Parameters<typeof ReservationForm>[0]["defaultValues"],
     });
 
-    // No interaction with any field — just click the status button.
+    // No interaction — just click the status button.
     fireEvent.click(screen.getByRole("button", { name: "Reservado" }));
 
     await waitFor(() =>
       expect(statusSpy).toHaveBeenCalledWith(EDIT_ID, "reservado"),
     );
-    expect(screen.queryByText(/cambios sin guardar/i)).toBeNull();
-  });
-
-  // SCEN-005: saving the customer contact resets its dirty state in place and
-  // unblocks the status change without a page reload.
-  it("unblocks the status change after saving the customer contact", async () => {
-    statusSpy.mockResolvedValue({});
-    updateCustomerContactSpy.mockResolvedValueOnce({});
-    renderForm({
-      id: EDIT_ID,
-      defaultValues: {
-        customer_id: customers[0].id,
-        status: "nueva",
-      } as Parameters<typeof ReservationForm>[0]["defaultValues"],
-    });
-
-    const email = screen.getByLabelText("Email") as HTMLInputElement;
-    fireEvent.change(email, { target: { value: "nuevo@mail.com" } });
-
-    // While dirty, the status change is blocked.
-    fireEvent.click(screen.getByRole("button", { name: "Reservado" }));
-    await waitFor(() =>
-      expect(screen.getByText(/cambios sin guardar/i)).toBeInTheDocument(),
-    );
-    expect(statusSpy).not.toHaveBeenCalled();
-
-    // Save the customer → isCustomerDirty resets in place.
-    fireEvent.click(screen.getByRole("button", { name: "Guardar cliente" }));
-    await waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: "Guardar cliente" }),
-      ).toBeDisabled(),
-    );
-
-    // Now the status change fires.
-    fireEvent.click(screen.getByRole("button", { name: "Reservado" }));
-    await waitFor(() =>
-      expect(statusSpy).toHaveBeenCalledWith(EDIT_ID, "reservado"),
-    );
-  });
-
-  // SCEN-008: a field persisted via setValue (NOT register) must still count as
-  // an unsaved change. This is the exact footgun class from the issue — the
-  // pickup-location change (Ibagué→Neiva) goes through setValue. Radix Select
-  // options don't render in jsdom, so we drive the equivalent setValue path via
-  // the "Conductor adicional" checkbox; the Select fields (location, franchise,
-  // category…) share the identical `setValue(..., { shouldDirty: true })` wiring,
-  // so this guards the whole class against being invisible to `dirtyFields`.
-  it("blocks the status change when a setValue field (checkbox) is edited", async () => {
-    statusSpy.mockResolvedValue({});
-    renderForm({
-      id: EDIT_ID,
-      defaultValues: {
-        customer_id: customers[0].id,
-        status: "nueva",
-      } as Parameters<typeof ReservationForm>[0]["defaultValues"],
-    });
-
-    // Toggling this checkbox persists via setValue("extra_driver", …), not register.
-    fireEvent.click(screen.getByLabelText("Conductor adicional"));
-
-    fireEvent.click(screen.getByRole("button", { name: "Reservado" }));
-
-    await waitFor(() =>
-      expect(screen.getByText(/cambios sin guardar/i)).toBeInTheDocument(),
-    );
-    expect(statusSpy).not.toHaveBeenCalled();
+    expect(updateReservationSpy).not.toHaveBeenCalled();
   });
 
   // SCEN-009: editing a numeric register input and reverting it to the EXACT
-  // original value must clear the dirty flag, not leave a permanent block. RHF
-  // compares the DOM string to the numeric default; without valueAsNumber,
-  // "5" !== 5 keeps the field dirty forever (a spurious block).
-  it("does not block after a numeric field is edited then reverted to its original value", async () => {
+  // original value clears the dirty flag → no autosave; the status still fires.
+  it("does not autosave after a numeric field is edited then reverted", async () => {
+    updateReservationSpy.mockResolvedValue({});
     statusSpy.mockResolvedValue({});
     renderForm({
       id: EDIT_ID,
@@ -803,6 +923,111 @@ describe("ReservationForm — status guard on unsaved changes (issue #90)", () =
     await waitFor(() =>
       expect(statusSpy).toHaveBeenCalledWith(EDIT_ID, "reservado"),
     );
-    expect(screen.queryByText(/cambios sin guardar/i)).toBeNull();
+    expect(updateReservationSpy).not.toHaveBeenCalled();
+  });
+
+  // SCEN-010: a field persisted via setValue (NOT register) must count as dirty
+  // and be autosaved. Radix Select options don't render in jsdom, so we drive
+  // the equivalent setValue path via the "Conductor adicional" checkbox; the
+  // Select fields (location, franchise, category…) share the identical
+  // `setValue(..., { shouldDirty: true })` wiring.
+  it("autosaves a setValue field (checkbox) then changes the status", async () => {
+    updateReservationSpy.mockResolvedValue({});
+    statusSpy.mockResolvedValue({});
+    renderValid();
+
+    // Toggling this checkbox persists via setValue("extra_driver", …) with
+    // shouldDirty.
+    fireEvent.click(screen.getByLabelText("Conductor adicional"));
+    fireEvent.click(screen.getByRole("button", { name: "Reservado" }));
+
+    await waitFor(() =>
+      expect(statusSpy).toHaveBeenCalledWith(EDIT_ID, "reservado"),
+    );
+    expect(updateReservationSpy).toHaveBeenCalled();
+    expect(
+      updateReservationSpy.mock.invocationCallOrder[0],
+    ).toBeLessThan(statusSpy.mock.invocationCallOrder[0]);
+  });
+
+  // SCEN-012: after autosaving, the form is reset (reset(getValues) clears
+  // dirtyFields). A second status click without touching any field must NOT
+  // re-save the form.
+  it("does not re-autosave on a second status change after the form was reset", async () => {
+    updateReservationSpy.mockResolvedValue({});
+    statusSpy.mockResolvedValue({});
+    renderValid({ selected_days: 5 });
+
+    fireEvent.change(screen.getByLabelText("Días reservados"), {
+      target: { value: "7" },
+    });
+    // First status click → autosaves once.
+    fireEvent.click(screen.getByRole("button", { name: "Reservado" }));
+    await waitFor(() =>
+      expect(updateReservationSpy).toHaveBeenCalledTimes(1),
+    );
+    await waitFor(() => expect(statusSpy).toHaveBeenCalledTimes(1));
+
+    // Second status click without touching any field.
+    fireEvent.click(screen.getByRole("button", { name: "Pendiente" }));
+    await waitFor(() => expect(statusSpy).toHaveBeenCalledTimes(2));
+    // Form was reset → still only one save.
+    expect(updateReservationSpy).toHaveBeenCalledTimes(1);
+  });
+
+  // SCEN-013: after a failed save, the form stays editable (loading flags
+  // cleared) and a retry succeeds. First save returns {error}, second resolves.
+  it("keeps the form editable after a failed save and allows retry", async () => {
+    updateReservationSpy
+      .mockResolvedValueOnce({ error: "boom" })
+      .mockResolvedValueOnce({});
+    statusSpy.mockResolvedValue({});
+    renderValid({ selected_days: 5 });
+
+    const dias = screen.getByLabelText("Días reservados") as HTMLInputElement;
+    fireEvent.change(dias, { target: { value: "7" } });
+
+    // First attempt fails: status not dispatched, error shown, field editable.
+    fireEvent.click(screen.getByRole("button", { name: "Reservado" }));
+    await waitFor(() =>
+      expect(screen.getByText("boom")).toBeInTheDocument(),
+    );
+    expect(statusSpy).not.toHaveBeenCalled();
+    expect(dias).not.toBeDisabled();
+
+    // Retry: second save succeeds, status dispatches.
+    fireEvent.click(screen.getByRole("button", { name: "Reservado" }));
+    await waitFor(() =>
+      expect(statusSpy).toHaveBeenCalledWith(EDIT_ID, "reservado"),
+    );
+  });
+
+  // SCEN-015: with the form dirty AND the customer contact invalid, the contact
+  // must be pre-validated BEFORE the form is written — otherwise the form
+  // half-commits while the contact and status never change. Nothing persists.
+  it("aborts before persisting the form when the customer contact is invalid", async () => {
+    updateReservationSpy.mockResolvedValue({});
+    updateCustomerContactSpy.mockResolvedValue({});
+    statusSpy.mockResolvedValue({});
+    renderValid({ selected_days: 5 });
+
+    // Form dirty.
+    fireEvent.change(screen.getByLabelText("Días reservados"), {
+      target: { value: "7" },
+    });
+    // Customer contact dirty AND invalid.
+    fireEvent.change(screen.getByLabelText("Email"), {
+      target: { value: "noesunemail" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Reservado" }));
+
+    await waitFor(() =>
+      expect(screen.getByText("Email inválido")).toBeInTheDocument(),
+    );
+    // No half-commit: neither write happened, status not dispatched.
+    expect(updateReservationSpy).not.toHaveBeenCalled();
+    expect(updateCustomerContactSpy).not.toHaveBeenCalled();
+    expect(statusSpy).not.toHaveBeenCalled();
   });
 });

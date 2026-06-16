@@ -120,6 +120,19 @@ function contactFromCustomer(
   };
 }
 
+// Single source of truth for serializing the reservation form into FormData:
+// skip null/undefined, stringify everything else. Used by both the submit path
+// and the status-change autosave so they stay byte-for-byte identical.
+function buildReservationFormData(values: ReservationFormData): FormData {
+  const fd = new FormData();
+  for (const [key, value] of Object.entries(values)) {
+    if (value != null) {
+      fd.append(key, String(value));
+    }
+  }
+  return fd;
+}
+
 export function ReservationForm({
   defaultValues,
   id,
@@ -140,7 +153,11 @@ export function ReservationForm({
     watch,
     setError,
     control,
-    formState: { errors, isSubmitting },
+    trigger,
+    getValues,
+    reset,
+    formState,
+    formState: { errors, isSubmitting, dirtyFields },
   } = useForm<ReservationFormData>({
     resolver: zodResolver(reservationSchema) as Resolver<ReservationFormData>,
     defaultValues: {
@@ -253,14 +270,17 @@ export function ReservationForm({
     setCustomerDraft((prev) => ({ ...prev, [field]: value }));
   };
 
-  async function handleSaveCustomer() {
-    if (!customerId) return;
+  // Returns true only when the contact persisted. Used both by the "Guardar
+  // cliente" button (which ignores the boolean) and by the status-change
+  // orchestrator (issue #153), which aborts the status change on false.
+  async function handleSaveCustomer(): Promise<boolean> {
+    if (!customerId) return false;
     setCustomerError(null);
 
     const parsed = customerContactSchema.safeParse(customerDraft);
     if (!parsed.success) {
       setCustomerError(parsed.error.issues[0].message);
-      return;
+      return false;
     }
 
     setSavingCustomer(true);
@@ -276,7 +296,7 @@ export function ReservationForm({
 
       if (result.error) {
         setCustomerError(result.error);
-        return;
+        return false;
       }
 
       // Snapshot AND draft = exactly-persisted (trimmed) values: dirty resets
@@ -288,11 +308,13 @@ export function ReservationForm({
       setCustomerDraft(parsed.data);
       setCustomerSnapshot(parsed.data);
       router.refresh();
+      return true;
     } catch {
       // The action threw (transport/server failure) instead of returning
       // {error}. Without this, savingCustomer would stay true forever and
       // freeze the customer section with no error shown.
       setCustomerError("No se pudo guardar el cliente. Intenta de nuevo.");
+      return false;
     } finally {
       setSavingCustomer(false);
     }
@@ -320,12 +342,7 @@ export function ReservationForm({
   }, [bookingType, extraDriver, babySeat, washValue, totalInsurance, setValue]);
 
   async function onSubmit(data: ReservationFormData) {
-    const formData = new FormData();
-    for (const [key, value] of Object.entries(data)) {
-      if (value != null) {
-        formData.append(key, String(value));
-      }
-    }
+    const formData = buildReservationFormData(data);
 
     const result = isEditing
       ? await updateReservation(id, formData)
@@ -350,6 +367,66 @@ export function ReservationForm({
     });
   }
 
+  // Issue #153: persist the reservation form in place (no navigation) for the
+  // status-change autosave. Returns true only on success. We use `trigger()`
+  // (not `handleSubmit`, which resolves void) so the async caller can branch on
+  // the validation result.
+  async function persistReservation(): Promise<boolean> {
+    // Localized invariant: the in-place save only exists on edit (the status
+    // buttons only render when editing). Guard here so the `id` is non-null
+    // without a `!` assertion leaking down.
+    if (!id) return false;
+
+    const valid = await trigger();
+    if (!valid) {
+      // Read errors FRESH from formState — the `errors` destructured above is
+      // closed over and may be stale inside this async function.
+      onInvalid(
+        formState.errors as Record<string, { message?: string } | undefined>,
+      );
+      return false;
+    }
+
+    const fd = buildReservationFormData(getValues());
+
+    const result = await updateReservation(id, fd);
+    if (result.error) {
+      setError("root", { message: result.error });
+      return false;
+    }
+
+    // Reset to the just-saved values so `dirtyFields` clears — a subsequent
+    // status change won't re-save an unchanged form (SCEN-012).
+    reset(getValues());
+    return true;
+  }
+
+  // Orchestrator handed to ReservationStatusActions. Autosaves whatever is dirty
+  // before the status dispatch; resolving false aborts it. A no-op (nothing
+  // dirty) resolves true.
+  //
+  // Pre-validate the customer DRAFT before writing the form (SCEN-015): if the
+  // contact is invalid we must abort BEFORE persisting the reservation, or the
+  // form half-commits (written + dirty cleared) while the contact and status
+  // never change — the operator sees no error and assumes nothing happened.
+  // handleSaveCustomer still re-parses internally; this guard only fast-fails.
+  const onBeforeStatusChange = async (): Promise<boolean> => {
+    if (isCustomerDirty) {
+      const parsed = customerContactSchema.safeParse(customerDraft);
+      if (!parsed.success) {
+        setCustomerError(parsed.error.issues[0].message);
+        return false;
+      }
+    }
+    if (Object.keys(dirtyFields).length > 0) {
+      if (!(await persistReservation())) return false;
+    }
+    if (isCustomerDirty) {
+      if (!(await handleSaveCustomer())) return false;
+    }
+    return true;
+  };
+
   const persistedStatus = (defaultValues?.status ?? "nueva") as ReservationStatus;
 
   return (
@@ -368,7 +445,10 @@ export function ReservationForm({
               options={customerOptions}
               value={customerId}
               onChange={(value) =>
-                setValue("customer_id", value, { shouldValidate: true })
+                setValue("customer_id", value, {
+                  shouldValidate: true,
+                  shouldDirty: true,
+                })
               }
               getId={(c) => c.id}
               getLabel={(c) => `${c.first_name} ${c.last_name}`.trim()}
@@ -410,7 +490,17 @@ export function ReservationForm({
 
             <div className="space-y-2">
               <Label htmlFor="customer_id_type">Tipo identificación</Label>
+              {/*
+                Radix Select renders <SelectValue> from the value present at
+                mount; a value applied later (the re-seed effect, or a customer
+                switch) is NOT reflected in the trigger text. The draft starts
+                as EMPTY_CONTACT ("CC"), so only CC ever displayed — every other
+                stored type (CE/NIT/PP/TI) fell back to the placeholder (#140).
+                Keying the Select on the value forces a remount whenever it
+                changes, so the trigger always re-resolves to the seeded type.
+              */}
               <Select
+                key={customerDraft.identification_type}
                 value={customerDraft.identification_type}
                 onValueChange={(value) =>
                   setContactField("identification_type", value)
@@ -492,6 +582,7 @@ export function ReservationForm({
             <ReservationStatusActions
               reservationId={id}
               currentStatus={persistedStatus}
+              onBeforeStatusChange={onBeforeStatusChange}
             />
           </CardContent>
         </Card>
@@ -509,7 +600,9 @@ export function ReservationForm({
             <Label htmlFor="category_code">Categoría</Label>
             <Select
               value={categoryCode ?? ""}
-              onValueChange={(value) => setValue("category_code", value)}
+              onValueChange={(value) =>
+                setValue("category_code", value, { shouldDirty: true })
+              }
               disabled={!rentalCompanyId}
             >
               <SelectTrigger id="category_code" className="w-full min-w-0">
@@ -545,7 +638,9 @@ export function ReservationForm({
             <Label htmlFor="rental_company_id">Rentadora</Label>
             <Select
               value={rentalCompanyId}
-              onValueChange={(value) => setValue("rental_company_id", value)}
+              onValueChange={(value) =>
+                setValue("rental_company_id", value, { shouldDirty: true })
+              }
             >
               <SelectTrigger id="rental_company_id">
                 <SelectValue placeholder="Seleccionar rentadora" />
@@ -570,7 +665,7 @@ export function ReservationForm({
             <Select
               value={bookingType}
               onValueChange={(value: (typeof BOOKING_TYPES)[number]) =>
-                setValue("booking_type", value)
+                setValue("booking_type", value, { shouldDirty: true })
               }
             >
               <SelectTrigger id="booking_type">
@@ -656,7 +751,9 @@ export function ReservationForm({
               <Label htmlFor="pickup_location_id">Lugar recogida</Label>
               <Select
                 value={pickupLocationId}
-                onValueChange={(value) => setValue("pickup_location_id", value)}
+                onValueChange={(value) =>
+                  setValue("pickup_location_id", value, { shouldDirty: true })
+                }
               >
                 <SelectTrigger id="pickup_location_id">
                   <SelectValue placeholder="Seleccionar ubicación" />
@@ -702,7 +799,9 @@ export function ReservationForm({
               <Label htmlFor="return_location_id">Lugar retorno</Label>
               <Select
                 value={returnLocationId}
-                onValueChange={(value) => setValue("return_location_id", value)}
+                onValueChange={(value) =>
+                  setValue("return_location_id", value, { shouldDirty: true })
+                }
               >
                 <SelectTrigger id="return_location_id">
                   <SelectValue placeholder="Seleccionar ubicación" />
@@ -750,7 +849,9 @@ export function ReservationForm({
                 id="selected_days"
                 type="number"
                 min={1}
-                {...register("selected_days")}
+                {...register("selected_days", {
+                  setValueAs: (v) => (v === "" ? 0 : Number(v)),
+                })}
               />
               {errors.selected_days && (
                 <p className="text-sm text-destructive">
@@ -774,7 +875,7 @@ export function ReservationForm({
             <Select
               value={franchise}
               onValueChange={(value: (typeof FRANCHISES)[number]) =>
-                setValue("franchise", value)
+                setValue("franchise", value, { shouldDirty: true })
               }
             >
               <SelectTrigger id="franchise">
@@ -800,7 +901,9 @@ export function ReservationForm({
             <Select
               value={referralId ?? "none"}
               onValueChange={(value) =>
-                setValue("referral_id", value === "none" ? null : value)
+                setValue("referral_id", value === "none" ? null : value, {
+                  shouldDirty: true,
+                })
               }
               disabled={isEditing}
             >
@@ -870,7 +973,9 @@ export function ReservationForm({
               id="total_insurance"
               checked={totalInsurance}
               onCheckedChange={(checked) =>
-                setValue("total_insurance", checked === true)
+                setValue("total_insurance", checked === true, {
+                  shouldDirty: true,
+                })
               }
             />
             <Label htmlFor="total_insurance" className="cursor-pointer">
@@ -894,7 +999,9 @@ export function ReservationForm({
               id="extra_driver"
               checked={extraDriver}
               onCheckedChange={(checked) =>
-                setValue("extra_driver", checked === true)
+                setValue("extra_driver", checked === true, {
+                  shouldDirty: true,
+                })
               }
             />
             <Label htmlFor="extra_driver" className="cursor-pointer">
@@ -907,7 +1014,9 @@ export function ReservationForm({
               id="baby_seat"
               checked={babySeat}
               onCheckedChange={(checked) =>
-                setValue("baby_seat", checked === true)
+                setValue("baby_seat", checked === true, {
+                  shouldDirty: true,
+                })
               }
             />
             <Label htmlFor="baby_seat" className="cursor-pointer">
@@ -920,7 +1029,7 @@ export function ReservationForm({
               id="wash"
               checked={washValue}
               onCheckedChange={(checked) =>
-                setValue("wash", checked === true)
+                setValue("wash", checked === true, { shouldDirty: true })
               }
             />
             <Label htmlFor="wash" className="cursor-pointer">
@@ -1003,7 +1112,9 @@ export function ReservationForm({
               id="coverage_days"
               type="number"
               min={0}
-              {...register("coverage_days")}
+              {...register("coverage_days", {
+                setValueAs: (v) => (v === "" ? 0 : Number(v)),
+              })}
             />
           </div>
 
@@ -1045,7 +1156,9 @@ export function ReservationForm({
               id="extra_hours"
               type="number"
               min={0}
-              {...register("extra_hours")}
+              {...register("extra_hours", {
+                setValueAs: (v) => (v === "" ? 0 : Number(v)),
+              })}
             />
           </div>
 

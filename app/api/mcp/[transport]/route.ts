@@ -12,15 +12,14 @@ import {
 // hop is made by the shared service functions, not here — the same path both
 // public funnels use.
 //
-// The reservation core can take minutes worst-case (Localiza proxy + inline email,
-// see #100/#99). At 120s the worst case sits right on the cutoff — a function
-// killed mid-creation would leave a phantom reservation (DB insert done, client
-// times out: the #99/#138 idempotency risk). We request 300s (Vercel's paid-plan
-// ceiling, clamped down automatically if the plan is lower) to give a slow-but-
-// succeeding creation room to finish. Confirm the plan's actual ceiling at rollout
-// (runbook); if it caps below ~120s, move the inline email to after() for this path.
+// Aligned with the public reservations route (issue #99): the proxy client aborts
+// at PROXY_TIMEOUT_MS (28s) below this ceiling, so a slow Localiza fails fast with
+// a retry-safe error instead of hanging — and the dashboard never inserts on the
+// timeout path, so there is no phantom reservation on our side. The inline email
+// after a successful insert is the only remaining tail; moving it to after() is the
+// tracked perf follow-up. 30 mirrors the public route's maxDuration.
 export const runtime = "nodejs";
-export const maxDuration = 300;
+export const maxDuration = 30;
 
 const handler = createMcpHandler(
   (server) => {
@@ -56,7 +55,7 @@ const handler = createMcpHandler(
   },
   {
     basePath: "/api/mcp",
-    maxDuration: 300,
+    maxDuration: 30,
     verboseLogs: false,
   },
 );

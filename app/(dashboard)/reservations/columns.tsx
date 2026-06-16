@@ -167,6 +167,10 @@ export const columns: ColumnDef<ReservationRow, unknown>[] = [
         ? `${row.customers.first_name} ${row.customers.last_name}`
         : ""),
     header: "Nombre",
+    // Snapshot column with no order index: server-sorting it forced a full-table
+    // heapsort (issue #104). Disabled — operators find names via the #102 trgm
+    // search. Mirrors its removal from SORTABLE_COLUMNS in list-params.ts.
+    enableSorting: false,
     cell: ({ row }) => {
       const c = row.original.customers;
       const fullName =
@@ -191,6 +195,8 @@ export const columns: ColumnDef<ReservationRow, unknown>[] = [
       row.customers?.identification_number ??
       "",
     header: "ID",
+    // Snapshot column, no order index → disabled server-sorting (issue #104).
+    enableSorting: false,
     cell: ({ getValue }) => (
       <CopyableText value={getValue<string>()} label="ID" maxLength={ID_MAX} />
     ),
@@ -200,6 +206,8 @@ export const columns: ColumnDef<ReservationRow, unknown>[] = [
     accessorFn: (row) =>
       row.customer_phone_at_booking ?? row.customers?.phone ?? "",
     header: "Teléfono",
+    // Snapshot column, no order index → disabled server-sorting (issue #104).
+    enableSorting: false,
     cell: ({ getValue }) => (
       <CopyableText
         value={getValue<string>()}
@@ -213,6 +221,8 @@ export const columns: ColumnDef<ReservationRow, unknown>[] = [
     accessorFn: (row) =>
       row.customer_email_at_booking ?? row.customers?.email ?? "",
     header: "Email",
+    // Snapshot column, no order index → disabled server-sorting (issue #104).
+    enableSorting: false,
     cell: ({ getValue }) => (
       <CopyableText
         value={getValue<string>()}
@@ -294,6 +304,10 @@ export const columns: ColumnDef<ReservationRow, unknown>[] = [
     id: "valor_oc",
     accessorKey: "total_price_localiza",
     header: "Valor OC",
+    // total_price_localiza has no order index → server-sorting forced a
+    // full-table heapsort (issue #104). Disabled; mirrors its removal from
+    // SORTABLE_COLUMNS in list-params.ts.
+    enableSorting: false,
     cell: ({ getValue }) => currencyFormatter.format(Number(getValue() ?? 0)),
   },
   {

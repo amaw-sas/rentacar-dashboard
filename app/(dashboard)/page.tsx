@@ -1,11 +1,5 @@
-import {
-  CalendarCheck,
-  CalendarDays,
-  CalendarRange,
-  Clock,
-  FileText,
-  Wallet,
-} from "lucide-react";
+import { Suspense } from "react";
+import { CalendarCheck, CarFront, Clock, FileText, Wallet } from "lucide-react";
 import Link from "next/link";
 import { StatCard } from "@/components/charts/stat-card";
 import { Badge } from "@/components/ui/badge";
@@ -17,13 +11,26 @@ import {
 } from "@/components/ui/card";
 import {
   getReservationCounts,
+  getUsedCounts,
+  getReservationDailySeries,
   getCommissionSummary,
   getTopReferrals,
   getRecentReservations,
-  type PeriodCount,
 } from "@/lib/queries/dashboard";
+import {
+  bogotaTodayYMD,
+  bogotaYesterdayYMD,
+  bogotaStartOfWeekYMD,
+  bogotaStartOfMonthYMD,
+  bogotaEndOfMonthYMD,
+  resolveDashboardRange,
+  type DashboardPeriod,
+} from "@/lib/date/bogota";
 import { getFranchises } from "@/lib/queries/franchises";
 import { STATUS_LABELS } from "@/lib/schemas/reservation";
+import { DashboardPeriodSelector } from "./dashboard-period-selector";
+import { FranchiseLineChart } from "./dashboard-trend-charts";
+import { DashboardMetricCard, type MetricItem } from "./dashboard-metric-card";
 
 const STATUS_VARIANT: Record<
   string,
@@ -51,10 +58,31 @@ const copFormat = new Intl.NumberFormat("es-CO", {
   maximumFractionDigits: 0,
 });
 
-export default async function DashboardPage() {
-  // Franchises drive the count breakdown and its labels. Only getReservationCounts
-  // depends on them, so fetch franchises alongside the independent queries and
-  // chain just the counts off the resolved list — keeps everything else parallel.
+export default async function DashboardPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  // Trend-chart period comes from the URL (?period & optional from/to). The
+  // selector writes these; the server resolves the range so it stays the source
+  // of truth. Default: current week.
+  const sp = await searchParams;
+  const readParam = (key: string): string | undefined => {
+    const value = sp[key];
+    return Array.isArray(value) ? value[0] : value;
+  };
+  const periodParam = readParam("period");
+  const period: DashboardPeriod =
+    periodParam === "month" || periodParam === "custom" ? periodParam : "week";
+  const { fromYMD, toYMD } = resolveDashboardRange(
+    period,
+    readParam("from"),
+    readParam("to")
+  );
+
+  // Franchises drive the chart series and its labels. Only the count/series
+  // queries depend on them, so fetch franchises alongside the independent
+  // queries and chain those off the resolved list — keeps everything else parallel.
   const [franchises, commissionSummary, topReferrals, recentReservations] =
     await Promise.all([
       getFranchises(),
@@ -66,44 +94,98 @@ export default async function DashboardPage() {
   const activeFranchises = (franchises ?? []).filter(
     (f) => f.status === "active"
   );
-  const reservationCounts = await getReservationCounts(
-    activeFranchises.map((f) => f.code)
-  );
+  const activeCodes = activeFranchises.map((f) => f.code);
+  const [reservationCounts, usedCounts, dailySeries] = await Promise.all([
+    getReservationCounts(activeCodes),
+    getUsedCounts(activeCodes),
+    getReservationDailySeries(activeCodes, fromYMD, toYMD),
+  ]);
 
-  // display_name labels per active franchise, including those with 0 this period.
-  const breakdownFor = (period: PeriodCount) =>
-    activeFranchises.map((f) => ({
-      label: f.display_name,
-      value: period.byFranchise[f.code] ?? 0,
-    }));
+  // Civil dates for the pre-filtered reservations-list links. Created metrics
+  // filter Creación (created_at); used metrics filter Recogida (pickup_date) with
+  // status='utilizado'. Closed-range rows (hoy/ayer) pass both bounds; "since
+  // now" rows (semana/mes created) pass only a lower bound.
+  const today = bogotaTodayYMD();
+  const yesterday = bogotaYesterdayYMD();
+  const weekStart = bogotaStartOfWeekYMD();
+  const monthStart = bogotaStartOfMonthYMD();
+  const monthEnd = bogotaEndOfMonthYMD();
+  const reservationsHref = (params: Record<string, string>) =>
+    `/reservations?${new URLSearchParams(params).toString()}`;
+
+  const franchiseRefs = activeFranchises.map((f) => ({
+    code: f.code,
+    label: f.display_name,
+  }));
+
+  const createdItems: MetricItem[] = [
+    {
+      label: "Hoy",
+      value: reservationCounts.today.total,
+      href: reservationsHref({ created_from: today, created_to: today }),
+    },
+    {
+      label: "Ayer",
+      value: reservationCounts.yesterday.total,
+      href: reservationsHref({ created_from: yesterday, created_to: yesterday }),
+    },
+    {
+      label: "Esta semana",
+      value: reservationCounts.week.total,
+      href: reservationsHref({ created_from: weekStart }),
+    },
+    {
+      label: "Este mes",
+      value: reservationCounts.month.total,
+      href: reservationsHref({ created_from: monthStart }),
+    },
+  ];
+
+  const usedItems: MetricItem[] = [
+    {
+      label: "Hoy",
+      value: usedCounts.today.total,
+      href: reservationsHref({
+        status: "utilizado",
+        pickup_from: today,
+        pickup_to: today,
+      }),
+    },
+    {
+      label: "Ayer",
+      value: usedCounts.yesterday.total,
+      href: reservationsHref({
+        status: "utilizado",
+        pickup_from: yesterday,
+        pickup_to: yesterday,
+      }),
+    },
+    {
+      label: "Esta semana",
+      value: usedCounts.week.total,
+      href: reservationsHref({
+        status: "utilizado",
+        pickup_from: weekStart,
+        pickup_to: today,
+      }),
+    },
+    {
+      label: "Este mes",
+      value: usedCounts.month.total,
+      href: reservationsHref({
+        status: "utilizado",
+        pickup_from: monthStart,
+        pickup_to: monthEnd,
+      }),
+    },
+  ];
 
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
 
-      {/* Stat cards */}
+      {/* Commission stat cards */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <StatCard
-          title="Reservas hoy"
-          value={reservationCounts.today.total}
-          icon={CalendarCheck}
-          description="Creadas hoy"
-          breakdown={breakdownFor(reservationCounts.today)}
-        />
-        <StatCard
-          title="Reservas esta semana"
-          value={reservationCounts.week.total}
-          icon={CalendarDays}
-          description="Desde el lunes"
-          breakdown={breakdownFor(reservationCounts.week)}
-        />
-        <StatCard
-          title="Reservas este mes"
-          value={reservationCounts.month.total}
-          icon={CalendarRange}
-          description="Mes en curso"
-          breakdown={breakdownFor(reservationCounts.month)}
-        />
         <StatCard
           title="Comisiones pendientes"
           value={copFormat.format(commissionSummary.pending)}
@@ -122,6 +204,56 @@ export default async function DashboardPage() {
           icon={Wallet}
           description="Cobradas"
         />
+      </div>
+
+      {/* Per-franchise reservations: a period-summary card paired with a wider
+          trend chart, one row per metric (created / used). The period selector
+          drives both charts' date range; the cards show fixed periods. */}
+      <div className="space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-lg font-semibold tracking-tight">
+            Reservas por franquicia
+          </h2>
+          <Suspense fallback={<div className="h-9" />}>
+            <DashboardPeriodSelector period={period} from={fromYMD} to={toYMD} />
+          </Suspense>
+        </div>
+
+        {/* Created */}
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
+          <DashboardMetricCard
+            title="Reservas creadas"
+            icon={CalendarCheck}
+            items={createdItems}
+          />
+          <div className="lg:col-span-3">
+            <FranchiseLineChart
+              title="Reservas creadas"
+              description="Por día y franquicia"
+              series={dailySeries}
+              franchises={franchiseRefs}
+              metric="created_count"
+            />
+          </div>
+        </div>
+
+        {/* Used */}
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
+          <DashboardMetricCard
+            title="Reservas utilizadas"
+            icon={CarFront}
+            items={usedItems}
+          />
+          <div className="lg:col-span-3">
+            <FranchiseLineChart
+              title="Reservas utilizadas"
+              description="Recogidas por día y franquicia"
+              series={dailySeries}
+              franchises={franchiseRefs}
+              metric="used_count"
+            />
+          </div>
+        </div>
       </div>
 
       {/* Bottom sections */}

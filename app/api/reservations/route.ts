@@ -5,6 +5,13 @@ import {
 } from "@/lib/api/reservation-service";
 import { serviceErrorToResponse } from "@/lib/api/service-error";
 
+// Fail fast and cleanly instead of hanging into Vercel's hard 504 (issue #99).
+// PROXY_TIMEOUT_MS (28s) sits below this so createLocalizaReservation aborts and
+// returns a retry-safe error before the function is killed. MUST be a literal —
+// Next.js segment config is statically analyzed and rejects an imported const —
+// so it mirrors proxy-client's MAX_DURATION_S; a test guards against drift.
+export const maxDuration = 30;
+
 export async function POST(request: Request) {
   // Validate API key
   const apiKey = request.headers.get("x-api-key");
@@ -41,6 +48,11 @@ export async function POST(request: Request) {
       );
     }
   }
+
+  // Forward the idempotency key (issue #99) so a reload+resubmit dedupes at the
+  // proxy. createReservation threads it into createLocalizaReservation.
+  const idempotencyKey = request.headers.get("x-idempotency-key");
+  if (idempotencyKey) body.idempotency_key = idempotencyKey;
 
   try {
     return NextResponse.json(await createReservation(body));

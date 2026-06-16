@@ -3,6 +3,13 @@ import {
   bogotaStartOfDayISO,
   bogotaStartOfWeekISO,
   bogotaStartOfMonthISO,
+  bogotaDayStartISO,
+  bogotaDayEndISO,
+  bogotaTodayYMD,
+  bogotaYesterdayYMD,
+  bogotaStartOfWeekYMD,
+  bogotaStartOfMonthYMD,
+  bogotaEndOfMonthYMD,
 } from "@/lib/date/bogota";
 
 export interface PeriodCount {
@@ -12,14 +19,15 @@ export interface PeriodCount {
 
 export interface ReservationCounts {
   today: PeriodCount;
+  yesterday: PeriodCount;
   week: PeriodCount;
   month: PeriodCount;
 }
 
-// Counts reservations created in each period (today / this week / this month),
-// with a per-franchise breakdown. Period cutoffs are anchored to Colombia time
-// (see lib/date/bogota). Only the given active franchise codes are counted, so
-// `total` always equals the sum of `byFranchise`.
+// Counts reservations created in each period (today / yesterday / this week /
+// this month), with a per-franchise breakdown. Period cutoffs are anchored to
+// Colombia time (see lib/date/bogota). Only the given active franchise codes are
+// counted, so `total` always equals the sum of `byFranchise`.
 //
 // Uses head/count queries (one per franchise per period) instead of fetching
 // rows: counting happens in Postgres, so it never hits PostgREST's max_rows cap
@@ -29,13 +37,71 @@ export async function getReservationCounts(
 ): Promise<ReservationCounts> {
   const supabase = await createClient();
 
-  const countSince = async (sinceISO: string): Promise<PeriodCount> => {
+  // `untilISO` bounds closed ranges (yesterday); open-ended periods (today/week/
+  // month = "since X until now") pass only `sinceISO`.
+  const countCreatedRange = async (
+    sinceISO: string,
+    untilISO?: string
+  ): Promise<PeriodCount> => {
+    const entries = await Promise.all(
+      activeCodes.map(async (code) => {
+        let query = supabase
+          .from("reservations")
+          .select("id", { count: "exact", head: true })
+          .gte("created_at", sinceISO)
+          .eq("franchise", code);
+        if (untilISO) query = query.lte("created_at", untilISO);
+        const { count, error } = await query;
+        if (error) throw error;
+        return [code, count ?? 0] as const;
+      })
+    );
+
+    const byFranchise: Record<string, number> = Object.fromEntries(entries);
+    const total = entries.reduce((acc, [, n]) => acc + n, 0);
+    return { total, byFranchise };
+  };
+
+  const yesterdayYMD = bogotaYesterdayYMD();
+
+  const [today, yesterday, week, month] = await Promise.all([
+    countCreatedRange(bogotaStartOfDayISO()),
+    countCreatedRange(
+      bogotaDayStartISO(yesterdayYMD),
+      bogotaDayEndISO(yesterdayYMD)
+    ),
+    countCreatedRange(bogotaStartOfWeekISO()),
+    countCreatedRange(bogotaStartOfMonthISO()),
+  ]);
+
+  return { today, yesterday, week, month };
+}
+
+// Counts reservations USED in each period (today / yesterday / this week / this
+// month), keyed by pickup_date (the day the car is picked up) AND
+// status='utilizado' — NOT created_at. A reservation created in a prior month
+// but picked up this month counts in `month`: this is the "cars actually used"
+// metric, deliberately distinct from getReservationCounts (creation-based).
+// Bounds are civil "YYYY-MM-DD" dates because pickup_date is a `date` column
+// (mirrors the reservations list Recogida filter, lib/queries/reservations.ts).
+// `month` spans the full calendar month; the shorter periods run up to today.
+export async function getUsedCounts(
+  activeCodes: string[]
+): Promise<ReservationCounts> {
+  const supabase = await createClient();
+
+  const countUsedRange = async (
+    fromYMD: string,
+    toYMD: string
+  ): Promise<PeriodCount> => {
     const entries = await Promise.all(
       activeCodes.map(async (code) => {
         const { count, error } = await supabase
           .from("reservations")
           .select("id", { count: "exact", head: true })
-          .gte("created_at", sinceISO)
+          .eq("status", "utilizado")
+          .gte("pickup_date", fromYMD)
+          .lte("pickup_date", toYMD)
           .eq("franchise", code);
         if (error) throw error;
         return [code, count ?? 0] as const;
@@ -47,13 +113,49 @@ export async function getReservationCounts(
     return { total, byFranchise };
   };
 
-  const [today, week, month] = await Promise.all([
-    countSince(bogotaStartOfDayISO()),
-    countSince(bogotaStartOfWeekISO()),
-    countSince(bogotaStartOfMonthISO()),
+  const today = bogotaTodayYMD();
+  const yesterday = bogotaYesterdayYMD();
+  const weekStart = bogotaStartOfWeekYMD();
+  const monthStart = bogotaStartOfMonthYMD();
+  const monthEnd = bogotaEndOfMonthYMD();
+
+  const [todayCount, yesterdayCount, week, month] = await Promise.all([
+    countUsedRange(today, today),
+    countUsedRange(yesterday, yesterday),
+    countUsedRange(weekStart, today),
+    countUsedRange(monthStart, monthEnd),
   ]);
 
-  return { today, week, month };
+  return { today: todayCount, yesterday: yesterdayCount, week, month };
+}
+
+// One row per (day, franchise) over [fromYMD, toYMD], with both the created and
+// used counts — the input to the dashboard trend charts. Aggregation happens in
+// Postgres via the reservation_daily_series RPC (migration 061): created counts
+// bucket by created_at in Bogota time (so they reconcile with getReservationCounts)
+// and used counts by pickup_date + status='utilizado' (like getUsedThisMonth).
+// The RPC returns a full day×franchise grid (zeros included), so a missing
+// (day, franchise) still arrives as 0 and the line plots a point, not a gap.
+export interface DailySeriesPoint {
+  day: string; // "YYYY-MM-DD" Bogota civil date
+  franchise: string; // franchise code
+  created_count: number;
+  used_count: number;
+}
+
+export async function getReservationDailySeries(
+  activeCodes: string[],
+  fromYMD: string,
+  toYMD: string
+): Promise<DailySeriesPoint[]> {
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("reservation_daily_series", {
+    p_from: fromYMD,
+    p_to: toYMD,
+    p_franchises: activeCodes,
+  });
+  if (error) throw error;
+  return (data ?? []) as DailySeriesPoint[];
 }
 
 export async function getCommissionSummary() {

@@ -15,6 +15,12 @@ import { toast } from "sonner";
 interface ReservationStatusActionsProps {
   reservationId: string;
   currentStatus: ReservationStatus;
+  // Issue #153: before dispatching a status change, the parent form autosaves
+  // any unsaved reservation/customer edits so the notification fires from fresh
+  // DB data (inverts the #90 block). Resolving false (save failed/invalid)
+  // aborts the dispatch. The detail page omits this prop (read-only, nothing to
+  // save) → status dispatches directly, preserving current behavior.
+  onBeforeStatusChange?: () => Promise<boolean>;
 }
 
 const STATUS_VARIANT: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
@@ -45,14 +51,25 @@ const CONSOLIDATED_SOURCES: ReservationStatus[] = [
 export function ReservationStatusActions({
   reservationId,
   currentStatus,
+  onBeforeStatusChange,
 }: ReservationStatusActionsProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  // The autosave (onBeforeStatusChange) awaits BEFORE startTransition, so
+  // `isPending` is false during the save window. Track it explicitly to disable
+  // the buttons and reject re-entrant clicks (issue #153, SCEN-014) — saves can
+  // take 20s–2min (#100), and a second click would double-dispatch.
+  const [autosaving, setAutosaving] = useState(false);
 
   const validTargets = VALID_TRANSITIONS[currentStatus] ?? [];
 
   async function handleTransition(newStatus: ReservationStatus) {
+    // Re-entrancy guard: ignore clicks while a dispatch or autosave is in flight.
+    if (isPending || autosaving) return;
+
+    // Confirmations first (cheap): a cancelled confirm must abort before any
+    // autosave runs (issue #153, SCEN-007 — confirm-before-save invariant).
     if (DANGEROUS_TARGETS.includes(newStatus)) {
       const confirmed = window.confirm(
         `¿Cambiar el estado a "${STATUS_LABELS[newStatus]}"? Esta acción es delicada.`
@@ -63,6 +80,21 @@ export function ReservationStatusActions({
         `Estás reactivando una reserva en estado "${STATUS_LABELS[currentStatus]}". ¿Continuar y cambiarla a "${STATUS_LABELS[newStatus]}"?`
       );
       if (!confirmed) return;
+    }
+
+    // Autosave any unsaved form/customer edits before dispatching, so the
+    // status-change notification reads fresh DB data (issue #153). Resolving
+    // false (validation/server error) aborts — the error is already surfaced by
+    // the form. Absent prop (detail page) → dispatch directly. The `autosaving`
+    // flag disables the buttons across the await (SCEN-014).
+    if (onBeforeStatusChange) {
+      setAutosaving(true);
+      try {
+        const ok = await onBeforeStatusChange();
+        if (!ok) return;
+      } finally {
+        setAutosaving(false);
+      }
     }
 
     setError(null);
@@ -94,9 +126,10 @@ export function ReservationStatusActions({
           {validTargets.map((target) => (
             <Button
               key={target}
+              type="button"
               size="sm"
               variant={DANGEROUS_TARGETS.includes(target) ? "destructive" : "outline"}
-              disabled={isPending}
+              disabled={isPending || autosaving}
               onClick={() => handleTransition(target)}
             >
               {STATUS_LABELS[target]}

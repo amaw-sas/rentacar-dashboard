@@ -13,15 +13,18 @@
 import type { AttributionChannel } from "@/lib/attribution/derive-channel";
 
 /**
- * The 9 channels in deliberate display order: paid platforms first, then
+ * The 10 channels in deliberate display order: paid platforms first, then
  * organic/referral, then direct/other. This order drives the list filter
  * dropdown, the analytics legend, and any iteration over channels.
+ * `tiktok_organic` sits next to `tiktok_ads` so the two TikTok rows read as a
+ * pair (paid vs organic) in the filter and legend.
  */
 export const ATTRIBUTION_CHANNELS: readonly AttributionChannel[] = [
   "google_ads",
   "google_display",
   "meta_ads",
   "tiktok_ads",
+  "tiktok_organic",
   "bing_ads",
   "organic",
   "referral",
@@ -62,7 +65,7 @@ export interface ChannelMeta {
  * that confuses (per Step-3 guidance). Reuse map:
  *   chart-1 google_ads | google_display  (Google family)
  *   chart-2 meta_ads   | organic         (social vs organic, distinct legend rows)
- *   chart-3 tiktok_ads | referral
+ *   chart-3 tiktok_ads | tiktok_organic | referral   (TikTok family + referral)
  *   chart-4 bing_ads   | direct
  *   chart-5 other
  * Desconocido (null) uses --muted-foreground to read as an absence, not a channel.
@@ -86,6 +89,11 @@ export const CHANNEL_META: Record<AttributionChannel, ChannelMeta> = {
   tiktok_ads: {
     label: "TikTok Ads",
     variant: "default",
+    chartColor: "hsl(var(--chart-3))",
+  },
+  tiktok_organic: {
+    label: "TikTok",
+    variant: "secondary",
     chartColor: "hsl(var(--chart-3))",
   },
   bing_ads: {

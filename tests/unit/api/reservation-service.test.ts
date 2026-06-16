@@ -146,7 +146,8 @@ describe("createReservation (issue #72 Step 3)", () => {
       proxyResponse({
         ok: true,
         status: 200,
-        json: () => ({ reserveCode: "LOC-123", reservationStatus: "Reserved" }),
+        text: () =>
+          JSON.stringify({ reserveCode: "LOC-123", reservationStatus: "Reserved" }),
       }) as Response,
     );
 
@@ -254,6 +255,29 @@ describe("createReservation (issue #72 Step 3)", () => {
     errorSpy.mockRestore();
   });
 
+  // #99 hardening ported into the service: a proxy timeout maps to
+  // ServiceError(504) upstream_timeout and NOTHING is inserted (no phantom on our
+  // side). Drives the real createLocalizaReservation via an aborted fetch.
+  it("upstream timeout → ServiceError(504) upstream_timeout, no insert", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { sb } = await wireMocks();
+    vi.mocked(fetch).mockRejectedValue(
+      Object.assign(new Error("aborted"), { name: "TimeoutError" }),
+    );
+
+    const { createReservation } = await import("@/lib/api/reservation-service");
+    const { ServiceError } = await import("@/lib/api/service-error");
+    const err = (await createReservation(STANDARD_INPUT).catch(
+      (e) => e,
+    )) as InstanceType<typeof ServiceError>;
+
+    expect(err).toBeInstanceOf(ServiceError);
+    expect(err.status).toBe(504);
+    expect((err.payload as { error: string }).error).toBe("upstream_timeout");
+    expect(sb.insert).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
   // SCEN-008 — existing customer NOT mutated; snapshot from stored row.
   it("SCEN-008: snapshot reflects the resolved customer row, never the input body", async () => {
     const { sb, snapshotFromCustomer } = await wireMocks({
@@ -270,7 +294,8 @@ describe("createReservation (issue #72 Step 3)", () => {
       proxyResponse({
         ok: true,
         status: 200,
-        json: () => ({ reserveCode: "LOC-9", reservationStatus: "Reserved" }),
+        text: () =>
+          JSON.stringify({ reserveCode: "LOC-9", reservationStatus: "Reserved" }),
       }) as Response,
     );
 

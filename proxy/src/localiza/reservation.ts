@@ -1,8 +1,9 @@
 import { Router, Request, Response } from "express";
 import { callLocalizaAPI, getConfig } from "./client";
 import { buildVehResXML } from "./xml-templates";
+import { mapLocalizaError } from "./errors";
+import { deriveKey, withIdempotency } from "./idempotency";
 import {
-  LocalizaWarningError,
   buildLocalizaWarning,
   extractErrorMessage,
   extractWarningShortText,
@@ -142,23 +143,40 @@ function extractReservation(
   return { reserveCode, reservationStatus };
 }
 
-router.post("/", async (req: Request, res: Response): Promise<void> => {
-  const data = req.body as ReservationRequest;
+const REQUIRED_FIELDS: (keyof ReservationRequest)[] = [
+  "pickupLocation",
+  "returnLocation",
+  "pickupDateTime",
+  "returnDateTime",
+  "categoryCode",
+  "referenceToken",
+  "rateQualifier",
+  "customerName",
+  "customerEmail",
+  "customerPhone",
+  "customerDocument",
+];
 
-  if (
-    !data.pickupLocation || !data.returnLocation ||
-    !data.pickupDateTime || !data.returnDateTime ||
-    !data.categoryCode || !data.referenceToken ||
-    !data.rateQualifier || !data.customerName ||
-    !data.customerEmail || !data.customerPhone ||
-    !data.customerDocument
-  ) {
-    res.status(400).json({ error: "Missing required fields" });
-    return;
-  }
+// True when any field needed to build the reservation is missing/empty. Exported
+// so the 400-validation contract is unit-testable without spinning up Express.
+export function missingRequiredFields(data: Partial<ReservationRequest>): boolean {
+  return REQUIRED_FIELDS.some((field) => !data[field]);
+}
 
-  try {
-    const config = getConfig();
+// Create a reservation in Localiza, deduplicated by booking fingerprint (+ an
+// optional Idempotency-Key). Overlapping or near-back-to-back identical requests
+// (the reload+resubmit) collapse to a single upstream booking and share the same
+// reserveCode. Assumes the input already passed missingRequiredFields. Exported as
+// the test seam — the router below is a thin shell over it.
+export async function createReservation(
+  data: ReservationRequest,
+  headerKey?: string | null,
+): Promise<{ reserveCode: string; reservationStatus: string }> {
+  const key = deriveKey(data, headerKey);
+  return withIdempotency(
+    key,
+    async () => {
+      const config = getConfig();
     const xml = buildVehResXML({
       token: config.token,
       requestorId: config.requestorId,
@@ -182,7 +200,7 @@ router.post("/", async (req: Request, res: Response): Promise<void> => {
       xml,
     );
 
-    const result = extractReservation(parsed, {
+    return extractReservation(parsed, {
       pickupLocation: data.pickupLocation,
       returnLocation: data.returnLocation,
       pickupDateTime: data.pickupDateTime,
@@ -191,16 +209,31 @@ router.post("/", async (req: Request, res: Response): Promise<void> => {
       referenceToken: data.referenceToken,
       rateQualifier: data.rateQualifier,
     });
+    },
+    // Don't cache a degraded success: an empty reserveCode means Localiza may
+    // have booked but we couldn't parse the ConfID — replaying it would store an
+    // empty code and block the retry that could recover it. Concurrent waiters
+    // still coalesce; only the TTL replay is skipped.
+    { isCacheable: (result) => result.reserveCode !== "" }
+  );
+}
+
+router.post("/", async (req: Request, res: Response): Promise<void> => {
+  const data = req.body as ReservationRequest;
+
+  if (missingRequiredFields(data)) {
+    res.status(400).json({ error: "Missing required fields" });
+    return;
+  }
+
+  try {
+    const result = await createReservation(
+      data,
+      req.header("x-idempotency-key"),
+    );
     res.json(result);
   } catch (error) {
-    if (error instanceof LocalizaWarningError) {
-      res.status(error.httpStatus).json(error.toJSON());
-      return;
-    }
-    console.error("Reservation error:", error);
-    res.status(502).json({
-      error: error instanceof Error ? error.message : "Unknown error",
-    });
+    mapLocalizaError(error, res, "Reservation");
   }
 });
 

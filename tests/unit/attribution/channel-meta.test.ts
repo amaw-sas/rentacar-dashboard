@@ -16,6 +16,7 @@ const EXPECTED_LABELS: Record<AttributionChannel | "null", string> = {
   google_display: "Google Display",
   meta_ads: "Meta Ads",
   tiktok_ads: "TikTok Ads",
+  tiktok_organic: "TikTok",
   bing_ads: "Bing Ads",
   organic: "Orgánico",
   referral: "Referido web",
@@ -43,7 +44,7 @@ describe("channel-meta — SCEN-017: every channel has a complete presentation",
     });
   });
 
-  describe("exact label map (design §4), all 10 entries including Desconocido", () => {
+  describe("exact label map (design §4), all 11 entries including Desconocido", () => {
     for (const channel of ATTRIBUTION_CHANNELS) {
       it(`${channel} → "${EXPECTED_LABELS[channel]}"`, () => {
         expect(channelMeta(channel).label).toBe(EXPECTED_LABELS[channel]);
@@ -55,7 +56,7 @@ describe("channel-meta — SCEN-017: every channel has a complete presentation",
     });
   });
 
-  describe("CHANNEL_META covers exactly the 9 channels", () => {
+  describe("CHANNEL_META covers exactly the 10 channels", () => {
     it("CHANNEL_META keys equal ATTRIBUTION_CHANNELS", () => {
       expect(Object.keys(CHANNEL_META).sort()).toEqual(
         [...ATTRIBUTION_CHANNELS].sort(),
@@ -64,8 +65,8 @@ describe("channel-meta — SCEN-017: every channel has a complete presentation",
   });
 
   describe("ATTRIBUTION_CHANNEL_SET — server-side filter validation", () => {
-    it("has exactly the 9 channel literals", () => {
-      expect(ATTRIBUTION_CHANNEL_SET.size).toBe(9);
+    it("has exactly the 10 channel literals", () => {
+      expect(ATTRIBUTION_CHANNEL_SET.size).toBe(10);
     });
 
     it("contains each channel literal", () => {
@@ -90,8 +91,8 @@ describe("channel-meta — SCEN-017: every channel has a complete presentation",
   });
 
   describe("ATTRIBUTION_CHANNELS shape", () => {
-    it("has length 9", () => {
-      expect(ATTRIBUTION_CHANNELS).toHaveLength(9);
+    it("has length 10", () => {
+      expect(ATTRIBUTION_CHANNELS).toHaveLength(10);
     });
 
     it("has no duplicates", () => {

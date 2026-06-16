@@ -12,6 +12,12 @@ import { sendStatusWhatsApp } from "@/lib/wati/notifications";
 import { syncReservationToGhl } from "@/lib/ghl/sync";
 import { parseMonthlyMileage } from "@/lib/reservation/mileage-parser";
 import {
+  createLocalizaReservation,
+  ProxyTimeoutError,
+  ProxyConfigError,
+  ProxyError,
+} from "@/lib/reservation/proxy-client";
+import {
   deriveAttributionChannel,
   type AttributionInput,
 } from "@/lib/attribution/derive-channel";
@@ -58,6 +64,7 @@ export interface CreateReservationInput {
   franchise: string;
   user?: string;
   attribution?: AttributionInput;
+  idempotency_key?: string; // issue #99: forwarded to the proxy to dedupe resubmits
   // — extras (affect booking_type / notification_required) —
   total_insurance?: boolean | number;
   extra_driver?: boolean | number;
@@ -165,7 +172,11 @@ export async function createReservation(
       // Monthly reservation: no API call
       status = "mensualidad";
     } else {
-      // Standard reservation: call Localiza proxy
+      // Standard reservation: call the Localiza proxy through the timeout +
+      // idempotency client (issue #99). Its typed errors are mapped onto
+      // ServiceError so the public route contract (both funnels) AND the MCP tool
+      // stay byte-identical, including the retry-safe 504 and the structured
+      // passthrough.
       if (!input.reference_token || !input.rate_qualifier) {
         throw new ServiceError(400, {
           error:
@@ -173,75 +184,80 @@ export async function createReservation(
         });
       }
 
-      const proxyUrl = process.env.LOCALIZA_PROXY_URL;
-      const proxyApiKey = process.env.PROXY_API_KEY;
-
-      if (!proxyUrl || !proxyApiKey) {
-        console.error("[reservation] Missing LOCALIZA_PROXY_URL or PROXY_API_KEY");
-        throw new ServiceError(500, {
-          error: "Configuración del servidor incompleta",
-        });
-      }
-
       const pickupDateTime = `${input.pickup_date}T${input.pickup_hour}:00`;
       const returnDateTime = `${input.return_date}T${input.return_hour}:00`;
 
-      const proxyResponse = await fetch(`${proxyUrl}/api/localiza/reservation`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": proxyApiKey,
-        },
-        body: JSON.stringify({
-          pickupLocation: input.pickup_location,
-          returnLocation: input.return_location,
-          pickupDateTime,
-          returnDateTime,
-          categoryCode: input.category,
-          referenceToken: input.reference_token,
-          rateQualifier: input.rate_qualifier,
-          customerName: input.fullname,
-          customerEmail: input.email,
-          customerPhone: input.phone,
-          customerDocument: input.identification,
-        }),
-      });
-
-      if (!proxyResponse.ok) {
-        const errorBody = await proxyResponse.text();
-        console.error(
-          `[reservation] Proxy error ${proxyResponse.status}:`,
-          errorBody,
+      try {
+        const proxyResult = await createLocalizaReservation(
+          {
+            pickupLocation: input.pickup_location,
+            returnLocation: input.return_location,
+            pickupDateTime,
+            returnDateTime,
+            categoryCode: input.category,
+            referenceToken: input.reference_token,
+            rateQualifier: input.rate_qualifier,
+            customerName: input.fullname,
+            customerEmail: input.email,
+            customerPhone: input.phone,
+            customerDocument: input.identification,
+          },
+          { idempotencyKey: input.idempotency_key },
         );
-        // Pass structured {error, message, shortText} from the proxy through
-        // unchanged so the Nuxt client (useMessages.createErrorMessage) can
-        // render the matching toast. Only wrap into a generic envelope when
-        // the body is not parseable JSON (network/HTML error).
-        try {
-          const parsed = JSON.parse(errorBody);
-          if (
-            parsed &&
-            typeof parsed === "object" &&
-            typeof parsed.error === "string"
-          ) {
-            throw new ServiceError(proxyResponse.status, parsed);
-          }
-        } catch (e) {
-          if (e instanceof ServiceError) throw e;
-          // not parseable JSON — fall through to the generic response below
+
+        reserveCode = proxyResult.reserveCode;
+        status = LOCALIZA_STATUS_MAP[proxyResult.reservationStatus] ?? "pendiente";
+      } catch (error) {
+        if (error instanceof ProxyConfigError) {
+          console.error("[reservation] Missing LOCALIZA_PROXY_URL or PROXY_API_KEY");
+          throw new ServiceError(500, {
+            error: "Configuración del servidor incompleta",
+          });
         }
-        throw new ServiceError(502, {
-          error: "Error al crear la reserva en Localiza",
-        });
+        // A timeout — ours (the proxy never answered → ProxyTimeoutError) or the
+        // proxy's own (Localiza slow → it returned 504 {upstream_timeout},
+        // surfacing as a ProxyError) — converges on ONE retry-safe message. The
+        // dashboard never inserts on this path, so there is no phantom on our
+        // side; the booking MAY have completed on Localiza (504 is ambiguous) —
+        // reconciliation is tracked separately (issue #99 SCEN-2).
+        const isUpstreamTimeout =
+          error instanceof ProxyTimeoutError ||
+          (error instanceof ProxyError &&
+            error.status === 504 &&
+            (error.body as { error?: unknown } | null)?.error ===
+              "upstream_timeout");
+        if (isUpstreamTimeout) {
+          console.error(
+            "[reservation] Upstream timeout:",
+            error instanceof Error ? error.message : String(error),
+          );
+          throw new ServiceError(504, {
+            error: "upstream_timeout",
+            message:
+              "El sistema de reservas está demorando más de lo normal. Tu reserva NO se creó; espera unos minutos e inténtalo de nuevo.",
+          });
+        }
+        if (error instanceof ProxyError) {
+          console.error(`[reservation] Proxy error ${error.status}:`, error.rawText);
+          // Pass the proxy's structured {error, message, shortText} through
+          // unchanged so the funnels render the matching toast; wrap into a
+          // generic 502 when the body is not parseable JSON (network/HTML error).
+          if (
+            error.body &&
+            typeof error.body === "object" &&
+            typeof (error.body as { error?: unknown }).error === "string"
+          ) {
+            throw new ServiceError(
+              error.status,
+              error.body as Record<string, unknown>,
+            );
+          }
+          throw new ServiceError(502, {
+            error: "Error al crear la reserva en Localiza",
+          });
+        }
+        throw error; // unexpected — bubble to the outer catch → 500
       }
-
-      const proxyResult = (await proxyResponse.json()) as {
-        reserveCode: string;
-        reservationStatus: string;
-      };
-
-      reserveCode = proxyResult.reserveCode;
-      status = LOCALIZA_STATUS_MAP[proxyResult.reservationStatus] ?? "pendiente";
     }
 
     // 6. Determine booking_type

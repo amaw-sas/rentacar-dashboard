@@ -1,36 +1,70 @@
-import { createMcpHandler } from "mcp-handler";
-import { z } from "zod";
+import { createMcpHandler, withMcpAuth } from "mcp-handler";
+import { verifyApiKey } from "@/lib/api/mcp/auth";
+import {
+  buscarDisponibilidad,
+  buscarDisponibilidadInputSchema,
+  crearSolicitudReserva,
+  crearSolicitudReservaInputSchema,
+} from "@/lib/api/mcp/tools";
 
-// SPIKE (Step 1, issue #72): minimal MCP endpoint to de-risk mcp-handler + SDK
-// + zod 4 compatibility on Next.js 16. The `echo` tool is throwaway — Step 8
-// replaces it with the real `buscar_disponibilidad` / `crear_solicitud_reserva`
-// tools under withMcpAuth. Do NOT build on this file's contents.
-
+// MCP server for AI reservation clients (issue #72). Streamable HTTP, stateless:
+// the quote context round-trips in the tool args (no session store). The Localiza
+// hop is made by the shared service functions, not here — the same path both
+// public funnels use.
+//
+// The reservation core can take minutes worst-case (Localiza proxy + inline email,
+// see #100/#99). At 120s the worst case sits right on the cutoff — a function
+// killed mid-creation would leave a phantom reservation (DB insert done, client
+// times out: the #99/#138 idempotency risk). We request 300s (Vercel's paid-plan
+// ceiling, clamped down automatically if the plan is lower) to give a slow-but-
+// succeeding creation room to finish. Confirm the plan's actual ceiling at rollout
+// (runbook); if it caps below ~120s, move the inline email to after() for this path.
 export const runtime = "nodejs";
+export const maxDuration = 300;
 
 const handler = createMcpHandler(
   (server) => {
     server.registerTool(
-      "echo",
+      "buscar_disponibilidad",
       {
-        title: "Echo",
-        description: "Echoes back the provided message (spike).",
-        inputSchema: { message: z.string().describe("Message to echo") },
+        title: "Buscar disponibilidad",
+        description:
+          "Consulta vehículos disponibles por ciudad y fechas. Devuelve, por gama, " +
+          "el precio en COP, descripción en español y un 'quote' opaco que debes " +
+          "reenviar tal cual a crear_solicitud_reserva para la gama elegida.",
+        inputSchema: buscarDisponibilidadInputSchema,
       },
-      async ({ message }) => ({
-        content: [{ type: "text", text: `Echo: ${message}` }],
-      })
+      buscarDisponibilidad,
+    );
+
+    server.registerTool(
+      "crear_solicitud_reserva",
+      {
+        title: "Crear solicitud de reserva",
+        description:
+          "Crea la reserva real en Localiza a partir de un 'quote' de " +
+          "buscar_disponibilidad más los datos del cliente. Devuelve el estado y el " +
+          "número de solicitud. No soporta seguro total en esta fase.",
+        inputSchema: crearSolicitudReservaInputSchema,
+      },
+      crearSolicitudReserva,
     );
   },
   {
-    serverInfo: { name: "rentacar-reservas", version: "0.0.1-spike" },
+    serverInfo: { name: "rentacar-reservas", version: "1.0.0" },
     capabilities: { tools: {} },
   },
   {
     basePath: "/api/mcp",
-    maxDuration: 60,
+    maxDuration: 300,
     verboseLogs: false,
-  }
+  },
 );
 
-export { handler as GET, handler as POST };
+// x-api-key shared-secret auth (Phase 1). `required: true` rejects any request
+// without a valid key (401). Phase 2 swaps verifyApiKey for an OAuth verifier.
+const authHandler = withMcpAuth(handler, (req) => verifyApiKey(req), {
+  required: true,
+});
+
+export { authHandler as GET, authHandler as POST };

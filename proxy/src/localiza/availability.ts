@@ -1,6 +1,7 @@
 import { Router, Request, Response } from "express";
 import { callLocalizaAPI, getConfig } from "./client";
 import { buildVehAvailRateXML } from "./xml-templates";
+import { mapLocalizaError } from "./errors";
 import {
   LocalizaWarningError,
   buildLocalizaWarning,
@@ -213,14 +214,7 @@ router.post("/", async (req: Request, res: Response): Promise<void> => {
     });
     res.json(vehicles);
   } catch (error) {
-    if (error instanceof LocalizaWarningError) {
-      res.status(error.httpStatus).json(error.toJSON());
-      return;
-    }
-    console.error("Availability error:", error);
-    res.status(502).json({
-      error: error instanceof Error ? error.message : "Unknown error",
-    });
+    mapLocalizaError(error, res, "Availability");
   }
 });
 

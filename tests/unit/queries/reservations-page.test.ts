@@ -22,6 +22,9 @@ type Recorder = {
   locationsData: Array<{ id: string }>;
   rows: unknown[];
   count: number;
+  // #105: planner row estimate the gate reads via rpc("reservations_estimated_count").
+  rowEstimate: number;
+  rowEstimateError: boolean;
 };
 
 let rec: Recorder;
@@ -88,10 +91,23 @@ vi.mock("@/lib/supabase/server", () => ({
   createClient: async () => ({
     from: (table: string) =>
       table === "locations" ? makeLocationsChain() : makeReservationsChain(),
+    rpc: (name: string) => {
+      if (name !== "reservations_estimated_count") {
+        return Promise.resolve({ data: null, error: { message: "unknown rpc" } });
+      }
+      return Promise.resolve(
+        rec.rowEstimateError
+          ? { data: null, error: { message: "probe failed" } }
+          : { data: rec.rowEstimate, error: null },
+      );
+    },
   }),
 }));
 
-import { getReservationsPage } from "@/lib/queries/reservations";
+import {
+  getReservationsPage,
+  __resetReservationsRowEstimateCache,
+} from "@/lib/queries/reservations";
 
 function freshRecorder(): Recorder {
   return {
@@ -110,6 +126,8 @@ function freshRecorder(): Recorder {
     locationsData: [],
     rows: [],
     count: 0,
+    rowEstimate: 0,
+    rowEstimateError: false,
   };
 }
 
@@ -119,12 +137,77 @@ function run(query: string) {
 
 beforeEach(() => {
   rec = freshRecorder();
+  // The estimate is cached at module scope; clear it so each case gates fresh.
+  __resetReservationsRowEstimateCache();
 });
 
 describe("getReservationsPage — query construction", () => {
-  it("selects with an exact count for pagination", async () => {
-    await run("");
+  it("selects with an exact count below the planned threshold (SCEN-105-1)", async () => {
+    rec.rowEstimate = 13_219; // today's scale
+    const out = await run("");
     expect(rec.reservations.select?.opts).toEqual({ count: "exact" });
+    expect(out.approximate).toBe(false);
+  });
+
+  it("switches to a planned count for the UNFILTERED list at/above 100k rows (SCEN-105-2)", async () => {
+    rec.rowEstimate = 100_000;
+    const out = await run("");
+    expect(rec.reservations.select?.opts).toEqual({ count: "planned" });
+    expect(out.approximate).toBe(true);
+  });
+
+  // SCEN-105-5: planned is the planner estimate for the *filtered* query, which is
+  // routinely wrong for selective predicates → unreachable rows / phantom pages.
+  // Any narrowing filter or search must keep the cheap, correct exact count.
+  it.each([
+    ["status=pendiente", "status filter"],
+    ["q=lopez", "search"],
+    ["franchise=alquilatucarro", "franchise filter"],
+    ["city=city-1", "city filter"],
+    ["origen=__unknown__", "channel filter"],
+    ["created_from=2026-05-01", "created range"],
+    ["pickup_to=2026-06-30", "pickup range"],
+    ["referral=ref-1", "referral filter"],
+  ])(
+    "stays exact at scale when a narrowing query is active: %s (%s) (SCEN-105-5)",
+    async (query) => {
+      rec.rowEstimate = 500_000; // well past the threshold
+      const out = await run(query);
+      expect(rec.reservations.select?.opts).toEqual({ count: "exact" });
+      expect(out.approximate).toBe(false);
+    },
+  );
+
+  it("folds a never-analyzed table (reltuples = -1) to exact (SCEN-105-3)", async () => {
+    rec.rowEstimate = -1;
+    const out = await run("");
+    expect(rec.reservations.select?.opts).toEqual({ count: "exact" });
+    expect(out.approximate).toBe(false);
+  });
+
+  it("folds a non-finite estimate to exact instead of caching NaN (SCEN-105-3)", async () => {
+    rec.rowEstimate = Number.NaN;
+    const out = await run("");
+    expect(rec.reservations.select?.opts).toEqual({ count: "exact" });
+    expect(out.approximate).toBe(false);
+  });
+
+  it("stays exact just below the threshold (SCEN-105-4 boundary)", async () => {
+    rec.rowEstimate = 99_999;
+    const out = await run("");
+    expect(rec.reservations.select?.opts).toEqual({ count: "exact" });
+    expect(out.approximate).toBe(false);
+  });
+
+  it("falls back to exact when the size probe fails (SCEN-105-3 resilience)", async () => {
+    rec.rowEstimateError = true;
+    rec.rows = [{ id: "r1" }];
+    rec.count = 42;
+    const out = await run("");
+    expect(rec.reservations.select?.opts).toEqual({ count: "exact" });
+    expect(out.approximate).toBe(false);
+    // The list still renders — a failed stats probe never breaks it.
+    expect(out.rows).toEqual([{ id: "r1" }]);
   });
 
   it("orders by is_priority first, then the sort column, then id (stable)", async () => {
@@ -244,6 +327,7 @@ describe("getReservationsPage — query construction", () => {
     const out = await run("");
     expect(out.rows).toEqual([{ id: "r1" }, { id: "r2" }]);
     expect(out.total).toBe(13003);
+    expect(out.approximate).toBe(false);
   });
 
   it("does not apply filters that are absent", async () => {

@@ -32,4 +32,36 @@ describe("OpenAPI doc — location directory parity (SCEN-006)", () => {
     expect(spec.paths["/api/reservations"]).toBeDefined();
     expect(spec.paths["/api/reservations/availability"]).toBeDefined();
   });
+
+  // SCEN-119 (issue #72 Step 9): AvailabilityResponseItem must document the FULL
+  // shape `searchAvailability` emits. Source of truth: the proxy parser
+  // (proxy/src/localiza/availability.ts:153-173). The proxy is a separate package
+  // with no consumable export, so the field list is mirrored here explicitly —
+  // if the parser gains/loses a field, update both this list and the doc.
+  it("SCEN-119: AvailabilityResponseItem documents the full real item shape", () => {
+    const REAL_ITEM_FIELDS = [
+      "categoryCode",
+      "categoryDescription",
+      "totalAmount",
+      "estimatedTotalAmount",
+      "vehicleDayCharge",
+      "numberDays",
+      "coverageUnitCharge",
+      "coverageQuantity",
+      "coverageTotalAmount",
+      "extraHoursQuantity",
+      "extraHoursUnityAmount",
+      "extraHoursTotalAmount",
+      "taxFeeAmount",
+      "taxFeePercentage",
+      "IVAFeeAmount",
+      "returnFeeAmount",
+      "discountAmount",
+      "discountPercentage",
+      "rateQualifier",
+      "referenceToken",
+    ];
+    const props = spec.components.schemas.AvailabilityResponseItem.properties;
+    expect(new Set(Object.keys(props))).toEqual(new Set(REAL_ITEM_FIELDS));
+  });
 });

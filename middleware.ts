@@ -2,17 +2,21 @@ import { type NextRequest, NextResponse } from "next/server";
 import { updateSession } from "@/lib/supabase/middleware";
 import { createServerClient } from "@supabase/ssr";
 
-const PUBLIC_API_PREFIXES = [
+// Exported for the issue-#72 middleware-prefix test (SCEN-107). Next.js only
+// consumes the `middleware` and `config` exports — this named export is inert.
+export const PUBLIC_API_PREFIXES = [
   "/api/reservations",
   "/api/cron",
   "/api/upload",
   "/api/locations",
   "/api/openapi",
+  "/api/mcp",
 ];
 
 export async function middleware(request: NextRequest) {
-  // Public API routes — bypass session auth. /api/reservations, /api/cron and
-  // /api/upload authenticate via x-api-key in the handler; /api/locations and
+  // Public API routes — bypass session auth. /api/reservations, /api/cron,
+  // /api/upload and /api/mcp authenticate via x-api-key (the MCP server checks
+  // it through withMcpAuth → verifyApiKey, issue #72); /api/locations and
   // /api/openapi are fully public (no key — data already public on brand sites).
   if (PUBLIC_API_PREFIXES.some((p) => request.nextUrl.pathname.startsWith(p))) {
     return NextResponse.next();

@@ -64,4 +64,17 @@ describe("OpenAPI doc — location directory parity (SCEN-006)", () => {
     const props = spec.components.schemas.AvailabilityResponseItem.properties;
     expect(new Set(Object.keys(props))).toEqual(new Set(REAL_ITEM_FIELDS));
   });
+
+  // Two-door split: quoting is a public read (security overridden to []), while
+  // the write endpoint that creates real Localiza reservations stays gated by the
+  // global ApiKeyAuth (no per-op override). Locks both doors against an accidental
+  // swap — opening reservations or re-closing availability fails here.
+  it("exposes availability as public but keeps reservation creation gated", () => {
+    expect(spec.paths["/api/reservations/availability"].post.security).toEqual([]);
+    // No per-operation override → inherits the global ApiKeyAuth requirement.
+    // `in` (not property access) because the JSON literal type has no `security`
+    // key on this operation, which is exactly the invariant under test.
+    expect("security" in spec.paths["/api/reservations"].post).toBe(false);
+    expect(spec.security).toEqual([{ ApiKeyAuth: [] }]);
+  });
 });

@@ -199,6 +199,7 @@
         "summary": "Consultar disponibilidad de vehículos",
         "description": "Pass-through al proxy Localiza. Retorna las categorías disponibles con `referenceToken` y `rateQualifier` para cada una.\n\n**Tip Apidog**: en la respuesta, guarda `referenceToken` y `rateQualifier` como variables de entorno para usarlas en el POST /api/reservations.",
         "tags": ["Reservas"],
+        "security": [],
         "requestBody": {
           "required": true,
           "content": {
@@ -219,7 +220,7 @@
               }
             }
           },
-          "401": { "description": "API key inválida" },
+          "400": { "description": "Cuerpo inválido o campos requeridos faltantes" },
           "502": { "description": "Error al comunicar con proxy/Localiza" }
         }
       }

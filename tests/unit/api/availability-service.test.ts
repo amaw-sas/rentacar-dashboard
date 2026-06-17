@@ -14,6 +14,20 @@ vi.mock("@/lib/api/category-names", () => ({
   getCategoryNameMap: vi.fn(),
 }));
 
+// Capacity enrichment (#72) is layered after the name enrichment; mock its map
+// so the service tests stay network-free. The REAL `enrichCategoryCapacity` runs.
+vi.mock("@/lib/api/category-capacity", () => ({
+  getCategoryCapacityMap: vi.fn(),
+}));
+
+const CAP_C = {
+  passengerCount: 5,
+  luggageCount: 4,
+  transmission: "automatic" as const,
+  hasAc: true,
+  picoyplacaExempt: false,
+};
+
 // NOTE: `vi.resetModules()` in beforeEach gives each dynamically-imported
 // service its own fresh module graph — so `ServiceError` must be imported
 // dynamically ALONGSIDE the service (same graph) for `instanceof` to hold.
@@ -78,6 +92,10 @@ describe("searchAvailability (issue #72 Step 2)", () => {
     vi.mocked(getCategoryNameMap).mockResolvedValue(
       new Map([["C", "Gama C Económico Mecánico"]]),
     );
+    const { getCategoryCapacityMap } = await import(
+      "@/lib/api/category-capacity"
+    );
+    vi.mocked(getCategoryCapacityMap).mockResolvedValue(new Map([["C", CAP_C]]));
     vi.mocked(fetch).mockResolvedValue(
       proxyResponse({ ok: true, status: 200, json: () => PT_ITEMS }) as Response,
     );
@@ -89,6 +107,12 @@ describe("searchAvailability (issue #72 Step 2)", () => {
 
     expect(Array.isArray(result)).toBe(true);
     expect(result[0].categoryDescription).toBe("Gama C Económico Mecánico");
+    // Capacity fields merged onto the matching gama.
+    expect(result[0].passengerCount).toBe(5);
+    expect(result[0].luggageCount).toBe(4);
+    expect(result[0].transmission).toBe("automatic");
+    expect(result[0].hasAc).toBe(true);
+    expect(result[0].picoyplacaExempt).toBe(false);
     // Raw price + token fields survive unchanged.
     expect(result[0].totalAmount).toBe(100);
     expect(result[0].estimatedTotalAmount).toBe(119);
@@ -113,6 +137,10 @@ describe("searchAvailability (issue #72 Step 2)", () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const { getCategoryNameMap } = await import("@/lib/api/category-names");
     vi.mocked(getCategoryNameMap).mockRejectedValue(new Error("db down"));
+    const { getCategoryCapacityMap } = await import(
+      "@/lib/api/category-capacity"
+    );
+    vi.mocked(getCategoryCapacityMap).mockResolvedValue(new Map());
     vi.mocked(fetch).mockResolvedValue(
       proxyResponse({ ok: true, status: 200, json: () => PT_ITEMS }) as Response,
     );
@@ -121,6 +149,37 @@ describe("searchAvailability (issue #72 Step 2)", () => {
     const result = await searchAvailability(VALID_INPUT);
 
     expect(result).toEqual(PT_ITEMS);
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
+  // Capacity enrichment degrades INDEPENDENTLY of name enrichment: when only the
+  // capacity map rejects, the name-enriched array is still served, just without
+  // the capacity fields. Proves the two enrichments don't share a failure path.
+  it("serves name-enriched items WITHOUT capacity when getCategoryCapacityMap rejects", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { getCategoryNameMap } = await import("@/lib/api/category-names");
+    vi.mocked(getCategoryNameMap).mockResolvedValue(
+      new Map([["C", "Gama C Económico Mecánico"]]),
+    );
+    const { getCategoryCapacityMap } = await import(
+      "@/lib/api/category-capacity"
+    );
+    vi.mocked(getCategoryCapacityMap).mockRejectedValue(new Error("db down"));
+    vi.mocked(fetch).mockResolvedValue(
+      proxyResponse({ ok: true, status: 200, json: () => PT_ITEMS }) as Response,
+    );
+
+    const { searchAvailability } = await import("@/lib/api/availability-service");
+    const result = (await searchAvailability(VALID_INPUT)) as Array<
+      Record<string, unknown>
+    >;
+
+    // Name enrichment survived…
+    expect(result[0].categoryDescription).toBe("Gama C Económico Mecánico");
+    // …but capacity is simply absent (not zeroed).
+    expect(result[0]).not.toHaveProperty("passengerCount");
+    expect(result[0].totalAmount).toBe(100);
     expect(errorSpy).toHaveBeenCalled();
     errorSpy.mockRestore();
   });

@@ -37,7 +37,9 @@ describe("OpenAPI doc — location directory parity (SCEN-006)", () => {
   // shape `searchAvailability` emits. Source of truth: the proxy parser
   // (proxy/src/localiza/availability.ts:153-173). The proxy is a separate package
   // with no consumable export, so the field list is mirrored here explicitly —
-  // if the parser gains/loses a field, update both this list and the doc.
+  // if the parser gains/loses a field, update both this list and the doc. The
+  // last five (passengerCount…picoyplacaExempt) are NOT proxy fields — they are
+  // added by the dashboard's capacity enrichment (#72) and must stay documented.
   it("SCEN-119: AvailabilityResponseItem documents the full real item shape", () => {
     const REAL_ITEM_FIELDS = [
       "categoryCode",
@@ -60,6 +62,13 @@ describe("OpenAPI doc — location directory parity (SCEN-006)", () => {
       "discountPercentage",
       "rateQualifier",
       "referenceToken",
+      // Capacity fields (#72) — added by the dashboard's category enrichment,
+      // NOT emitted by the proxy parser.
+      "passengerCount",
+      "luggageCount",
+      "transmission",
+      "hasAc",
+      "picoyplacaExempt",
     ];
     const props = spec.components.schemas.AvailabilityResponseItem.properties;
     expect(new Set(Object.keys(props))).toEqual(new Set(REAL_ITEM_FIELDS));
@@ -76,5 +85,16 @@ describe("OpenAPI doc — location directory parity (SCEN-006)", () => {
     // key on this operation, which is exactly the invariant under test.
     expect("security" in spec.paths["/api/reservations"].post).toBe(false);
     expect(spec.security).toEqual([{ ApiKeyAuth: [] }]);
+  });
+
+  // GET /api/requirements is a public read (security []), like locations, and is
+  // backed by the RentalRequirements schema.
+  it("documents GET /api/requirements as public, backed by RentalRequirements", () => {
+    const op = spec.paths["/api/requirements"].get;
+    expect(op.security).toEqual([]);
+    expect(op.responses["200"].content["application/json"].schema.$ref).toBe(
+      "#/components/schemas/RentalRequirements",
+    );
+    expect(spec.components.schemas.RentalRequirements).toBeDefined();
   });
 });

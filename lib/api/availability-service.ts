@@ -1,5 +1,7 @@
 import { getCategoryNameMap } from "@/lib/api/category-names";
 import { enrichCategoryDescriptions } from "@/lib/api/availability-enrichment";
+import { getCategoryCapacityMap } from "@/lib/api/category-capacity";
+import { enrichCategoryCapacity } from "@/lib/api/availability-capacity-enrichment";
 import { ServiceError } from "@/lib/api/service-error";
 
 /**
@@ -84,15 +86,29 @@ export async function searchAvailability(
 
     const data = await proxyResponse.json();
     if (Array.isArray(data)) {
+      let items = data;
+      // Name enrichment (#74): on failure, keep the RAW proxy array.
       try {
         const nameMap = await getCategoryNameMap();
-        return enrichCategoryDescriptions(data, nameMap);
+        items = enrichCategoryDescriptions(items, nameMap);
       } catch (e) {
         console.error(
-          "[availability] category enrichment failed, serving raw:",
+          "[availability] category name enrichment failed, serving raw:",
           e,
         );
       }
+      // Capacity enrichment (#72): independent safe degradation — on failure,
+      // serve the (possibly name-enriched) items WITHOUT the capacity fields.
+      try {
+        const capacityMap = await getCategoryCapacityMap();
+        items = enrichCategoryCapacity(items, capacityMap);
+      } catch (e) {
+        console.error(
+          "[availability] category capacity enrichment failed, serving without capacity:",
+          e,
+        );
+      }
+      return items;
     }
     return data;
   } catch (error) {

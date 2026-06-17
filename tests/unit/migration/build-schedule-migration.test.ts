@@ -54,6 +54,31 @@ describe("buildScheduleMigration (issue #96 runner)", () => {
     expect(review).toContain("`hol` ausente");
   });
 
+  // SCEN-012: operator corrections merged on top of the faithful parse.
+  it("merges an override onto the parsed result (adds/replaces day keys)", () => {
+    const rows: DumpRow[] = [
+      { code: "ACBOJ", name: "Bogotá Calle 170", schedule: { display: "Lun-Vie 08:00-16:00 | Sáb 08:00-13:00" } },
+    ];
+    const overrides = { ACBOJ: { sun: ["08:00-13:00"], hol: ["08:00-13:00"] } };
+    const { sql, review } = buildScheduleMigration(rows, overrides);
+    expect(sql).toContain("\"sun\":[\"08:00-13:00\"]");
+    expect(sql).toContain("\"hol\":[\"08:00-13:00\"]");
+    // parse-only keys survive (mon from the display)
+    expect(sql).toContain("\"mon\":[\"08:00-16:00\"]");
+    // display preserved (literal in the SQL jsonb — pipe not escaped here)
+    expect(sql).toContain("\"display\":\"Lun-Vie 08:00-16:00 | Sáb 08:00-13:00\"");
+    // report flags the corrected row
+    expect(review).toContain("corregida");
+  });
+
+  it("rejects an override that produces a schema-invalid result", () => {
+    const rows: DumpRow[] = [
+      { code: "X", name: "X", schedule: { display: "Lun-Vie 08:00-16:00" } },
+    ];
+    // 08:15 is off the 30-min grid → locationScheduleSchema must reject.
+    expect(() => buildScheduleMigration(rows, { X: { hol: ["08:15-13:00"] } })).toThrow();
+  });
+
   it("doubles single quotes when building a SQL literal", () => {
     expect(sqlLiteral("O'Higgins")).toBe("'O''Higgins'");
     expect(sqlLiteral("plain")).toBe("'plain'");

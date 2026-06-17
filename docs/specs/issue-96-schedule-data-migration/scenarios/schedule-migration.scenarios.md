@@ -72,6 +72,14 @@ ausente (decisión de producto). Fail-loud en tokens desconocidos.
 **Then**: existen `schedule-dump-<ts>.json` (fuente de rollback) y `schedule-migration-runbook.md` (reversión documentada)
 **Evidence**: archivos presentes en `docs/migration-runs/`
 
+## SCEN-012 (runner, overrides): correcciones del operador se mergean sobre el parse
+**Given**: un dump y un mapa de overrides `{ ACBOJ: { sun: ["08:00-13:00"], hol: ["08:00-13:00"] } }`
+(correcciones humanas que el texto no contiene — el operador confirmó que la sucursal abre festivos)
+**When**: el runner `buildScheduleMigration(rows, overrides)` corre
+**Then**: la fila corregida emite las claves del override (reemplazando/añadiendo sobre el parse fiel),
+conserva `display`, la salida sigue pasando `locationScheduleSchema`, y el reporte marca la fila como corregida
+**Evidence**: el SQL de ACBOJ contiene `"sun":["08:00-13:00"]` y `"hol":["08:00-13:00"]`; el reporte lista la fila bajo correcciones
+
 ## SCEN-011 (proceso, prod): idempotencia en aplicación real
 **Given**: el SQL aprobado aplicado a prod una vez
 **When**: se aplica una segunda vez (o se consulta post-apply)

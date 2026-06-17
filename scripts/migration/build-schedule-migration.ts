@@ -1,5 +1,5 @@
 import { parseSchedule } from "@/scripts/migration/parse-schedule";
-import type { LocationSchedule } from "@/lib/schemas/location";
+import { locationScheduleSchema, type LocationSchedule } from "@/lib/schemas/location";
 
 /**
  * Issue #96 (ola D2) — runner sin DB.
@@ -25,6 +25,13 @@ export interface MigrationArtifacts {
   sql: string;
   changedCount: number;
 }
+
+/**
+ * Correcciones del operador que el texto NO contiene (revisión humana fila-por-fila).
+ * Se mergean sobre el parse fiel: cada clave del override reemplaza/añade la del parse.
+ * Mapa code → claves parciales de LocationSchedule.
+ */
+export type ScheduleOverrides = Record<string, Partial<LocationSchedule>>;
 
 const KEY_ORDER = ["mon", "tue", "wed", "thu", "fri", "sat", "sun", "hol", "display"];
 
@@ -66,20 +73,24 @@ function sortDeep(value: unknown): unknown {
 }
 
 /** Núcleo puro: dump → artefactos. Sin I/O, sin timestamp, determinista. */
-export function buildScheduleMigration(rows: DumpRow[]): MigrationArtifacts {
+export function buildScheduleMigration(
+  rows: DumpRow[],
+  overrides: ScheduleOverrides = {}
+): MigrationArtifacts {
   const sorted = [...rows].sort((a, b) => a.code.localeCompare(b.code));
 
   const reviewLines: string[] = [
     "# Revisión de migración de horarios — ola D2 (#96)",
     "",
     "Validar cada fila contra el horario operativo real ANTES de aplicar. Festivos no",
-    "mencionados en el texto quedan como `hol` ausente (= cerrado); corregir aquí las",
-    "sucursales que sí abren festivos.",
+    "mencionados en el texto quedan como `hol` ausente (= cerrado), salvo corrección del",
+    "operador (columna `corregida`).",
     "",
-    "| code | name | display original | schedule original | parsed |",
-    "| --- | --- | --- | --- | --- |",
+    "| code | name | display original | schedule original | parsed | corregida |",
+    "| --- | --- | --- | --- | --- | --- |",
   ];
   const attention: string[] = [];
+  const corrections: string[] = [];
   const sqlLines: string[] = [
     "-- Migración de horarios texto → estructurado (issue #96, ola D2).",
     "-- Idempotente: el guard `IS DISTINCT FROM` hace no-op cualquier fila ya migrada.",
@@ -90,25 +101,36 @@ export function buildScheduleMigration(rows: DumpRow[]): MigrationArtifacts {
   let changedCount = 0;
   for (const row of sorted) {
     const parsed = parseSchedule(displayOf(row));
-    const parsedJson = stableStringify(parsed);
+    const override = overrides[row.code];
+    // Merge de la corrección del operador sobre el parse fiel: las claves del
+    // override reemplazan/añaden. Se re-valida para que una corrección inválida
+    // (ej. minuto off-grid) falle ruidoso en vez de llegar a prod.
+    const final = override
+      ? locationScheduleSchema.parse({ ...parsed, ...override })
+      : parsed;
+
+    const finalJson = stableStringify(final);
     const displayCell = (displayOf(row) ?? "_(vacío)_").replace(/\|/g, "\\|");
     // Mostrar el schedule original COMPLETO para que el gate humano vea cualquier
     // clave no modelada que el `SET schedule = …` (full-replace) borraría.
     const originalJson = JSON.stringify(row.schedule ?? {}).replace(/\|/g, "\\|");
     reviewLines.push(
-      `| ${row.code} | ${row.name} | ${displayCell} | \`${originalJson}\` | \`${parsedJson.replace(/\|/g, "\\|")}\` |`
+      `| ${row.code} | ${row.name} | ${displayCell} | \`${originalJson}\` | \`${finalJson.replace(/\|/g, "\\|")}\` | ${override ? "sí" : "—"} |`
     );
 
-    const isEmpty = Object.keys(parsed).filter((k) => k !== "display").length === 0;
-    const holAbsent = !("hol" in parsed) && !isEmpty;
+    const isEmpty = Object.keys(final).filter((k) => k !== "display").length === 0;
+    const holAbsent = !("hol" in final) && !isEmpty;
+    if (override) {
+      corrections.push(`- ${row.code} (${row.name}): override \`${JSON.stringify(override)}\`.`);
+    }
     if (isEmpty) attention.push(`- ${row.code} (${row.name}): quedó \`{}\` — sin horario.`);
     else if (holAbsent) attention.push(`- ${row.code} (${row.name}): \`hol\` ausente (festivos no declarados).`);
 
-    if (!deepEqual(parsed, row.schedule ?? {})) {
+    if (!deepEqual(final, row.schedule ?? {})) {
       changedCount++;
       sqlLines.push(
-        `UPDATE locations SET schedule = ${sqlLiteral(parsedJson)}::jsonb ` +
-          `WHERE code = ${sqlLiteral(row.code)} AND schedule IS DISTINCT FROM ${sqlLiteral(parsedJson)}::jsonb;`
+        `UPDATE locations SET schedule = ${sqlLiteral(finalJson)}::jsonb ` +
+          `WHERE code = ${sqlLiteral(row.code)} AND schedule IS DISTINCT FROM ${sqlLiteral(finalJson)}::jsonb;`
       );
     }
   }
@@ -116,11 +138,15 @@ export function buildScheduleMigration(rows: DumpRow[]): MigrationArtifacts {
   const review = [
     ...reviewLines,
     "",
+    "## Correcciones aplicadas (override del operador)",
+    "",
+    ...(corrections.length ? corrections : ["- (ninguna)"]),
+    "",
     "## Filas que requieren atención",
     "",
     ...(attention.length ? attention : ["- (ninguna)"]),
     "",
-    `**Total**: ${sorted.length} filas · ${changedCount} con cambios · ${sorted.length - changedCount} sin cambio.`,
+    `**Total**: ${sorted.length} filas · ${changedCount} con cambios · ${sorted.length - changedCount} sin cambio · ${corrections.length} corregidas.`,
     "",
   ].join("\n");
 
@@ -130,16 +156,19 @@ export function buildScheduleMigration(rows: DumpRow[]): MigrationArtifacts {
 
 // --- CLI (solo al ejecutar directamente con node) ---------------------------
 // node --import ./scripts/migration/_register-alias.mjs \
-//      scripts/migration/build-schedule-migration.ts <dump.json> <out-dir> <timestamp>
+//   scripts/migration/build-schedule-migration.ts <dump.json> <out-dir> <timestamp> [overrides.json]
 async function main(): Promise<void> {
   const { readFileSync, writeFileSync } = await import("node:fs");
-  const [dumpPath, outDir = "docs/migration-runs", timestamp] = process.argv.slice(2);
+  const [dumpPath, outDir = "docs/migration-runs", timestamp, overridesPath] = process.argv.slice(2);
   if (!dumpPath) {
-    throw new Error("uso: build-schedule-migration <dump.json> [out-dir] [timestamp]");
+    throw new Error("uso: build-schedule-migration <dump.json> [out-dir] [timestamp] [overrides.json]");
   }
   const ts = timestamp ?? new Date().toISOString().replace(/[:.]/g, "-");
   const rows = JSON.parse(readFileSync(dumpPath, "utf8")) as DumpRow[];
-  const { review, sql, changedCount } = buildScheduleMigration(rows);
+  const overrides: ScheduleOverrides = overridesPath
+    ? (JSON.parse(readFileSync(overridesPath, "utf8")) as ScheduleOverrides)
+    : {};
+  const { review, sql, changedCount } = buildScheduleMigration(rows, overrides);
   const reviewPath = `${outDir}/schedule-review-${ts}.md`;
   const sqlPath = `${outDir}/schedule-migration-${ts}.sql`;
   writeFileSync(reviewPath, review);

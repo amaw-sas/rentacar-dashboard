@@ -53,6 +53,7 @@ describe("middleware PUBLIC_API_PREFIXES (issue #72 Step 5)", () => {
       "/api/cron",
       "/api/upload",
       "/api/locations",
+      "/api/requirements",
       "/api/openapi",
     ]) {
       expect(PUBLIC_API_PREFIXES).toContain(p);

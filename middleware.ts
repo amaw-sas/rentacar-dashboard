@@ -9,6 +9,7 @@ export const PUBLIC_API_PREFIXES = [
   "/api/cron",
   "/api/upload",
   "/api/locations",
+  "/api/requirements",
   "/api/openapi",
   "/api/mcp",
 ];
@@ -16,8 +17,9 @@ export const PUBLIC_API_PREFIXES = [
 export async function middleware(request: NextRequest) {
   // Public API routes — bypass session auth. /api/reservations, /api/cron,
   // /api/upload and /api/mcp authenticate via x-api-key (the MCP server checks
-  // it through withMcpAuth → verifyApiKey, issue #72); /api/locations and
-  // /api/openapi are fully public (no key — data already public on brand sites).
+  // it through withMcpAuth → verifyApiKey, issue #72); /api/locations,
+  // /api/requirements and /api/openapi are fully public (no key — data already
+  // public on brand sites).
   if (PUBLIC_API_PREFIXES.some((p) => request.nextUrl.pathname.startsWith(p))) {
     return NextResponse.next();
   }

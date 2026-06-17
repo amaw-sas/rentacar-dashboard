@@ -340,10 +340,15 @@ describe("createReservation (issue #72 Step 3)", () => {
   // partial unique index `reservations_reservation_code_unique`. The insert
   // returns 23505; createReservation must return the SAME result as success and
   // NOT re-notify (no second email, no second WhatsApp/GHL fan-out scheduled).
-  it("SCEN-A: 23505 on reservation_code_unique → replay result, no re-notify", async () => {
+  it("SCEN-A: 23505 on reservation_code_unique → replay winner status, no re-notify", async () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    const { sb } = await wireMocks();
-    sb.insert.mockReturnValue({
+    await wireMocks();
+
+    // INSERT loses the race (23505); the read-back returns the WINNER's persisted
+    // status. Make it DIFFER from the status this request would compute from the
+    // proxy ("Reserved" → "reservado") to prove the replay returns the winner's
+    // row, not the locally recomputed value.
+    const insert = vi.fn().mockReturnValue({
       select: vi.fn().mockReturnValue({
         single: vi.fn().mockResolvedValue({
           data: null,
@@ -355,6 +360,23 @@ describe("createReservation (issue #72 Step 3)", () => {
         }),
       }),
     });
+    const readBackSingle = vi
+      .fn()
+      .mockResolvedValue({ data: { status: "pendiente" }, error: null });
+    const select = vi.fn().mockReturnValue({
+      eq: vi.fn().mockReturnValue({
+        gte: vi.fn().mockReturnValue({
+          limit: vi.fn().mockReturnValue({ single: readBackSingle }),
+        }),
+      }),
+    });
+    const { createAdminClient } = await import("@/lib/supabase/admin");
+    vi.mocked(createAdminClient).mockReturnValue(
+      { from: vi.fn().mockReturnValue({ insert, select }) } as unknown as ReturnType<
+        typeof createAdminClient
+      >,
+    );
+
     vi.mocked(fetch).mockResolvedValue(
       proxyResponse({
         ok: true,
@@ -372,10 +394,10 @@ describe("createReservation (issue #72 Step 3)", () => {
 
     const result = await createReservation(STANDARD_INPUT);
 
-    // Same shape as a fresh success — the client cannot tell a replay apart.
+    // reserveCode echoed; status is the WINNER's persisted value, not "reservado".
     expect(result).toEqual({
       reserveCode: "LOC-123",
-      reservationStatus: "reservado",
+      reservationStatus: "pendiente",
     });
     // The winning insert already notified; the replay must stay silent.
     expect(sendReservationNotifications).not.toHaveBeenCalled();

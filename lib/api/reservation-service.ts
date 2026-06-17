@@ -356,10 +356,29 @@ export async function createReservation(
         insertError.message?.includes("reservations_reservation_code_unique") &&
         reserveCode
       ) {
+        // Return the WINNER's persisted status, not the status recomputed from
+        // this request's proxy reply. If the resubmit lands after #99's proxy
+        // replay TTL, Localiza may re-issue the same ConfID with an advanced
+        // status — returning the local `status` would hand this caller a value
+        // that disagrees with both the stored row and the notifications the
+        // customer already received. A 23505 means the winner committed (READ
+        // COMMITTED), so this read-back sees it; the `?? status` fallback only
+        // covers the unreachable null case. Scoped to the indexed partition so a
+        // legacy row sharing the code can never be picked.
+        const { data: winner } = await supabase
+          .from("reservations")
+          .select("status")
+          .eq("reservation_code", reserveCode)
+          .gte("created_at", "2026-01-01")
+          .limit(1)
+          .single();
         console.log(
           `[reservation] Idempotent replay: reservation_code ${reserveCode} already exists — skipping insert + notifications`,
         );
-        return { reserveCode, reservationStatus: status };
+        return {
+          reserveCode,
+          reservationStatus: (winner?.status as ReservationStatus) ?? status,
+        };
       }
       console.error("[reservation] Insert failed:", insertError?.message);
       throw new ServiceError(500, { error: "Error al guardar la reserva" });

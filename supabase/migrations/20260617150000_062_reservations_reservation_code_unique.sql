@@ -22,6 +22,13 @@
 -- No data is deleted or modified. Application-side recovery: on a 23505 from this
 -- index, createReservation returns the existing result without re-inserting or
 -- re-notifying (lib/api/reservation-service.ts).
+--
+-- The 2026+ partition is small and verified duplicate-free, so the build is
+-- sub-second. lock_timeout caps how long it may block concurrent writes before
+-- failing fast (same convention as migration 059), rather than queueing behind
+-- a long-running statement on a busy table.
+
+set local lock_timeout = '3s';
 
 create unique index if not exists reservations_reservation_code_unique
   on public.reservations (reservation_code)

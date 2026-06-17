@@ -49,6 +49,20 @@ Re-aplicar el mismo SQL afecta **0 filas**: cada `UPDATE` lleva `AND schedule IS
 -- Re-ejecutar el .sql; el cliente debe reportar 0 filas actualizadas la 2ª vez.
 ```
 
+## Aplicación ejecutada — 2026-06-17
+
+Aplicada a prod (`ilhdholjrnbycyvejsub`) vía MCP `apply_migration`
+(`issue_96_schedule_text_to_structured`) + correcciones del operador
+(`schedule-overrides-2026-06-17.json`).
+
+Verificación post: `estructuradas: 28 · vacias: 4 · display_ok: 28` (32 total).
+Idempotencia confirmada (re-aplicar afecta 0 filas). Cierres ACKAL/ACMCL preservados.
+
+> Incidente menor (resuelto en la corrida): al pegar el SQL a mano en `apply_migration`
+> se omitió la fila **ACSMR** (27/28 aplicadas). La verificación post (`estructuradas=27`)
+> lo detectó de inmediato; se aplicó ACSMR por separado. **Lección**: aplicar el `.sql`
+> generado verbatim, no re-tipeado, y SIEMPRE verificar conteos post-aplicación.
+
 ## Reversión (rollback)
 Restaurar `schedule` de cada fila desde el dump. Generar el SQL de reversión desde
 `schedule-dump-2026-06-17.json` (un `UPDATE locations SET schedule = '<original>'::jsonb WHERE

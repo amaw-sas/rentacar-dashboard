@@ -60,6 +60,11 @@
           "returnFeeAmount": { "type": "number", "example": 0, "description": "Cargo por devolución en sede distinta. Se mapea a return_fee." },
           "discountAmount": { "type": "number", "example": 0, "description": "Monto de descuento aplicado (solo display)." },
           "discountPercentage": { "type": "number", "example": 0, "description": "Porcentaje de descuento aplicado (solo display)." },
+          "passengerCount": { "type": "integer", "example": 5, "description": "Capacidad de pasajeros de la gama (catálogo curado). Ausente si la gama aún no está curada." },
+          "luggageCount": { "type": "integer", "example": 4, "description": "Capacidad de maletas de la gama. Ausente si la gama aún no está curada." },
+          "transmission": { "type": "string", "enum": ["automatic", "manual"], "example": "automatic", "description": "Tipo de transmisión. Ausente si la gama aún no está curada." },
+          "hasAc": { "type": "boolean", "example": true, "description": "Si la gama tiene aire acondicionado. Ausente si la gama aún no está curada." },
+          "picoyplacaExempt": { "type": "boolean", "example": false, "description": "true = exenta de pico y placa. Ausente si la gama aún no está curada." },
           "referenceToken": {
             "type": "string",
             "description": "Token requerido para crear reserva — se extrae automáticamente al body"
@@ -150,6 +155,29 @@
             "items": { "$ref": "#/components/schemas/LocationDirectoryItem" }
           }
         }
+      },
+      "RentalRequirements": {
+        "type": "object",
+        "description": "Requisitos generales de alquiler. Contenido autorizado por el negocio (espejo del email de confirmación). Sin precios (son dinámicos y van en la cotización).",
+        "properties": {
+          "documentosRequeridos": {
+            "type": "array",
+            "description": "Documentos a presentar en la recogida.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "titulo": { "type": "string", "example": "Tarjeta de crédito" },
+                "detalle": { "type": "string", "example": "Solo se reciben pagos con tarjetas de crédito físicas." }
+              }
+            }
+          },
+          "reglaLicenciaConduccion": { "type": "string", "description": "Regla clave para extranjeros: la licencia determina el documento de identidad a presentar." },
+          "formaDePago": { "type": "string" },
+          "conductorAdicional": { "type": "string" },
+          "politicasDeUso": { "type": "array", "items": { "type": "string" } },
+          "recogida": { "type": "string" },
+          "fuente": { "type": "string" }
+        }
       }
     }
   },
@@ -191,6 +219,24 @@
             }
           },
           "500": { "description": "Error al cargar el directorio" }
+        }
+      }
+    },
+    "/api/requirements": {
+      "get": {
+        "summary": "Requisitos de alquiler",
+        "description": "Requisitos generales para alquilar (documentos, forma de pago, regla de licencia para extranjeros, políticas de uso). **Público, sin autenticación** (`x-api-key` no requerida). Contenido estático autorizado por el negocio.",
+        "tags": ["Requisitos"],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Requisitos de alquiler",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/RentalRequirements" }
+              }
+            }
+          }
         }
       }
     },

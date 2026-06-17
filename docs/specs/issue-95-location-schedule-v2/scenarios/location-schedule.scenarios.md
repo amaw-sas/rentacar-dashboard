@@ -68,6 +68,22 @@ Range rules (from the issue, copied verbatim — start/end asymmetry is delibera
 and `24:30` exceeds the `24:00` sentinel (`1470 > 1440`)
 **Evidence**: `safeParse(...).success === false` for each
 
+## SCEN-009 (hardening): zero-length range fails
+**Given**: `{ mon: ["08:00-08:00"] }`
+**When**: parsed
+**Then**: parse fails (`start < end` is strict; a 0-minute window is not a valid open period)
+**Evidence**: `safeParse(...).success === false`
+**Rationale**: not in the issue ACs; added from edge-case review to lock the `<` invariant
+against an accidental `<=` relaxation that would leak a 0-minute window to ola W1.
+
+## SCEN-010 (hardening): unknown/misspelled day key fails loudly
+**Given**: `{ monday: ["08:00-18:00"] }` and separately `{ lun: ["08:00-18:00"] }`
+**When**: parsed
+**Then**: both fail — `.strict()` rejects unknown keys instead of silently stripping them
+**Evidence**: `safeParse(...).success === false` for each
+**Rationale**: not in the issue ACs; without `.strict()` a typo'd or Spanish-locale day key is
+dropped silently and the schedule collapses to "closed", silently blocking bookings on an open day.
+
 ## SCEN-008 (regression): existing locationSchema fields still validate
 **Given**: a full valid location with `schedule: { mon: ["08:00-18:00"] }`
 **When**: parsed with `locationSchema`

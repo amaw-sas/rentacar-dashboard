@@ -342,6 +342,25 @@ export async function createReservation(
       .single();
 
     if (insertError || !inserted) {
+      // Issue #138 — DB-backed idempotency. A 23505 on the partial unique index
+      // `reservations_reservation_code_unique` means a concurrent resubmit or a
+      // 2nd Fluid Compute instance already inserted THIS booking: #99 makes the
+      // proxy replay the same reserveCode, so both racing inserts carry it and
+      // Postgres arbitrates — the loser lands here. Return the same result as the
+      // winner WITHOUT re-inserting or re-notifying (idempotent, cross-instance).
+      // `reserveCode` is guaranteed non-empty on this path: the index predicate
+      // excludes NULL and '' (monthly/empty never reach here). Any OTHER error —
+      // including a 23505 on a different constraint — is a real failure → 500.
+      if (
+        insertError?.code === "23505" &&
+        insertError.message?.includes("reservations_reservation_code_unique") &&
+        reserveCode
+      ) {
+        console.log(
+          `[reservation] Idempotent replay: reservation_code ${reserveCode} already exists — skipping insert + notifications`,
+        );
+        return { reserveCode, reservationStatus: status };
+      }
       console.error("[reservation] Insert failed:", insertError?.message);
       throw new ServiceError(500, { error: "Error al guardar la reserva" });
     }

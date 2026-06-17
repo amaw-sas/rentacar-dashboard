@@ -75,11 +75,34 @@ export async function findOrCreateCustomer(
     .select("id")
     .single();
 
-  if (error || !created) {
-    throw new Error(`Error al crear cliente: ${error?.message ?? "desconocido"}`);
+  if (created) {
+    return created.id;
   }
 
-  return created.id;
+  // Issue #138 — find-after-conflict. The SELECT above and this INSERT are not
+  // atomic: two concurrent requests for the SAME new customer (multi-instance
+  // Fluid Compute) both pass the empty SELECT, both INSERT, one wins and the
+  // other hits the `customers_identification_number_key` unique violation
+  // (23505). Recover the winner's id by re-SELECTing — NEVER write (respects
+  // #25: a public endpoint must never mutate a customer from booking input).
+  // `identification_number` is the only UNIQUE on `customers`, so a 23505 on
+  // that constraint is unambiguously this race; any other error still throws.
+  if (
+    error?.code === "23505" &&
+    error.message?.includes("customers_identification_number_key")
+  ) {
+    const { data: raced } = await supabase
+      .from("customers")
+      .select("id")
+      .eq("identification_number", input.identification_number)
+      .limit(1)
+      .single();
+    if (raced) {
+      return raced.id;
+    }
+  }
+
+  throw new Error(`Error al crear cliente: ${error?.message ?? "desconocido"}`);
 }
 
 /**

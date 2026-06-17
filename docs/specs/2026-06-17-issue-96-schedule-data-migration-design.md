@@ -67,8 +67,11 @@ parseSchedule(display: string | null | undefined): LocationSchedule
   las claves estructuradas derivadas.
 - Gramática:
   - Split por ` | ` (pipe con espacios) → segmentos.
-  - Cada segmento = `<día-spec> <tiempo-spec>`: el tiempo-spec es el literal final
-    (`HH:MM-HH:MM` | `24 horas` | `Cerrado`); el resto inicial es el día-spec.
+  - Cada segmento = `<día-spec> <tiempo-spec>`. El tiempo-spec se reconoce **emparejando el
+    final del segmento contra el conjunto enumerado de literales** (`HH:MM-HH:MM` | `24 horas`
+    | `Cerrado`), NO partiendo por el último token — `24 horas` son dos palabras y un split por
+    último token rompería AABOT (`"Lun-Dom 24 horas"` → día-spec `"Lun-Dom 24"`). El prefijo
+    restante, ya removido el literal de tiempo, es el día-spec.
   - Día-spec → conjunto de claves:
     - Rango `A-B` (`Lun-Vie`, `Lun-Sáb`, `Lun-Dom`): expandir sobre el orden semanal
       `[mon,tue,wed,thu,fri,sat,sun]` entre A y B inclusive.
@@ -95,9 +98,12 @@ parseSchedule(display: string | null | undefined): LocationSchedule
 
 - **Entrada**: dump JSON de prod `[{code, name, schedule}]` generado por MCP (read-only),
   guardado en `docs/migration-runs/schedule-dump-<ts>.json`.
-- Por fila: `parseSchedule(schedule.display)` → valida con `locationSchema` (la fila completa,
-  no solo el schedule) reusando el resto de campos no es necesario; basta `locationScheduleSchema`
-  sobre el resultado, ya cubierto por el parser. El runner re-valida defensivamente.
+- Por fila: `parseSchedule(schedule?.display ?? null)` → re-valida defensivamente con
+  `locationScheduleSchema`. El guard `schedule?.display ?? null` mapea una columna `schedule`
+  literalmente `null` (no `{}`) a `{}` en vez de hacer crash el runner.
+- **Nota AC-D2.7**: el issue dice "pasa `locationSchema`"; como `locationSchema.schedule` ES
+  `locationScheduleSchema`, validar el sub-schema del schedule es el chequeo correcto y
+  suficiente (el schema de fila completa exigiría campos ajenos al parser como `pickup_address`).
 - **Salidas** (a `docs/migration-runs/`):
   - (a) **Reporte de revisión** `schedule-review-<ts>.md`: tabla `code | name | display original |
     JSON parseado`, ordenada por código, con una sección destacada de filas que quedaron `{}`

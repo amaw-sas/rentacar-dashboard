@@ -79,8 +79,10 @@ create unique index reservations_reservation_code_unique
 
 En `createReservation`, el bloque de insert (líneas 289-347):
 
-- Detecta `insertError.code === '23505'` **y** que la constraint violada sea `reservations_reservation_code_unique` (cualquier otro `23505` → `ServiceError(500)`, no se enmascara).
-- En ese caso: **return temprano** `{ reserveCode, reservationStatus: status }` — valores ya computados, idénticos a los de la fila ganadora— y **se salta** el bloque de notificaciones (líneas 354-379). No hace falta re-SELECT: el code es el mismo y el status también.
+- Detecta `insertError.code === '23505'` **y** que el mensaje refiera a `reservations_reservation_code_unique` (cualquier otro `23505` → `ServiceError(500)`, no se enmascara).
+- **Campo exacto del match:** el `PostgrestError` de supabase-js expone `code`, `message`, `details`, `hint` — **no** un campo `constraint` limpio. El nombre del índice aparece en `message` (`duplicate key value violates unique constraint "reservations_reservation_code_unique"`). La implementación matchea `code === '23505' && message.includes('reservations_reservation_code_unique')`, y el mock del test usa **ese mismo campo** (`message`), no un `constraint` que puede no existir (SCEN-A/E).
+- En ese caso: **return temprano** `{ reserveCode, reservationStatus: status }` — valores ya computados, idénticos a los de la fila ganadora— y **se salta** el bloque de notificaciones (líneas 354-379). No hace falta re-SELECT.
+- **Sobre la igualdad de `status`:** descansa en que el replay de #99 devuelva el **mismo payload** del proxy (mismo `reserveCode` ⇒ misma reserva ⇒ mismo `reservationStatus` mapeado). #99 garantiza el mismo code; el mismo status es consecuencia, no una garantía independiente. Riesgo bajo (misma reserva → mismo estado); se documenta el supuesto.
 - El happy path queda intacto.
 
 ### 3. `findOrCreateCustomer` find-after-conflict — `lib/api/resolve-references.ts`
@@ -91,6 +93,8 @@ El flujo actual `SELECT → (si no existe) INSERT → throw genérico en error` 
 - Cualquier otro error sigue lanzando como hoy.
 
 Esto vuelve atómico el camino de cliente nuevo concurrente: hoy uno de los dos requests cae a un 500 genérico.
+
+**`identification_number` es la ÚNICA constraint UNIQUE de `customers`** (verificado en prod: solo `customers_identification_number_key` + la PK; `customers_email_key` se eliminó en migración 030, los emails pueden repetirse). Por eso el find-after-conflict sobre `identification_number` cubre el caso completo — no hay un segundo camino de colisión (p. ej. por email) que tratar.
 
 ## Escenarios observables (holdout SDD)
 
@@ -108,6 +112,7 @@ Esto vuelve atómico el camino de cliente nuevo concurrente: hoy uno de los dos 
 - **Unit (vitest)** en `tests/unit/api/reservation-service.test.ts` y `resolve-references.test.ts`: mockear el cliente de Supabase para que el `.insert()` devuelva `{ error: { code: '23505', message: '...reservation_code_unique...' } }` (SCEN-A/E) o un `23505` de otra constraint (SCEN-E), y verificar que las notificaciones (`sendReservationNotifications`, `sendStatusWhatsApp`, `syncReservationToGhl`) **no** se llaman en el replay. SCEN-D análogo sobre `findOrCreateCustomer`.
 - **SCEN-C/B** se cubren a nivel lógica del predicado (no se puede crear el índice en jsdom): test del valor del code que entra al insert + un test SQL de la migración documentado en el plan.
 - **SCEN-F**: verificación contra prod vía MCP **antes** de aplicar (ya hecho: 0 dups en 2026+) y confirmación post-`apply_migration`.
+- **Concurrencia real vs. mock**: los mocks de Supabase validan la **lógica de rama** (qué pasa al recibir un `23505`), no el ordenamiento TOCTOU real. La atomicidad efectiva de SCEN-A/D solo es demostrable en la capa SQL/integración (el índice no se puede construir en jsdom). Por eso SCEN-F (índice sobre prod) y la verificación post-`apply_migration` no son opcionales: cierran lo que el unit no puede.
 - **Red verificado primero**: cada test debe fallar contra el código actual (insert incondicional / throw genérico) antes de implementar.
 - Gates CI: `build` / `type-check` / `lint` / `test` exit 0. Quality gate de 4 agentes (security, performance, code, edge-case) como en #99.
 

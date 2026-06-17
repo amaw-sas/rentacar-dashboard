@@ -1,0 +1,13 @@
+{
+  "_doc": "Correcciones del operador (2026-06-17) sobre el parse fiel. El texto no las contiene. Regla: solo Cali Camino Real (ACKAL) cierra Dom+fest; las demás operan. Grupo A (Todos los días): festivos = rango diario. Grupo B (ACBSD): dom+fest = 06:30-20:00 (igual que el resto). Grupo C (ACBOJ, ACSMR): dom+fest = 08:00-13:00. ACMCL conserva 'Cerrado' del texto por decisión explícita.",
+  "AABAN": { "hol": ["07:00-20:00"] },
+  "AABCR": { "hol": ["06:30-18:30"] },
+  "AACTG": { "hol": ["06:30-20:00"] },
+  "AASMR": { "hol": ["07:00-21:00"] },
+  "ACBEX": { "hol": ["06:30-20:00"] },
+  "ACBNN": { "hol": ["06:30-18:00"] },
+  "ACMJM": { "hol": ["06:00-23:00"] },
+  "ACBSD": { "hol": ["06:30-20:00"] },
+  "ACBOJ": { "sun": ["08:00-13:00"], "hol": ["08:00-13:00"] },
+  "ACSMR": { "sun": ["08:00-13:00"], "hol": ["08:00-13:00"] }
+}

@@ -3,7 +3,7 @@
   "info": {
     "title": "Rentacar API",
     "version": "1.0.0",
-    "description": "API de reservas del admin de rentacar. Reemplaza el backend Laravel.\n\n## Variables de entorno\n- `baseUrl`: http://localhost:3000 (local) o https://rentacar-dashboard.vercel.app (prod)\n- `apiKey`: valor de RESERVATION_API_KEY\n- `referenceToken`: se llena automáticamente tras llamar availability\n- `rateQualifier`: se llena automáticamente tras llamar availability"
+    "description": "API de reservas del admin de rentacar. Reemplaza el backend Laravel.\n\n## Variables de entorno\n- `baseUrl`: http://localhost:3000 (local) o https://rentacar-dashboard-delta.vercel.app (prod — el dominio canónico que consumen los frontends alquilatucarro.com / alquilame.co / alquicarros.com)\n- `apiKey`: valor de RESERVATION_API_KEY\n- `referenceToken`: se llena automáticamente tras llamar availability\n- `rateQualifier`: se llena automáticamente tras llamar availability"
   },
   "servers": [
     {
@@ -14,7 +14,7 @@
           "default": "http://localhost:3000",
           "enum": [
             "http://localhost:3000",
-            "https://rentacar-dashboard.vercel.app"
+            "https://rentacar-dashboard-delta.vercel.app"
           ]
         }
       }

@@ -5,13 +5,19 @@ import { useForm, type Resolver } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
   locationSchema,
+  locationScheduleSchema,
   type LocationFormData,
 } from "@/lib/schemas/location";
 import {
   createLocation,
   updateLocation,
 } from "@/lib/actions/locations";
+import {
+  deriveScheduleDisplay,
+  stripDisplay,
+} from "@/lib/schedule/derive-display";
 import { getReturnTo } from "@/lib/navigation/return-to";
+import { ScheduleEditor } from "@/components/forms/schedule-editor";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -56,6 +62,7 @@ export function LocationForm({ defaultValues, id, rentalCompanies, cities }: Loc
       city_id: "",
       slug: "",
       status: "active",
+      schedule: {},
       ...defaultValues,
     },
   });
@@ -63,6 +70,12 @@ export function LocationForm({ defaultValues, id, rentalCompanies, cities }: Loc
   const status = watch("status");
   const rentalCompanyId = watch("rental_company_id");
   const cityId = watch("city_id");
+  const schedule = watch("schedule") ?? {};
+  const scheduleDays = stripDisplay(schedule);
+  const schedulePreview = deriveScheduleDisplay(scheduleDays);
+  // Block saving while any range is invalid (e.g. inverted). Reuses the canonical
+  // D1 schema so there is one source of truth for "is this schedule valid".
+  const scheduleValid = locationScheduleSchema.safeParse(scheduleDays).success;
 
   async function onSubmit(data: LocationFormData) {
     const formData = new FormData();
@@ -71,6 +84,9 @@ export function LocationForm({ defaultValues, id, rentalCompanies, cities }: Loc
         formData.append(key, String(value));
       }
     }
+    // schedule is an object — the generic loop skips it. Append it explicitly as
+    // JSON (day keys only); the server re-derives `display` authoritatively.
+    formData.append("schedule", JSON.stringify(stripDisplay(data.schedule ?? {})));
 
     const result = isEditing
       ? await updateLocation(id, formData)
@@ -209,6 +225,24 @@ export function LocationForm({ defaultValues, id, rentalCompanies, cities }: Loc
             </Select>
           </div>
 
+          <div className="space-y-2 sm:col-span-2">
+            <ScheduleEditor
+              value={schedule}
+              onChange={(next) =>
+                setValue("schedule", next, {
+                  shouldDirty: true,
+                  shouldValidate: true,
+                })
+              }
+            />
+            <p className="text-sm text-muted-foreground">
+              Vista previa:{" "}
+              <span className="font-medium text-foreground">
+                {schedulePreview || "Sin horario configurado"}
+              </span>
+            </p>
+          </div>
+
           {errors.root && (
             <div className="sm:col-span-2">
               <p className="text-sm text-destructive">{errors.root.message}</p>
@@ -224,7 +258,7 @@ export function LocationForm({ defaultValues, id, rentalCompanies, cities }: Loc
           >
             Cancelar
           </Button>
-          <Button type="submit" disabled={isSubmitting}>
+          <Button type="submit" disabled={isSubmitting || !scheduleValid}>
             {isSubmitting
               ? "Guardando..."
               : isEditing

@@ -5,7 +5,7 @@ export const FRANCHISE_BRANDING: Record<
   { color: string; website: string }
 > = {
   alquilatucarro: { color: "#030678", website: "https://alquilatucarro.com" },
-  alquilame: { color: "#cc022b", website: "https://alquilame.com" },
+  alquilame: { color: "#cc022b", website: "https://alquilame.co" },
   alquicarros: { color: "#ef9600", website: "https://alquicarros.com" },
 };
 

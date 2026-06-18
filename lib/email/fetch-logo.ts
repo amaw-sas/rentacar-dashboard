@@ -21,7 +21,7 @@ const ALLOWED_PREFIXES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
 const ALLOWED_HOSTS = [
   "public.blob.vercel-storage.com",
   "alquilatucarro.com",
-  "alquilame.com",
+  "alquilame.co",
   "alquicarros.com",
 ];
 

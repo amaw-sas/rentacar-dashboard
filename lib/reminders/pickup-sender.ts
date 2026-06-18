@@ -17,7 +17,7 @@ import type { ReservationRecord } from "./pickup-queries";
 
 const FRANCHISE_BRANDING: Record<string, { color: string; website: string }> = {
   alquilatucarro: { color: "#0d6efd", website: "https://alquilatucarro.com" },
-  alquilame: { color: "#dc3545", website: "https://alquilame.com" },
+  alquilame: { color: "#dc3545", website: "https://alquilame.co" },
   alquicarros: { color: "#fd7e14", website: "https://alquicarros.com" },
 };
 

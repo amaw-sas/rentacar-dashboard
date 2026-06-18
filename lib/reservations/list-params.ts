@@ -40,25 +40,25 @@ export const SEARCH_COLUMNS = [
 // total_with_tax) and fall back to DEFAULT_SORT. Mirrors the sortable columns in
 // columns.tsx.
 //
-// Issue #104: the five snapshot-identity sort keys (customer/identification/
-// phone/email → customer_*_at_booking, valor_oc → total_price_localiza) were
-// REMOVED. None has an order index, and the only sort index
-// (idx_reservations_priority_created: is_priority DESC, created_at DESC)
-// presorts only is_priority, so ordering by a snapshot column degraded to a
-// full-table top-N heapsort (measured 42ms @ 13k rows, ~1.6s @ 500k). Product
-// chose to drop server-sortability rather than carry up to ten composite
-// asc/desc indexes — operators locate these rows via the #102 trgm search, not
-// by sorting. The matching headers set enableSorting:false in columns.tsx;
-// keeping them out here is the server-side half (a hand-edited ?sort= the
-// client no longer emits still falls back to DEFAULT_SORT).
+// Issue #104 REMOVED the five snapshot-identity sort keys (customer/
+// identification/phone/email → customer_*_at_booking, valor_oc →
+// total_price_localiza). Issue #144 then removed the six remaining non-default
+// keys (franchise, status, origen → attribution_channel, category_code,
+// reservation_code, pickup → pickup_date). The only sort index
+// (idx_reservations_priority_created: is_priority DESC, created_at DESC) presorts
+// the full key ONLY for created_at; the single-column indexes (status, franchise,
+// pickup_date, reservation_code) never carry the is_priority leading key, so
+// ordering by any of them degraded to a full-table top-N heapsort (franchise
+// measured 230ms @ 13k rows — strictly worse than what #104 removed — and scaling
+// linearly). Product chose to drop server-sortability rather than carry ~six
+// composite asc/desc indexes: operators narrow these rows via the .eq filters
+// (franchise/status/origen), the pickup date-range filter, or the #102 trgm
+// search — not by sorting. created_at is the only column left because it is the
+// one the composite index serves. The matching headers set enableSorting:false in
+// columns.tsx; keeping them out here is the server-side half (a hand-edited
+// ?sort= the client no longer emits still falls back to DEFAULT_SORT).
 export const SORTABLE_COLUMNS: Record<string, string> = {
   created_at: "created_at",
-  pickup: "pickup_date",
-  reservation_code: "reservation_code",
-  category_code: "category_code",
-  franchise: "franchise",
-  status: "status",
-  origen: "attribution_channel",
 };
 
 export interface ReservationSort {

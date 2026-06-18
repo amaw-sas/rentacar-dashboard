@@ -195,6 +195,80 @@ describe("findOrCreateCustomer", () => {
     const { findOrCreateCustomer } = await import("@/lib/api/resolve-references");
     await expect(findOrCreateCustomer(INPUT)).rejects.toThrow(/Error al crear cliente/);
   });
+
+  // SCEN-D (issue #138) — two concurrent requests for the SAME new customer race:
+  // both pass the initial empty SELECT, both INSERT, one wins and the other hits
+  // the customers_identification_number_key unique violation (23505). The loser
+  // must recover the winner's id via re-SELECT (find-after-conflict), WITHOUT
+  // throwing a 500 and WITHOUT a second write (respects #25: never mutate).
+  it("SCEN-D: concurrent new-customer 23505 → recovers winner id via re-SELECT, no second write", async () => {
+    // SELECT-by-identification: empty first (not found → INSERT path), then the
+    // winner on the post-conflict re-SELECT. Same `single` spy, chained.
+    const selectSingle = vi
+      .fn()
+      .mockResolvedValueOnce({ data: null, error: { code: "PGRST116" } })
+      .mockResolvedValueOnce({ data: { id: "winner-id" }, error: null });
+    const selectEq = vi
+      .fn()
+      .mockReturnValue({ limit: vi.fn().mockReturnValue({ single: selectSingle }) });
+
+    const insertSingle = vi.fn().mockResolvedValue({
+      data: null,
+      error: {
+        code: "23505",
+        message:
+          'duplicate key value violates unique constraint "customers_identification_number_key"',
+      },
+    });
+    const insert = vi
+      .fn()
+      .mockReturnValue({ select: vi.fn().mockReturnValue({ single: insertSingle }) });
+
+    const client = {
+      from: vi.fn().mockReturnValue({
+        select: vi.fn().mockReturnValue({ eq: selectEq }),
+        insert,
+      }),
+    };
+
+    const { createAdminClient } = await import("@/lib/supabase/admin");
+    vi.mocked(createAdminClient).mockReturnValue(
+      client as unknown as ReturnType<typeof createAdminClient>,
+    );
+
+    const { findOrCreateCustomer } = await import("@/lib/api/resolve-references");
+    const id = await findOrCreateCustomer(INPUT);
+
+    expect(id).toBe("winner-id");
+    // INSERT attempted exactly once — not retried.
+    expect(insert).toHaveBeenCalledTimes(1);
+    // SELECT-by-identification ran twice: initial miss + post-conflict recovery.
+    expect(selectEq).toHaveBeenCalledTimes(2);
+    expect(selectEq).toHaveBeenCalledWith(
+      "identification_number",
+      INPUT.identification_number,
+    );
+  });
+
+  // SCEN-E sibling for customers — a 23505 on a DIFFERENT constraint is a real
+  // failure, not a concurrent-new-customer race, so it still throws.
+  it("SCEN-D guard: 23505 on a different constraint still throws", async () => {
+    const { client } = createMockSupabase({
+      existing: null,
+      insertResult: {
+        data: null,
+        error: {
+          message: 'duplicate key value violates unique constraint "customers_pkey"',
+        } as { message: string },
+      },
+    });
+
+    const { createAdminClient } = await import("@/lib/supabase/admin");
+    vi.mocked(createAdminClient).mockReturnValue(client as unknown as ReturnType<typeof createAdminClient>);
+
+    const { findOrCreateCustomer } = await import("@/lib/api/resolve-references");
+    await expect(findOrCreateCustomer(INPUT)).rejects.toThrow(/Error al crear cliente/);
+  });
 });
 
 type ReferralRow = { id: string };

@@ -336,6 +336,117 @@ describe("createReservation (issue #72 Step 3)", () => {
     expect(payload.reservation_code).toBeNull();
   });
 
+  // SCEN-A (issue #138) — a resubmit / 2nd Fluid Compute instance hits the
+  // partial unique index `reservations_reservation_code_unique`. The insert
+  // returns 23505; createReservation must return the SAME result as success and
+  // NOT re-notify (no second email, no second WhatsApp/GHL fan-out scheduled).
+  it("SCEN-A: 23505 on reservation_code_unique → replay winner status, no re-notify", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    await wireMocks();
+
+    // INSERT loses the race (23505); the read-back returns the WINNER's persisted
+    // status. Make it DIFFER from the status this request would compute from the
+    // proxy ("Reserved" → "reservado") to prove the replay returns the winner's
+    // row, not the locally recomputed value.
+    const insert = vi.fn().mockReturnValue({
+      select: vi.fn().mockReturnValue({
+        single: vi.fn().mockResolvedValue({
+          data: null,
+          error: {
+            code: "23505",
+            message:
+              'duplicate key value violates unique constraint "reservations_reservation_code_unique"',
+          },
+        }),
+      }),
+    });
+    const readBackSingle = vi
+      .fn()
+      .mockResolvedValue({ data: { status: "pendiente" }, error: null });
+    const select = vi.fn().mockReturnValue({
+      eq: vi.fn().mockReturnValue({
+        gte: vi.fn().mockReturnValue({
+          limit: vi.fn().mockReturnValue({ single: readBackSingle }),
+        }),
+      }),
+    });
+    const { createAdminClient } = await import("@/lib/supabase/admin");
+    vi.mocked(createAdminClient).mockReturnValue(
+      { from: vi.fn().mockReturnValue({ insert, select }) } as unknown as ReturnType<
+        typeof createAdminClient
+      >,
+    );
+
+    vi.mocked(fetch).mockResolvedValue(
+      proxyResponse({
+        ok: true,
+        status: 200,
+        text: () =>
+          JSON.stringify({ reserveCode: "LOC-123", reservationStatus: "Reserved" }),
+      }) as Response,
+    );
+
+    const { createReservation } = await import("@/lib/api/reservation-service");
+    const { sendReservationNotifications } = await import(
+      "@/lib/email/notifications"
+    );
+    const { after } = await import("next/server");
+
+    const result = await createReservation(STANDARD_INPUT);
+
+    // reserveCode echoed; status is the WINNER's persisted value, not "reservado".
+    expect(result).toEqual({
+      reserveCode: "LOC-123",
+      reservationStatus: "pendiente",
+    });
+    // The winning insert already notified; the replay must stay silent.
+    expect(sendReservationNotifications).not.toHaveBeenCalled();
+    expect(after).not.toHaveBeenCalled();
+    logSpy.mockRestore();
+  });
+
+  // SCEN-E (issue #138) — a 23505 from ANOTHER constraint is a real failure, not
+  // a reservation-code replay. It must still surface as ServiceError(500) and
+  // must NOT be silently swallowed as a successful replay.
+  it("SCEN-E: 23505 on a different constraint → ServiceError(500), not a replay", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { sb } = await wireMocks();
+    sb.insert.mockReturnValue({
+      select: vi.fn().mockReturnValue({
+        single: vi.fn().mockResolvedValue({
+          data: null,
+          error: {
+            code: "23505",
+            message:
+              'duplicate key value violates unique constraint "reservations_pkey"',
+          },
+        }),
+      }),
+    });
+    vi.mocked(fetch).mockResolvedValue(
+      proxyResponse({
+        ok: true,
+        status: 200,
+        text: () =>
+          JSON.stringify({ reserveCode: "LOC-9", reservationStatus: "Reserved" }),
+      }) as Response,
+    );
+
+    const { createReservation } = await import("@/lib/api/reservation-service");
+    const { ServiceError } = await import("@/lib/api/service-error");
+    const { sendReservationNotifications } = await import(
+      "@/lib/email/notifications"
+    );
+    const err = (await createReservation(STANDARD_INPUT).catch(
+      (e) => e,
+    )) as InstanceType<typeof ServiceError>;
+
+    expect(err).toBeInstanceOf(ServiceError);
+    expect(err.status).toBe(500);
+    expect(sendReservationNotifications).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
   // Insert failure → ServiceError(500).
   it("insert failure → ServiceError(500)", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});

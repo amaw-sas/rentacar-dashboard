@@ -76,9 +76,10 @@ export const SORTABLE_COLUMNS: Record<string, string> = {
 ```
 
 `parseSort` ya cae a `DEFAULT_SORT` para cualquier id ausente del whitelist
-(`list-params.ts:128-130`) — no requiere cambio lógico, solo se actualiza el bloque
-de comentario para referenciar #144. Esto es la mitad server-side: un `?sort=`
-hand-editeado para una columna removida cae a `DEFAULT_SORT` (created_at desc).
+(la rama `if (!column …)` en `list-params.ts:128-130`) — no requiere cambio lógico.
+Solo se actualiza el bloque de comentario doc de `SORTABLE_COLUMNS`
+(`list-params.ts:43-53`) para referenciar #144. Esto es la mitad server-side: un
+`?sort=` hand-editeado para una columna removida cae a `DEFAULT_SORT` (created_at desc).
 
 ### Cambio 2 — `app/(dashboard)/reservations/columns.tsx`
 
@@ -93,6 +94,40 @@ la mitad cliente: el header no pinta flecha y TanStack no emite `?sort=`.
 dinámicamente. Reducir el whitelist hace que `parseSorting` caiga al fallback default
 (PRIORITY_SORT + created_at desc) para cualquier `?sort=` de columna removida —
 sin pintar flecha en un header `enableSorting:false`. No requiere editar el hook.
+
+### Cambio 3 — tests existentes que codifican el comportamiento viejo
+
+Reducir `SORTABLE_COLUMNS` a una entrada invierte aserciones que hoy verifican que
+estas columnas eran ordenables. CI es type-check → lint → **test** → build (todo
+debe pasar), así que estas DEBEN actualizarse en el mismo cambio:
+
+- `tests/unit/reservations/list-params.test.ts`
+  - `:96-105` ("maps a sortable column id to its DB column") — usa `sort=pickup:asc`
+    → `pickup_date` y `sort=reservation_code:desc` → `reservation_code`. Reescribir
+    para que la única columna mapeada sea `created_at` (`sort=created_at:asc` →
+    `{ column: "created_at", ascending: true }`). Cubre SCEN-144-003.
+  - `:116-121` ("falls back to default sort for the dropped snapshot columns") —
+    extender el array de ids para incluir las 6 nuevas removidas
+    (`franchise`, `status`, `origen`, `category_code`, `reservation_code`, `pickup`).
+    Cubre SCEN-144-002.
+  - `:123-130` (SCEN-009, "maps the origen sort key to attribution_channel") —
+    borrar o invertir: `origen` ahora cae a `DEFAULT_SORT` (queda absorbido por el
+    test anterior).
+- `tests/unit/hooks/use-reservations-table-url-state.test.ts`
+  - `:115-123` (SCEN-006, "?sort=pickup:asc maps with PRIORITY_SORT pinned") —
+    cambiar la columna de prueba a `created_at` o invertir a fallback default;
+    `pickup` ya no entra al sorting state. Cubre SCEN-144-004.
+- `tests/unit/components/reservations-columns.test.tsx`
+  - `:288-291` ("origen does not opt out of sorting") — **invertir** a
+    `expect(col).toHaveProperty("enableSorting", false)`.
+  - `:350-354` — corregir el comentario stale ("origen stays sortable") y extender el
+    loop `:355+` ("dropped snapshot sort columns go inert") para incluir las 6 nuevas
+    columnas removidas. Cubre SCEN-144-001.
+
+Tests nuevos a añadir (encoden los SCEN de este issue):
+- Guard de cardinalidad: `Object.keys(SORTABLE_COLUMNS)` === `["created_at"]` —
+  pin barato contra una re-adición futura que reintroduzca silenciosamente un camino
+  de heapsort. (SCEN-144-005, mitad automatizable.)
 
 ### Sin migraciones
 
@@ -119,8 +154,12 @@ listado ordena por `created_at`, servido por `idx_reservations_priority_created`
 
 - **SCEN-144-005** (perf — no quedan caminos lentos): `SORTABLE_COLUMNS` contiene
   exclusivamente `created_at`, que usa `idx_reservations_priority_created`. Ninguna
-  columna ordenable puede disparar el top-N heapsort full-table. Verificable con
-  `EXPLAIN ANALYZE` del orden default: sigue presorted, no lee las 13k filas.
+  columna ordenable puede disparar el top-N heapsort full-table.
+  - **Automatizable:** test de cardinalidad (`Object.keys(SORTABLE_COLUMNS)` ===
+    `["created_at"]`).
+  - **Verificación manual/prod:** `EXPLAIN ANALYZE` del orden default sigue presorted
+    y no lee las 13k filas. No es automatizable en la suite unitaria (requiere datos
+    de prod) — es un paso de verificación manual, no un test.
 
 ## Criterio de satisfacción
 

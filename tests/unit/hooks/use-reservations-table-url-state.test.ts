@@ -112,29 +112,45 @@ describe("useReservationsTableUrlState — URL parsing (Steps 3+4)", () => {
     expect(result.current.filters.origen).toBe(ALL);
   });
 
-  it("SCEN-006 hydration: ?sort=pickup:asc maps with PRIORITY_SORT pinned", () => {
-    setUrl("sort=pickup:asc");
+  // created_at is the only whitelisted sort column after #144 (the one the
+  // composite index serves). A valid ?sort=created_at:asc hydrates into the
+  // sorting state with PRIORITY_SORT pinned ahead of it.
+  it("SCEN-006 hydration: ?sort=created_at:asc maps with PRIORITY_SORT pinned", () => {
+    setUrl("sort=created_at:asc");
     const { result } = renderHook(() => useReservationsTableUrlState());
 
     expect(result.current.sorting).toEqual([
       PRIORITY_SORT,
-      { id: "pickup", desc: false },
+      { id: "created_at", desc: false },
     ]);
   });
 
-  // Issue #104: a sort id absent from the shared SORTABLE_COLUMNS whitelist —
-  // a disabled snapshot column (customer/identification/phone/email/valor_oc)
-  // lingering in a pre-#104 bookmark, or any hand-edited value — must resolve to
-  // the default order, NOT enter the sorting state. Otherwise getIsSorted()
-  // would paint a sort arrow on an enableSorting:false header while the server
-  // sorts by created_at, a UI that lies about the order. parseSorting now
-  // mirrors the server's parseSort fallback, so the rendered arrow tells the
-  // truth (and the pre-existing referral/total_with_tax case is fixed too).
-  it("SCEN-006 hydration: a non-whitelisted/disabled sort id falls back to default", () => {
-    for (const stale of ["customer:asc", "valor_oc:desc", "pickup_date:asc"]) {
-      setUrl(`sort=${stale}`);
+  // Issue #104 + #144: a sort id absent from the shared SORTABLE_COLUMNS
+  // whitelist — a disabled snapshot column (#104), one of the six columns #144
+  // dropped (franchise/status/origen/category_code/reservation_code/pickup)
+  // lingering in a pre-#144 bookmark, or any hand-edited value — must resolve to
+  // the default order, NOT enter the sorting state. Otherwise getIsSorted() would
+  // paint a sort arrow on an enableSorting:false header while the server sorts by
+  // created_at, a UI that lies about the order. parseSorting reads the same shared
+  // whitelist, so shrinking it auto-mirrors here with no hook code change.
+  it("SCEN-144-004 hydration: a non-whitelisted/disabled sort id falls back to default", () => {
+    const stale = [
+      // #104
+      "customer:asc",
+      "valor_oc:desc",
+      "pickup_date:asc",
+      // #144
+      "franchise:asc",
+      "status:desc",
+      "origen:asc",
+      "category_code:asc",
+      "reservation_code:desc",
+      "pickup:asc",
+    ];
+    for (const value of stale) {
+      setUrl(`sort=${value}`);
       const { result } = renderHook(() => useReservationsTableUrlState());
-      expect(result.current.sorting, stale).toEqual([
+      expect(result.current.sorting, value).toEqual([
         PRIORITY_SORT,
         ...DEFAULT_USER_SORT,
       ]);
@@ -142,7 +158,9 @@ describe("useReservationsTableUrlState — URL parsing (Steps 3+4)", () => {
   });
 
   it("SCEN-006 hydration: an invalid sort direction falls back to default", () => {
-    setUrl("sort=pickup:bogus");
+    // created_at is whitelisted, so this isolates the bad-direction reject path
+    // from the non-whitelisted-column path above.
+    setUrl("sort=created_at:bogus");
     const { result } = renderHook(() => useReservationsTableUrlState());
 
     expect(result.current.sorting).toEqual([

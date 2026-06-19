@@ -235,12 +235,20 @@ export const columns: ColumnDef<ReservationRow, unknown>[] = [
     id: "pickup",
     accessorKey: "pickup_date",
     header: "Recogida",
+    // No composite order index (single-col idx_reservations_pickup_date never
+    // carries the is_priority leading key) → server-sorting forced a full-table
+    // heapsort (issue #144). Disabled; operators narrow by the pickup date-range
+    // filter. Mirrors its removal from SORTABLE_COLUMNS in list-params.ts.
+    enableSorting: false,
     cell: ({ row }) =>
       renderPickup(row.original.pickup_date, row.original.pickup_hour),
   },
   {
     accessorKey: "reservation_code",
     header: "Código",
+    // No order index → server-sorting forced a full-table heapsort (issue #144).
+    // Disabled; operators find a code via the #102 trgm search, not by sorting.
+    enableSorting: false,
     cell: ({ getValue }) => (
       <CopyableText value={getValue<string>()} label="código" />
     ),
@@ -248,10 +256,17 @@ export const columns: ColumnDef<ReservationRow, unknown>[] = [
   {
     accessorKey: "category_code",
     header: "Cat.",
+    // No order index at all → server-sorting forced a full-table heapsort
+    // (issue #144). Disabled.
+    enableSorting: false,
   },
   {
     accessorKey: "franchise",
     header: "Franquicia",
+    // Single-col index doesn't carry is_priority → server-sorting forced a
+    // full-table heapsort (230ms @ 13k rows, issue #144). Disabled; franchise is
+    // already a filter (.eq), which is what operators actually want.
+    enableSorting: false,
     cell: ({ getValue }) => (
       <Badge variant="outline">{getValue<string>()}</Badge>
     ),
@@ -260,8 +275,11 @@ export const columns: ColumnDef<ReservationRow, unknown>[] = [
     id: "origen",
     accessorKey: "attribution_channel",
     header: "Origen",
-    // Server-sortable: column id "origen" maps to attribution_channel in
-    // SORTABLE_COLUMNS. enableSorting defaults to true — do not disable.
+    // Made server-sortable on purpose in #113, reverted in #144:
+    // attribution_channel has no composite order index, so sorting by it
+    // reproduced the full-table heapsort. Disabled; origen stays filterable
+    // (.eq/.is). Mirrors its removal from SORTABLE_COLUMNS in list-params.ts.
+    enableSorting: false,
     cell: ({ getValue }) => {
       const meta = channelMeta(getValue<AttributionChannel | null>());
       return <Badge variant={meta.variant}>{meta.label}</Badge>;
@@ -280,6 +298,10 @@ export const columns: ColumnDef<ReservationRow, unknown>[] = [
   {
     accessorKey: "status",
     header: "Estado",
+    // Single-col index doesn't carry is_priority → server-sorting forced a
+    // full-table heapsort (issue #144). Disabled; status is already a filter
+    // (.eq), which is what operators actually want.
+    enableSorting: false,
     cell: ({ getValue }) => {
       const status = getValue<string>();
       return (

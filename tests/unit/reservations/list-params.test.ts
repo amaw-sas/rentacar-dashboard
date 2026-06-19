@@ -5,6 +5,7 @@ import {
   DEFAULT_SORT,
   SEARCH_COLUMNS,
   SEARCH_MAX_LEN,
+  SORTABLE_COLUMNS,
   parseListParams,
   sanitizeSearchTerm,
 } from "@/lib/reservations/list-params";
@@ -92,43 +93,70 @@ describe("parseListParams — date ranges (SCEN-007)", () => {
   });
 });
 
-describe("parseListParams — sort whitelist + fallback (SCEN-011)", () => {
-  it("maps a sortable column id to its DB column", () => {
-    expect(parse("sort=pickup:asc").sort).toEqual({
-      column: "pickup_date",
+describe("parseListParams — sort whitelist + fallback (SCEN-011, SCEN-144)", () => {
+  // SCEN-144-003: created_at is the only column that stays server-sortable — it is
+  // the one served by the composite index (is_priority DESC, created_at DESC), so
+  // ordering by it never degrades to a full-table heapsort. Both directions map.
+  it("maps created_at, the only retained sortable column, to its DB column", () => {
+    expect(parse("sort=created_at:asc").sort).toEqual({
+      column: "created_at",
       ascending: true,
     });
-    expect(parse("sort=reservation_code:desc").sort).toEqual({
-      column: "reservation_code",
+    expect(parse("sort=created_at:desc").sort).toEqual({
+      column: "created_at",
       ascending: false,
     });
   });
 
-  // Issue #104: the five snapshot-identity sort keys (customer/identification/
-  // phone/email/valor_oc) were dropped from the whitelist. They have no order
-  // index, so sorting by them forced a full-table heapsort (42ms @ 13k rows,
-  // linear growth). Product chose to drop server-sortability rather than carry
-  // five composite indexes (operators find these rows via the #102 trgm search,
-  // not by sorting). They now fall back to DEFAULT_SORT — defense-in-depth so a
-  // hand-edited `?sort=customer:asc` link the client no longer emits is still
-  // ignored by the server. The matching headers go inert (enableSorting:false)
-  // in reservations-columns.test.tsx.
-  it("falls back to default sort for the dropped snapshot columns (#104)", () => {
-    for (const id of ["customer", "identification", "phone", "email", "valor_oc"]) {
+  // Issue #104 dropped the five snapshot-identity sort keys (customer/
+  // identification/phone/email/valor_oc). Issue #144 extends the same treatment to
+  // the six remaining non-default columns: their single-column indexes never carry
+  // the is_priority leading key, so sorting by them forced a full-table top-N
+  // heapsort (franchise 230ms @ 13k rows, linear growth — strictly worse than what
+  // #104 removed). Product chose to drop server-sortability rather than carry ~six
+  // composite indexes (operators narrow via the .eq filters / pickup date range /
+  // #102 trgm search, not by sorting). They now fall back to DEFAULT_SORT —
+  // defense-in-depth so a hand-edited `?sort=franchise:asc` link the client no
+  // longer emits is still ignored. The matching headers go inert
+  // (enableSorting:false) in reservations-columns.test.tsx.
+  it("falls back to default sort for the dropped columns (#104 + #144)", () => {
+    const dropped = [
+      // #104
+      "customer",
+      "identification",
+      "phone",
+      "email",
+      "valor_oc",
+      // #144
+      "franchise",
+      "status",
+      "origen",
+      "category_code",
+      "reservation_code",
+      "pickup",
+    ];
+    for (const id of dropped) {
       expect(parse(`sort=${id}:asc`).sort, id).toEqual(DEFAULT_SORT);
       expect(parse(`sort=${id}:desc`).sort, id).toEqual(DEFAULT_SORT);
     }
   });
 
-  it("maps the origen sort key to attribution_channel (SCEN-009)", () => {
-    expect(parse("sort=origen:asc").sort).toEqual({
-      column: "attribution_channel",
-      ascending: true,
-    });
-    expect(parse("sort=origen:desc").sort).toEqual({
-      column: "attribution_channel",
-      ascending: false,
-    });
+  // SCEN-144-002 (named regression guard): origen was made server-sortable on
+  // purpose in #113 (it maps to attribution_channel). #144 reverts that
+  // sub-decision — attribution_channel has no composite index either, so it
+  // reproduced the same heapsort. origen stays FILTERABLE (.eq/.is) but no longer
+  // sortable; both directions now fall back to DEFAULT_SORT.
+  it("no longer maps the origen sort key — falls back (reverts #113)", () => {
+    expect(parse("sort=origen:asc").sort).toEqual(DEFAULT_SORT);
+    expect(parse("sort=origen:desc").sort).toEqual(DEFAULT_SORT);
+  });
+
+  // SCEN-144-005 (automatable half): only created_at remains sortable. A future
+  // re-add of any column without a matching composite index would silently
+  // reintroduce a full-table heapsort path — this guard pins the cardinality so
+  // that regression turns a test red instead of shipping.
+  it("exposes exactly one sortable column: created_at (#144)", () => {
+    expect(Object.keys(SORTABLE_COLUMNS)).toEqual(["created_at"]);
   });
 
   it("falls back to default sort for a derived/unmapped column id", () => {

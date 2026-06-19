@@ -43,8 +43,17 @@ const baseRow: ReservationRow = {
   referrals: { id: "ref-1", name: "Daniela", code: "DAN" },
 };
 
+// @tanstack columns key off `accessorKey` unless given an explicit `id`; match
+// either so accessorKey-only columns (franchise/status/category_code/
+// reservation_code) resolve the same way as id-keyed ones.
+function findColumn(id: string) {
+  return columns.find(
+    (c) => (c.id ?? (c as { accessorKey?: string }).accessorKey) === id,
+  );
+}
+
 function headerOf(id: string) {
-  const col = columns.find((c) => (c.id ?? (c as { accessorKey?: string }).accessorKey) === id);
+  const col = findColumn(id);
   if (!col) throw new Error(`column ${id} not found`);
   return col.header as string;
 }
@@ -285,9 +294,14 @@ describe("reservations columns (legacy parity)", () => {
       expect(container.textContent).toBe("Desconocido");
     });
 
-    it("does not opt out of sorting", () => {
+    // Issue #144 reverts #113's "origen is server-sortable" sub-decision:
+    // attribution_channel has no composite order index, so sorting by it
+    // reproduced the full-table heapsort. origen stays filterable (.eq/.is) but
+    // the header now opts out of sorting (no arrow, emits no ?sort= the server
+    // would ignore).
+    it("opts out of sorting (#144 — reverts #113, no order index for attribution_channel)", () => {
       const col = columns.find((c) => c.id === "origen");
-      expect(col).not.toHaveProperty("enableSorting", false);
+      expect(col).toHaveProperty("enableSorting", false);
     });
   });
 
@@ -347,17 +361,41 @@ describe("reservations columns (legacy parity)", () => {
     });
   });
 
-  // Issue #104: the four snapshot-identity columns and valor_oc were dropped
-  // from SORTABLE_COLUMNS (no order index → full-table heapsort). Their headers
-  // must go inert so they neither render a misleading sort arrow nor emit a
-  // ?sort= the server silently falls back to DEFAULT_SORT on. origen stays
-  // sortable (it maps to the indexed attribution_channel) — guarded separately.
-  describe("dropped snapshot sort columns go inert (#104)", () => {
-    for (const id of ["customer", "identification", "phone", "email", "valor_oc"]) {
+  // Issue #104 dropped the four snapshot-identity columns and valor_oc; issue
+  // #144 dropped the remaining non-default columns (franchise, status,
+  // category_code, reservation_code, pickup — origen guarded in its own block
+  // above). None has a composite order index, so sorting by them forced a
+  // full-table heapsort. Their headers must go inert so they neither render a
+  // misleading sort arrow nor emit a ?sort= the server silently falls back to
+  // DEFAULT_SORT on.
+  describe("dropped sort columns go inert (#104 + #144)", () => {
+    for (const id of [
+      // #104
+      "customer",
+      "identification",
+      "phone",
+      "email",
+      "valor_oc",
+      // #144
+      "franchise",
+      "status",
+      "category_code",
+      "reservation_code",
+      "pickup",
+    ]) {
       it(`${id} opts out of sorting`, () => {
-        const col = columns.find((c) => c.id === id);
+        const col = findColumn(id);
         expect(col).toHaveProperty("enableSorting", false);
       });
     }
+  });
+
+  // SCEN-144-001: created_at ("Creado") is the one column that stays
+  // server-sortable — the composite index serves it, so it never heapsorts.
+  it("keeps created_at sortable (the only retained sort column)", () => {
+    const col = columns.find(
+      (c) => (c as { accessorKey?: string }).accessorKey === "created_at",
+    );
+    expect(col).not.toHaveProperty("enableSorting", false);
   });
 });

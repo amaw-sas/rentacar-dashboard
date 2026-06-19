@@ -19,12 +19,19 @@ function buildServer(): McpServer {
   server.registerTool(
     "buscar_disponibilidad",
     {
+      title: "Buscar disponibilidad de autos",
       description:
-        "Consulta disponibilidad de vehiculos (anonima, sin autenticacion).",
+        "Use this when the user wants to search or check available rental cars, prices, or vehicle options for a city and a date range. Call this tool to look up car rental availability and quotes.",
+      annotations: {
+        title: "Buscar disponibilidad de autos",
+        readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: false,
+      },
       inputSchema: {
-        ciudad: z.string(),
-        fecha_recogida: z.string(),
-        fecha_entrega: z.string(),
+        ciudad: z.string().describe("Ciudad de recogida, p.ej. Bogotá"),
+        fecha_recogida: z.string().describe("Fecha de recogida en formato YYYY-MM-DD"),
+        fecha_entrega: z.string().describe("Fecha de entrega en formato YYYY-MM-DD"),
       },
     },
     async ({ ciudad, fecha_recogida, fecha_entrega }) => {
@@ -55,12 +62,20 @@ function buildServer(): McpServer {
   server.registerTool(
     "crear_reserva",
     {
+      title: "Crear reserva de auto",
       description:
-        "Crea una reserva (GATEADA: requiere Bearer con scope reservation:create).",
+        "Use this when the user wants to book or confirm a car rental reservation using a quote returned by buscar_disponibilidad. Call this tool to create the reservation.",
+      annotations: {
+        title: "Crear reserva de auto",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
       inputSchema: {
-        quote: z.string(),
-        nombre: z.string(),
-        email: z.string(),
+        quote: z.string().describe("Token de cotización devuelto por buscar_disponibilidad (campo quote)"),
+        nombre: z.string().describe("Nombre completo del cliente que reserva"),
+        email: z.string().describe("Correo electrónico del cliente"),
       },
     },
     async ({ quote, nombre, email }) => {

@@ -110,7 +110,10 @@ function asMetadata() {
   };
 }
 
-const WWW_AUTH = `Bearer resource_metadata="${BASE}/.well-known/oauth-protected-resource", scope="${REQUIRED_SCOPE}"`;
+// RFC 9728: for a resource at <origin>/mcp, the canonical PRM location is
+// <origin>/.well-known/oauth-protected-resource/mcp (path appended). ChatGPT
+// probes that first. Point the challenge at the canonical location.
+const WWW_AUTH = `Bearer resource_metadata="${BASE}/.well-known/oauth-protected-resource/mcp", scope="${REQUIRED_SCOPE}"`;
 
 // ---- request handler ----
 
@@ -120,8 +123,13 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   const path = url.pathname;
   const auth = authKind(req);
 
-  // GET /.well-known/oauth-protected-resource
-  if (method === "GET" && path === "/.well-known/oauth-protected-resource") {
+  // GET /.well-known/oauth-protected-resource (root) AND the RFC 9728 canonical
+  // path-suffixed variant /.well-known/oauth-protected-resource/mcp.
+  if (
+    method === "GET" &&
+    (path === "/.well-known/oauth-protected-resource" ||
+      path === "/.well-known/oauth-protected-resource/mcp")
+  ) {
     json(res, 200, protectedResourceMetadata());
     record({ method, path, auth, tool: null, status: 200 });
     return;
@@ -308,7 +316,10 @@ async function handleMcp(
       .filter((n): n is string => n !== null);
     toolName = calledTools.length > 0 ? calledTools.join(",") : null;
 
-    if (calledTools.includes("crear_reserva")) {
+    // SPIKE_GATE=off disables the auth gate — used ONLY for the WS2 isolation
+    // experiment (does ChatGPT refuse crear_reserva because of auth, or caution?).
+    // Default (unset) keeps the gate ON, so verify:all is unaffected.
+    if (calledTools.includes("crear_reserva") && process.env.SPIKE_GATE !== "off") {
       const token = bearerToken(req);
       let ok = false;
       if (token) {

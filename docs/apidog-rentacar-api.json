@@ -3,21 +3,12 @@
   "info": {
     "title": "Rentacar API",
     "version": "1.0.0",
-    "description": "API de reservas del admin de rentacar. Reemplaza el backend Laravel.\n\n## Variables de entorno\n- `baseUrl`: http://localhost:3000 (local) o https://rentacar-dashboard-delta.vercel.app (prod — el dominio canónico que consumen los frontends alquilatucarro.com / alquilame.co / alquicarros.com)\n- `apiKey`: valor de RESERVATION_API_KEY\n- `referenceToken`: se llena automáticamente tras llamar availability\n- `rateQualifier`: se llena automáticamente tras llamar availability"
+    "description": "API de reservas del admin de rentacar. Reemplaza el backend Laravel.\n\nEl `servers[0].url` apunta automáticamente al dominio que sirve este documento (cada dominio de marca se auto-describe), con fallback al dominio canónico https://rentacar-dashboard-delta.vercel.app.\n\n## Valores en runtime\n- `apiKey`: valor de RESERVATION_API_KEY (header `x-api-key`, solo para crear reservas)\n- `referenceToken`: se llena automáticamente tras llamar availability\n- `rateQualifier`: se llena automáticamente tras llamar availability"
   },
   "servers": [
     {
-      "url": "{baseUrl}",
-      "description": "Rentacar public + admin API",
-      "variables": {
-        "baseUrl": {
-          "default": "http://localhost:3000",
-          "enum": [
-            "http://localhost:3000",
-            "https://rentacar-dashboard-delta.vercel.app"
-          ]
-        }
-      }
+      "url": "https://rentacar-dashboard-delta.vercel.app",
+      "description": "Rentacar public + admin API"
     }
   ],
   "components": {
@@ -185,6 +176,7 @@
   "paths": {
     "/api/mcp/{transport}": {
       "post": {
+        "operationId": "mcpTransport",
         "summary": "Servidor MCP de reservas (Streamable HTTP)",
         "description": "Endpoint del servidor MCP (Model Context Protocol) para clientes de IA. **No es REST**: habla JSON-RPC sobre Streamable HTTP vía `mcp-handler`. Expone dos herramientas — `buscar_disponibilidad` y `crear_solicitud_reserva` — que envuelven el mismo flujo Localiza de `/api/reservations(/availability)`. El estado de cotización viaja como un `quote` opaco entre ambas (servidor stateless). Autenticación `x-api-key` con el secreto **`MCP_API_KEY`** (distinto de `RESERVATION_API_KEY`). Detalle de registro y uso del conector en el runbook (`docs/specs/issue-72-mcp-reservas/runbook.md`).",
         "tags": ["MCP"],
@@ -205,6 +197,7 @@
     },
     "/api/locations": {
       "get": {
+        "operationId": "getLocations",
         "summary": "Directorio público de sedes",
         "description": "Catálogo canónico `slug ↔ code ↔ ciudad` de las sedes activas, con dirección, mapa y horario. **Público, sin autenticación** (`x-api-key` no requerida). El `code` devuelto es exactamente el que aceptan `/api/reservations/availability` y `/api/reservations`.",
         "tags": ["Sedes"],
@@ -224,6 +217,7 @@
     },
     "/api/requirements": {
       "get": {
+        "operationId": "getRequirements",
         "summary": "Requisitos de alquiler",
         "description": "Requisitos generales para alquilar (documentos, forma de pago, regla de licencia para extranjeros, políticas de uso). **Público, sin autenticación** (`x-api-key` no requerida). Contenido estático autorizado por el negocio.",
         "tags": ["Requisitos"],
@@ -242,6 +236,7 @@
     },
     "/api/reservations/availability": {
       "post": {
+        "operationId": "checkAvailability",
         "summary": "Consultar disponibilidad de vehículos",
         "description": "Pass-through al proxy Localiza. Retorna las categorías disponibles con `referenceToken` y `rateQualifier` para cada una.\n\n**Tip Apidog**: en la respuesta, guarda `referenceToken` y `rateQualifier` como variables de entorno para usarlas en el POST /api/reservations.",
         "tags": ["Reservas"],
@@ -273,6 +268,7 @@
     },
     "/api/reservations": {
       "post": {
+        "operationId": "createReservation",
         "summary": "Crear reserva",
         "description": "Crea una reserva. Para standard (selected_days < 30) llama al proxy → Localiza API. Para mensualidad (>= 30) guarda directamente. Dispara notificaciones (email + WhatsApp + GHL).",
         "tags": ["Reservas"],

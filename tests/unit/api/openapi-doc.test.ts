@@ -87,6 +87,29 @@ describe("OpenAPI doc — location directory parity (SCEN-006)", () => {
     expect(spec.security).toEqual([{ ApiKeyAuth: [] }]);
   });
 
+  // SCEN-C: Custom GPT Actions uses operationId as the function name. Every
+  // operation must carry a unique, stable operationId — missing ones make the
+  // builder auto-generate poor names. Locks the exact set so a renamed/dropped op
+  // surfaces here.
+  it("every operation has a unique operationId matching the expected set", () => {
+    const ids = Object.values(spec.paths).flatMap((methods) =>
+      Object.values(methods as Record<string, { operationId?: string }>).map(
+        (op) => op.operationId,
+      ),
+    );
+    expect(ids.every(Boolean)).toBe(true);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(new Set(ids)).toEqual(
+      new Set([
+        "mcpTransport",
+        "getLocations",
+        "getRequirements",
+        "checkAvailability",
+        "createReservation",
+      ]),
+    );
+  });
+
   // GET /api/requirements is a public read (security []), like locations, and is
   // backed by the RentalRequirements schema.
   it("documents GET /api/requirements as public, backed by RentalRequirements", () => {

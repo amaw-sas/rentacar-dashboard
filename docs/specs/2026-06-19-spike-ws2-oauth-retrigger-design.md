@@ -138,6 +138,44 @@ Un **cliente de referencia** usando el cliente OAuth del `@modelcontextprotocol/
 
 Si Claude (control) falla SCEN-B1, el servidor está mal construido, no es el cliente: se vuelve a Fase A antes de concluir nada sobre ChatGPT.
 
+## Runbook Fase B (verificado contra docs de OpenAI, 2026-06-19)
+
+### Prerrequisitos de acceso
+
+- **ChatGPT — developer mode** (NO la plataforma de API). Settings → Apps & Connectors → Advanced settings (al fondo) → toggle **developer mode**. Una org/Business puede requerir que un admin lo habilite. Los ChatGPT Apps funcionan en todos los planes desde 2025-11-13, así que el plan no bloquea.
+  - **Advertencia:** el tab **"ChatGPT Apps"** de `platform.openai.com` es **submission/publishing** al directorio público (review, identity verification, `api.apps.write`, prohíbe endpoints de testing). **No se usa para el spike.** El path correcto es developer mode dentro de la app de ChatGPT.
+- **Claude — custom connector** por URL (plan Pro/Team/Max).
+
+### Procedimiento ChatGPT (la incógnita)
+
+1. Activar developer mode (arriba). Aparece un botón **Create** bajo Settings → Apps & Connectors.
+2. Asegurar el MCP alcanzable por HTTPS (el túnel con nombre de Fase A).
+3. Settings → Connectors → **Create** → `Connector name`, `Description`, **`Connector URL` = `https://<tunnel>/mcp`** → Create. Si conecta, ChatGPT lista las tools advertidas.
+4. Nuevo chat → botón **+** → **More** → elegir el conector (lo añade al contexto).
+5. **Permisos:** el default es *"Ask only before important changes"*; `crear_reserva` es cambio consecuente → ChatGPT pedirá confirmación antes de invocarla. No confundir esa confirmación de permiso con el consent OAuth.
+6. Ejecutar la secuencia mid-session: primero un prompt que dispare `buscar_disponibilidad` (anónima, espera 200), luego uno que dispare `crear_reserva` (espera 401 → ¿OAuth?).
+7. **Observar y clasificar:** o aparece el consent OAuth y tras aprobar la reserva responde 200 (**riesgo retirado**), o no se dispara y la llamada falla (**gap confirmado** → registrar el punto exacto desde el log del servidor + ejecutar fallback de #172).
+
+### Segundo canal de observación (bonus de la cuenta dev OpenAI)
+
+**API Playground** (`platform.openai.com`) → conversación → **Tools → Add → MCP Server** → pegar el mismo endpoint HTTPS. Da **logs crudos de request/response** — evidencia de alto valor para el timeline de SCEN-B2, complementaria al logger del servidor.
+
+### Procedimiento Claude (el control)
+
+Añadir conector custom por URL (`https://<tunnel>/mcp`), misma secuencia mid-session. Esperado: dispara el consent OAuth en `crear_reserva` y reintenta con éxito. Si falla, el servidor está mal (volver a Fase A).
+
+### Redirect URI
+
+ChatGPT cierra el flujo redirigiendo a `https://chatgpt.com/connector/oauth/{callback_id}` (la URL exacta se muestra en la página de gestión del conector). El AS mock acepta cualquier `redirect_uri` por diseño, pero el runbook lo documenta por si se endurece.
+
+### Captura de evidencia
+
+Para cada cliente: (a) timeline del logger del servidor, (b) screenshot del consent OAuth, (c) para ChatGPT, además los logs del API Playground. Todo se consolida en el reporte de decisión `docs/spikes/2026-06-19-ws2-oauth-retrigger.md`.
+
+### Evidencia documental que apoya (no sustituye) el spike
+
+Las docs de OpenAI describen el mecanismo exacto bajo prueba: *"If a token arrives without the expected audience or scopes, reject it and rely on the `WWW-Authenticate` challenge to prompt ChatGPT to re-authorize."* Es la **intención documentada**, no prueba de fiabilidad del re-trigger mid-session — por eso el spike empírico sigue siendo necesario.
+
 ## Estrategia de satisfacción
 
 - **Fase A** se satisface con asserts automáticos del cliente de referencia (SCEN-A1..A4) sobre status codes, presencia/forma del header `WWW-Authenticate`, y el orden del timeline. Es el gate de "servidor correcto".

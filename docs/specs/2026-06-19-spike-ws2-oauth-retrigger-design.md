@@ -172,6 +172,12 @@ ChatGPT cierra el flujo redirigiendo a `https://chatgpt.com/connector/oauth/{cal
 
 Para cada cliente: (a) timeline del logger del servidor, (b) screenshot del consent OAuth, (c) para ChatGPT, además los logs del API Playground. Todo se consolida en el reporte de decisión `docs/spikes/2026-06-19-ws2-oauth-retrigger.md`.
 
+### Gotchas de observación Fase B (no confundir con el resultado)
+
+- **Un 406 no es señal sobre OAuth.** El transport StreamableHTTP del SDK exige que el `Accept` incluya `application/json` **y** `text/event-stream`; si un cliente manda solo `application/json` recibe **406 del transport**, no el 401 del gate. Si Fase B ve un 406, es conformidad de transporte, no evidencia sobre el contrato OAuth.
+- **El gate cubre batch JSON-RPC.** Un `tools/call` de `crear_reserva` envuelto en un array `[ … ]` también se reta con 401 (cerrado en Fase A tras hallazgo de los review agents; SCEN-A2b lo fija). Sin esto, un cliente que batchee crearía la reserva sin token y se leería falsamente como "el cliente no re-disparó OAuth".
+- **La confirmación de permiso de ChatGPT ≠ consent OAuth.** Con el default *"Ask only before important changes"*, ChatGPT pide confirmar `crear_reserva` por ser cambio consecuente. Ese diálogo es de permisos de la app, no el consent de OAuth — el observable de riesgo es el **segundo** (el de autorización del AS).
+
 ### Evidencia documental que apoya (no sustituye) el spike
 
 Las docs de OpenAI describen el mecanismo exacto bajo prueba: *"If a token arrives without the expected audience or scopes, reject it and rely on the `WWW-Authenticate` challenge to prompt ChatGPT to re-authorize."* Es la **intención documentada**, no prueba de fiabilidad del re-trigger mid-session — por eso el spike empírico sigue siendo necesario.

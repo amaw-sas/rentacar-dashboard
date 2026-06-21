@@ -151,25 +151,3 @@ export async function POST(request: Request) {
 export async function OPTIONS() {
   return new Response(null, { status: 204, headers: CORS_HEADERS });
 }
-
-// TEMPORARY diagnostic (remove before merge): GET /api/chat?diag=1 reports which
-// expected env var NAMES are present in this deployment — booleans only, never
-// values — to pinpoint why the preview can't see OPENAI_API_KEY.
-export async function GET(request: Request) {
-  const url = new URL(request.url);
-  if (url.searchParams.get("diag") !== "1") {
-    return new NextResponse("Method Not Allowed", { status: 405 });
-  }
-  const present = (k: string) => Boolean(process.env[k]);
-  return NextResponse.json(
-    {
-      OPENAI_API_KEY: present("OPENAI_API_KEY"),
-      NEXT_PUBLIC_SUPABASE_URL: present("NEXT_PUBLIC_SUPABASE_URL"),
-      SUPABASE_SERVICE_ROLE_KEY: present("SUPABASE_SERVICE_ROLE_KEY"),
-      LOCALIZA_PROXY_URL: present("LOCALIZA_PROXY_URL"),
-      PROXY_API_KEY: present("PROXY_API_KEY"),
-      VERCEL_ENV: process.env.VERCEL_ENV ?? null,
-    },
-    { headers: CORS_HEADERS },
-  );
-}

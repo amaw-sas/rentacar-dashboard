@@ -59,4 +59,9 @@ describe("middleware PUBLIC_API_PREFIXES (issue #72 Step 5)", () => {
       expect(PUBLIC_API_PREFIXES).toContain(p);
     }
   });
+
+  // The anonymous chatbot route (V1) also bypasses session auth.
+  it("includes /api/chat for the anonymous chatbot route", () => {
+    expect(PUBLIC_API_PREFIXES).toContain("/api/chat");
+  });
 });

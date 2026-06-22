@@ -113,6 +113,7 @@ const NAME_MAX = 20;
 const ID_MAX = 15;
 const PHONE_MAX = 15;
 const EMAIL_MAX = 20;
+const CITY_MAX = 18;
 
 function truncate(value: string, max: number) {
   return value.length > max ? `${value.slice(0, max - 1)}…` : value;
@@ -242,6 +243,18 @@ export const columns: ColumnDef<ReservationRow, unknown>[] = [
     enableSorting: false,
     cell: ({ row }) =>
       renderPickup(row.original.pickup_date, row.original.pickup_hour),
+  },
+  {
+    id: "pickup_city",
+    accessorFn: (row) => row.pickup_location?.cities?.name ?? "",
+    header: "Ciudad recogida",
+    // Derived from the pickup location's city relation; no order index backs it
+    // so server-sorting is disabled, consistent with the "pickup" column.
+    enableSorting: false,
+    cell: ({ row }) => {
+      const name = row.original.pickup_location?.cities?.name;
+      return name ? truncate(name, CITY_MAX) : "—";
+    },
   },
   {
     accessorKey: "reservation_code",

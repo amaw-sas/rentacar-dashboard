@@ -15,11 +15,12 @@ export const PUBLIC_API_PREFIXES = [
 ];
 
 export async function middleware(request: NextRequest) {
-  // Public API routes — bypass session auth. /api/reservations, /api/cron,
-  // /api/upload and /api/mcp authenticate via x-api-key (the MCP server checks
-  // it through withMcpAuth → verifyApiKey, issue #72); /api/locations,
-  // /api/requirements and /api/openapi are fully public (no key — data already
-  // public on brand sites).
+  // Public API routes — bypass session auth. /api/reservations, /api/cron and
+  // /api/upload authenticate via x-api-key; /api/locations, /api/requirements,
+  // /api/openapi and /api/mcp are fully public (no key). /api/mcp is anonymous by
+  // design (issue #172): anti-abuse is the signed/expiring quote + Vercel Firewall
+  // rate-limit, not a shared secret. /api/locations etc. expose data already
+  // public on the brand sites.
   if (PUBLIC_API_PREFIXES.some((p) => request.nextUrl.pathname.startsWith(p))) {
     return NextResponse.next();
   }

@@ -34,6 +34,27 @@ describe("buildSystemPrompt", () => {
     expect(prompt).toContain("¿Confirmo tu reserva?");
   });
 
+  it("pins the persona as Valeria, virtual and consistently feminine", async () => {
+    getChatKnowledgeContent.mockResolvedValue(null);
+    const prompt = await buildSystemPrompt("alquilatucarro");
+    expect(prompt).toContain("Valeria");
+    // declared as a virtual assistant, not a human
+    expect(prompt).toMatch(/virtual/i);
+    // feminine self-reference is mandated to stop gender drift
+    expect(prompt).toMatch(/femenino/i);
+  });
+
+  it("carries the verbosity guardrails (requirements once, no option menus, credit filter once)", async () => {
+    getChatKnowledgeContent.mockResolvedValue(null);
+    const prompt = await buildSystemPrompt("alquilatucarro");
+    // requirements block sent once, not every turn
+    expect(prompt).toMatch(/requisitos UNA sola vez/i);
+    // no A/B/C or numbered action menus
+    expect(prompt).toMatch(/NO uses menús de opciones/i);
+    // credit filter mentioned a single time, neutral tone
+    expect(prompt).toMatch(/Menciónalo UNA sola vez/i);
+  });
+
   it("falls back to the requirements baseline when the store is empty", async () => {
     getChatKnowledgeContent.mockResolvedValue(null);
     const prompt = await buildSystemPrompt("alquilame");

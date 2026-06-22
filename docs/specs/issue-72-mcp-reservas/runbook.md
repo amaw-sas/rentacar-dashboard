@@ -1,3 +1,5 @@
+> **[2026-06-22] SUPERSEDED by issue #172** (see `docs/specs/issue-172/decision-drop-oauth.md`): OAuth dropped, `x-api-key` removed, `/api/mcp` is now anonymous with a signed/expiring quote. Auth sections below are historical.
+
 # Runbook — Servidor MCP de reservas (issue #72)
 
 Cómo provisionar, registrar y probar el servidor MCP que expone la búsqueda de

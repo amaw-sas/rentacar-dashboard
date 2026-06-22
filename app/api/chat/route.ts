@@ -113,7 +113,7 @@ export async function POST(request: Request) {
     return jsonError("Mensajes con formato inválido", 400);
   }
 
-  const result = streamText(buildStreamConfig(brand, modelMessages));
+  const result = streamText(await buildStreamConfig(brand, modelMessages));
 
   // Drain even if the client disconnects, so onFinish persists the reply.
   result.consumeStream();

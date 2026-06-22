@@ -6,6 +6,7 @@ import {
   Car,
   DollarSign,
   Globe,
+  BookText,
   LayoutDashboard,
   LogOut,
   MapPin,
@@ -45,6 +46,7 @@ const navGroups = [
     items: [
       { title: "Reservas", href: "/reservations", icon: UserRound },
       { title: "Conversaciones", href: "/conversations", icon: MessagesSquare },
+      { title: "Base de conocimiento", href: "/chat-knowledge", icon: BookText },
       { title: "Clientes", href: "/customers", icon: Users },
       { title: "Referidos", href: "/referrals", icon: Tags },
     ],

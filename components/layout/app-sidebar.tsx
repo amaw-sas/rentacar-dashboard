@@ -9,6 +9,7 @@ import {
   LayoutDashboard,
   LogOut,
   MapPin,
+  MessagesSquare,
   Store,
   Tags,
   UserRound,
@@ -43,6 +44,7 @@ const navGroups = [
     label: "Operaciones",
     items: [
       { title: "Reservas", href: "/reservations", icon: UserRound },
+      { title: "Conversaciones", href: "/conversations", icon: MessagesSquare },
       { title: "Clientes", href: "/customers", icon: Users },
       { title: "Referidos", href: "/referrals", icon: Tags },
     ],

@@ -333,14 +333,13 @@ describe("reservations columns (legacy parity)", () => {
       expect(container.textContent).toBe("Desconocido");
     });
 
-    // Issue #144 reverts #113's "origen is server-sortable" sub-decision:
-    // attribution_channel has no composite order index, so sorting by it
-    // reproduced the full-table heapsort. origen stays filterable (.eq/.is) but
-    // the header now opts out of sorting (no arrow, emits no ?sort= the server
-    // would ignore).
-    it("opts out of sorting (#144 — reverts #113, no order index for attribution_channel)", () => {
+    // origen is server-sortable again: the composite index
+    // (is_priority DESC, attribution_channel, id) carries the is_priority
+    // leading key, so the ORDER BY is index-served instead of heapsorting. The
+    // header must NOT opt out of sorting.
+    it("stays server-sortable (composite index on attribution_channel)", () => {
       const col = columns.find((c) => c.id === "origen");
-      expect(col).toHaveProperty("enableSorting", false);
+      expect(col).not.toHaveProperty("enableSorting", false);
     });
   });
 
@@ -400,14 +399,14 @@ describe("reservations columns (legacy parity)", () => {
     });
   });
 
-  // Issue #104 dropped the four snapshot-identity columns and valor_oc; issue
-  // #144 dropped the remaining non-default columns (franchise, status,
-  // category_code, reservation_code, pickup — origen guarded in its own block
-  // above). None has a composite order index, so sorting by them forced a
-  // full-table heapsort. Their headers must go inert so they neither render a
-  // misleading sort arrow nor emit a ?sort= the server silently falls back to
-  // DEFAULT_SORT on.
-  describe("dropped sort columns go inert (#104 + #144)", () => {
+  // Columns with no composite order index stay inert: #104 dropped the four
+  // snapshot-identity columns and valor_oc; #144 dropped status, category_code,
+  // reservation_code and pickup. None is backed by an is_priority-leading index,
+  // so sorting by them would force a full-table heapsort. Their headers must
+  // neither render a misleading sort arrow nor emit a ?sort= the server silently
+  // falls back to DEFAULT_SORT on. (franchise and origen left this list once
+  // migration 065 added their composite indexes.)
+  describe("unindexed columns go inert (#104 + #144)", () => {
     for (const id of [
       // #104
       "customer",
@@ -416,11 +415,12 @@ describe("reservations columns (legacy parity)", () => {
       "email",
       "valor_oc",
       // #144
-      "franchise",
       "status",
       "category_code",
       "reservation_code",
       "pickup",
+      // never server-sortable: derived/joined or 2-level join
+      "pickup_city",
     ]) {
       it(`${id} opts out of sorting`, () => {
         const col = findColumn(id);
@@ -429,12 +429,15 @@ describe("reservations columns (legacy parity)", () => {
     }
   });
 
-  // SCEN-144-001: created_at ("Creado") is the one column that stays
-  // server-sortable — the composite index serves it, so it never heapsorts.
-  it("keeps created_at sortable (the only retained sort column)", () => {
-    const col = columns.find(
-      (c) => (c as { accessorKey?: string }).accessorKey === "created_at",
-    );
-    expect(col).not.toHaveProperty("enableSorting", false);
+  // The server-sortable columns: each is backed by a composite index that leads
+  // with is_priority (created_at since #056; franchise + origen since
+  // migration 065), so the ORDER BY is index-served instead of heapsorting.
+  describe("indexed columns stay server-sortable", () => {
+    for (const id of ["created_at", "franchise", "origen"]) {
+      it(`${id} keeps sorting enabled`, () => {
+        const col = findColumn(id);
+        expect(col).not.toHaveProperty("enableSorting", false);
+      });
+    }
   });
 });

@@ -40,25 +40,23 @@ export const SEARCH_COLUMNS = [
 // total_with_tax) and fall back to DEFAULT_SORT. Mirrors the sortable columns in
 // columns.tsx.
 //
-// Issue #104 REMOVED the five snapshot-identity sort keys (customer/
-// identification/phone/email → customer_*_at_booking, valor_oc →
-// total_price_localiza). Issue #144 then removed the six remaining non-default
-// keys (franchise, status, origen → attribution_channel, category_code,
-// reservation_code, pickup → pickup_date). The only sort index
-// (idx_reservations_priority_created: is_priority DESC, created_at DESC) presorts
-// the full key ONLY for created_at; the single-column indexes (status, franchise,
-// pickup_date, reservation_code) never carry the is_priority leading key, so
-// ordering by any of them degraded to a full-table top-N heapsort (franchise
-// measured 230ms @ 13k rows — strictly worse than what #104 removed — and scaling
-// linearly). Product chose to drop server-sortability rather than carry ~six
-// composite asc/desc indexes: operators narrow these rows via the .eq filters
-// (franchise/status/origen), the pickup date-range filter, or the #102 trgm
-// search — not by sorting. created_at is the only column left because it is the
-// one the composite index serves. The matching headers set enableSorting:false in
-// columns.tsx; keeping them out here is the server-side half (a hand-edited
-// ?sort= the client no longer emits still falls back to DEFAULT_SORT).
+// Every entry must be backed by a composite index that LEADS with is_priority
+// (the query always emits `ORDER BY is_priority DESC, <col>, id`). Without that
+// leading key Postgres falls back to a full-table heapsort — the regression #104
+// and #144 removed for the unindexed snapshot/derived columns (customer/id/phone/
+// email, valor_oc, status, category_code, reservation_code, pickup_date).
+//
+// Sortable today:
+//   created_at → idx_reservations_priority_created (is_priority DESC, created_at)
+//   franchise  → idx_reservations_priority_franchise (is_priority DESC, franchise, id)
+//   origen     → attribution_channel, idx_reservations_priority_attribution
+//                (is_priority DESC, attribution_channel, id)
+// franchise/origen indexes were added so these low-cardinality columns are
+// index-served (≈3ms) instead of the 230ms heapsort #144 measured.
 export const SORTABLE_COLUMNS: Record<string, string> = {
   created_at: "created_at",
+  franchise: "franchise",
+  origen: "attribution_channel",
 };
 
 export interface ReservationSort {

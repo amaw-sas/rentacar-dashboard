@@ -72,6 +72,14 @@ export function ReservationsTable({
     manualPagination: true,
     manualSorting: true,
     manualFiltering: true,
+    // Server-driven 2-state toggle. The default order (created_at desc) is
+    // always present, so the removal step of @tanstack's default cycle would
+    // strand a desc column on "no sort" → serialized to null → server re-applies
+    // the same default → the click appeared to do nothing (the stuck-toggle
+    // bug). Disabling removal makes every sortable header flip desc⇄asc cleanly;
+    // sortDescFirst makes the first click descending ("mayor a menor").
+    enableSortingRemoval: false,
+    sortDescFirst: true,
     pageCount,
     rowCount: total,
     onSortingChange: url.onSortingChange,

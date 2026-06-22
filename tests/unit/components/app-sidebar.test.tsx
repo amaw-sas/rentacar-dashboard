@@ -79,12 +79,17 @@ describe("AppSidebar navigation order", () => {
     expect(operaciones).toBeLessThan(labels.indexOf("Datos de Referencia"));
   });
 
-  // SCEN-2: Operaciones items read Reservas, Clientes, Referidos.
-  it("orders Operaciones items as Reservas, Clientes, Referidos", () => {
+  // SCEN-2: Operaciones items read Reservas, Conversaciones, Clientes, Referidos.
+  it("orders Operaciones items as Reservas, Conversaciones, Clientes, Referidos", () => {
     const { container } = renderSidebar();
     const titles = itemsOf(container, "Operaciones").map((i) => i.title);
 
-    expect(titles).toEqual(["Reservas", "Clientes", "Referidos"]);
+    expect(titles).toEqual([
+      "Reservas",
+      "Conversaciones",
+      "Clientes",
+      "Referidos",
+    ]);
   });
 
   // SCEN-3: reordering must not disturb the destinations each item links to.
@@ -94,6 +99,7 @@ describe("AppSidebar navigation order", () => {
 
     expect(items).toEqual([
       { title: "Reservas", href: "/reservations" },
+      { title: "Conversaciones", href: "/conversations" },
       { title: "Clientes", href: "/customers" },
       { title: "Referidos", href: "/referrals" },
     ]);

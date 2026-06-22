@@ -19,7 +19,11 @@ import {
 // client and the in-process quote services; AI SDK edge runtime is unverified.
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 30;
+// 60s (not 30): a booking turn runs the LLM, streams the opaque quote as the
+// crear_reserva input, and then calls the Localiza proxy — which alone consumes
+// the ~30s the website's /api/reservations route budgets for booking. The chat
+// adds the model + tool overhead on top, so it needs the extra headroom.
+export const maxDuration = 60;
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",

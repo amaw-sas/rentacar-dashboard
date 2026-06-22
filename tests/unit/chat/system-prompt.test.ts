@@ -7,7 +7,7 @@ const { getChatKnowledgeContent } = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/chat/knowledge-store", () => ({ getChatKnowledgeContent }));
 
-import { buildSystemPrompt, chatTools } from "@/lib/chat/agent";
+import { buildSystemPrompt, buildChatTools } from "@/lib/chat/agent";
 
 beforeEach(() => {
   getChatKnowledgeContent.mockReset();
@@ -27,6 +27,13 @@ describe("buildSystemPrompt", () => {
     expect(prompt).toContain("https://alquilatucarro.com");
   });
 
+  it("includes the reservation flow with explicit confirmation", async () => {
+    getChatKnowledgeContent.mockResolvedValue(null);
+    const prompt = await buildSystemPrompt("alquilatucarro");
+    expect(prompt).toContain("crear_reserva");
+    expect(prompt).toContain("¿Confirmo tu reserva?");
+  });
+
   it("falls back to the requirements baseline when the store is empty", async () => {
     getChatKnowledgeContent.mockResolvedValue(null);
     const prompt = await buildSystemPrompt("alquilame");
@@ -36,13 +43,33 @@ describe("buildSystemPrompt", () => {
   });
 });
 
-describe("chatTools", () => {
-  it("exposes the four tools", () => {
-    expect(Object.keys(chatTools).sort()).toEqual([
+describe("buildChatTools", () => {
+  it("exposes the five tools", () => {
+    expect(Object.keys(buildChatTools("alquilatucarro")).sort()).toEqual([
       "cotizar",
+      "crear_reserva",
       "info_gamas",
       "info_sedes",
       "tarifa_mensual",
     ]);
+  });
+
+  it("crear_reserva degrades to the site link when the flag is off", async () => {
+    const prev = process.env.CHAT_RESERVATIONS_ENABLED;
+    delete process.env.CHAT_RESERVATIONS_ENABLED;
+    const tools = buildChatTools("alquilatucarro");
+    const res = (await tools.crear_reserva.execute!(
+      {
+        quote: "q",
+        fullname: "Test",
+        identification_type: "CC",
+        identification: "1",
+        email: "a@b.co",
+        phone: "300",
+      },
+      { toolCallId: "t", messages: [] },
+    )) as { error: string };
+    expect(res.error).toContain("https://alquilatucarro.com");
+    if (prev !== undefined) process.env.CHAT_RESERVATIONS_ENABLED = prev;
   });
 });

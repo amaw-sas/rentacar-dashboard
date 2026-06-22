@@ -13,66 +13,92 @@ import {
   infoGamasSchema,
   runInfoGamas,
 } from "@/lib/chat/knowledge-tools";
+import { crearReservaSchema, runCrearReserva } from "@/lib/chat/reserva-tool";
 
 /**
  * Chatbot agent. OpenAI gpt-5-mini. The model id is the only line to change to
  * swap tiers.
  *
- * Knowledge model (Fase 2 · Incremento 2): structured TOOLS are the source of
- * truth for prices (cotizar), sedes (info_sedes), monthly rates (tarifa_mensual)
- * and gamas (info_gamas). The editable knowledge base injected into the prompt is
- * FALLBACK for everything else (policies, requirements, objections, tone). The
- * bot quotes and pushes the customer to a reserve LINK; it does NOT create
- * reservations (that's Incremento 3).
+ * Knowledge model (Fase 2): structured TOOLS are the source of truth for prices
+ * (cotizar), sedes (info_sedes), monthly rates (tarifa_mensual) and gamas
+ * (info_gamas); the editable knowledge base injected into the prompt is FALLBACK.
+ * Inc. 3: the bot can also CREATE the reservation (crear_reserva), gated by
+ * CHAT_RESERVATIONS_ENABLED — off by default, so the public endpoint has no
+ * booking side effect until Inc. 4 turns it on per brand.
  */
 export const CHAT_MODEL = "gpt-5-mini";
 
-/** Max tool-calling steps per turn (room for a quote/lookup + the reply). */
-const MAX_STEPS = 5;
+/** Max tool-calling steps per turn (room for a quote/lookup/booking + the reply). */
+const MAX_STEPS = 6;
 
-/** Tools exposed to the agent. */
-export const chatTools = {
-  cotizar: tool({
-    description:
-      "Cotiza vehículos disponibles por ciudad y fechas con precios REALES. " +
-      "Úsala SIEMPRE para dar precios — nunca inventes valores. Devuelve, por " +
-      "gama, el precio en COP. Si la ciudad no existe, el resultado trae la " +
-      "lista de ciudades válidas para que la ofrezcas al cliente.",
-    inputSchema: cotizarSchema,
-    execute: async (args) => {
-      const result = await runCotizar(args);
-      return result.ok
-        ? { disponibilidad: result.data }
-        : { error: result.message };
-    },
-  }),
-  info_sedes: tool({
-    description:
-      "Devuelve las sedes (puntos de recogida) de una ciudad: nombre, dirección, " +
-      "mapa y horario. Úsala para responder dónde recoger, a qué hora abren, o " +
-      "qué sedes hay. Si la ciudad no existe, trae la lista de ciudades válidas.",
-    inputSchema: z.object(infoSedesSchema),
-    execute: async (args) => runInfoSedes(args),
-  }),
-  tarifa_mensual: tool({
-    description:
-      "Devuelve la tarifa MENSUAL de referencia de una gama (precios por 1000/" +
-      "2000/3000 km y seguro). Úsala cuando pregunten por alquiler por mes o por " +
-      "30+ días. La tarifa es nacional (no varía por ciudad) y el kilometraje es " +
-      "limitado.",
-    inputSchema: z.object(tarifaMensualSchema),
-    execute: async (args) => runTarifaMensual(args),
-  }),
-  info_gamas: tool({
-    description:
-      "Devuelve las gamas de vehículos y sus atributos (pasajeros, maletas, aire, " +
-      "transmisión, sin pico y placa). Úsala para '¿qué carros tienen?', " +
-      "'¿automático?', '¿el más espacioso?'. Recuerda: se alquila por gama, no " +
-      "por modelo.",
-    inputSchema: z.object(infoGamasSchema),
-    execute: async (args) => runInfoGamas(args),
-  }),
-};
+/**
+ * Build the tools exposed to the agent for a given brand. A function (not a
+ * static object) so `crear_reserva` can inject `franchise = brand` server-side —
+ * the LLM never supplies the franchise.
+ */
+export function buildChatTools(brand: string) {
+  return {
+    cotizar: tool({
+      description:
+        "Cotiza vehículos disponibles por ciudad y fechas con precios REALES. " +
+        "Úsala SIEMPRE para dar precios — nunca inventes valores. Devuelve, por " +
+        "gama, el precio en COP. Si la ciudad no existe, el resultado trae la " +
+        "lista de ciudades válidas para que la ofrezcas al cliente.",
+      inputSchema: cotizarSchema,
+      execute: async (args) => {
+        const result = await runCotizar(args);
+        return result.ok
+          ? { disponibilidad: result.data }
+          : { error: result.message };
+      },
+    }),
+    info_sedes: tool({
+      description:
+        "Devuelve las sedes (puntos de recogida) de una ciudad: nombre, dirección, " +
+        "mapa y horario. Úsala para responder dónde recoger, a qué hora abren, o " +
+        "qué sedes hay. Si la ciudad no existe, trae la lista de ciudades válidas.",
+      inputSchema: z.object(infoSedesSchema),
+      execute: async (args) => runInfoSedes(args),
+    }),
+    tarifa_mensual: tool({
+      description:
+        "Devuelve la tarifa MENSUAL de referencia de una gama (precios por 1000/" +
+        "2000/3000 km y seguro). Úsala cuando pregunten por alquiler por mes o por " +
+        "30+ días. La tarifa es nacional (no varía por ciudad) y el kilometraje es " +
+        "limitado.",
+      inputSchema: z.object(tarifaMensualSchema),
+      execute: async (args) => runTarifaMensual(args),
+    }),
+    info_gamas: tool({
+      description:
+        "Devuelve las gamas de vehículos y sus atributos (pasajeros, maletas, aire, " +
+        "transmisión, sin pico y placa). Úsala para '¿qué carros tienen?', " +
+        "'¿automático?', '¿el más espacioso?'. Recuerda: se alquila por gama, no " +
+        "por modelo.",
+      inputSchema: z.object(infoGamasSchema),
+      execute: async (args) => runInfoGamas(args),
+    }),
+    crear_reserva: tool({
+      description:
+        "Crea la reserva REAL a partir del `quote` de la gama elegida más los datos " +
+        "del cliente. Llama esto SOLO después de resumir la reserva y recibir una " +
+        "confirmación EXPLÍCITA del cliente. Devuelve el número de solicitud.",
+      inputSchema: crearReservaSchema,
+      execute: async (args) => {
+        // Gated: off by default so the public endpoint never books until Inc. 4
+        // enables it per brand. Degrades to today's behavior (push to the site).
+        if (process.env.CHAT_RESERVATIONS_ENABLED !== "true") {
+          const website = getFranchiseBranding(brand).website;
+          return {
+            error: `Por ahora la reserva se completa en el sitio: ${website}`,
+          };
+        }
+        const result = await runCrearReserva({ ...args, franchise: brand });
+        return result.ok ? result.data : { error: result.message };
+      },
+    }),
+  };
+}
 
 /**
  * Build the system prompt for a brand. Anchors "today" to Colombia time, embeds
@@ -97,19 +123,28 @@ export async function buildSystemPrompt(
     "- Saludas, entiendes la necesidad y detectas la ciudad y las fechas.",
     "- Das precios REALES con la herramienta `cotizar`. NUNCA inventes precios ni disponibilidad.",
     "- Resuelves dudas de sedes, gamas y tarifa mensual con las herramientas.",
-    "- Tras cotizar, motivas a reservar y entregas el enlace de reserva.",
+    "- Cuando el cliente quiere reservar, tomas sus datos y creas la reserva con `crear_reserva`.",
     "",
     "HERRAMIENTAS Y FUENTE DE VERDAD (regla de precedencia):",
     "- Usa SIEMPRE las herramientas como verdad: `cotizar` (precios/disponibilidad), `info_sedes` (sedes, direcciones, horarios), `tarifa_mensual` (precios por mes por gama), `info_gamas` (atributos de gamas).",
     "- La sección CONOCIMIENTO de abajo es RESPALDO: úsala para políticas, requisitos, objeciones, libreto y tono, o cuando una herramienta no devuelva el dato.",
     "- Si una herramienta y el CONOCIMIENTO se contradicen, GANA la herramienta. Nunca inventes datos que una herramienta podría darte.",
     "",
+    "CÓMO RESERVAS (flujo de cierre):",
+    "- Solo después de cotizar y cuando el cliente quiera reservar una gama concreta:",
+    "  1) Pide de forma natural (uno o dos a la vez, no como formulario): nombre completo, tipo y número de documento (CC, CE o PA), correo y teléfono. Si el cliente ya dio algún dato, no lo vuelvas a pedir.",
+    "  2) RESUME la reserva: gama elegida, fechas, sede de recogida (usa `info_sedes`), valor total con descuento, y los datos del cliente.",
+    "  3) Pide confirmación EXPLÍCITA ('¿Confirmo tu reserva?'). NO llames `crear_reserva` sin un sí claro.",
+    "  4) Llama `crear_reserva` con el `quote` EXACTO que `cotizar` devolvió para la gama elegida.",
+    "  5) Al recibir el número de solicitud, entrégaselo y recuérdale: la recogida es en un local Localiza (dale nombre, dirección y mapa con `info_sedes`); requisitos (tarjeta de crédito física, documento de identidad, licencia vigente); el pago es en la sede, no anticipado.",
+    "  6) Si `crear_reserva` falla (cotización vencida o sin disponibilidad), vuelve a cotizar y reintenta.",
+    "- Usa EXACTAMENTE el `quote` de la gama que el cliente eligió. Si cambió la ciudad o las fechas, re-cotiza antes de reservar.",
+    "",
     "REGLAS:",
     "- Si falta la ciudad o las fechas, pregúntalas. No asumas ni cotices con datos incompletos.",
     "- Si la ciudad tiene varias sedes y es ambiguo, pregunta cuál sede prefiere (usa `info_sedes`).",
     "- Si una herramienta devuelve un error con opciones (ciudades/gamas válidas), ofrécelas al cliente.",
     "- Alquiler por mes (30+ días): da la tarifa de referencia con `tarifa_mensual` y aclara que el kilometraje es limitado (1000/2000 km) y se pide mín. 7 días de anticipación.",
-    "- No creas la reserva tú: cuando el cliente quiera reservar, dirígelo a completar la reserva en el sitio. Recuérdale que el punto de recogida es un local Localiza (te lo da `info_sedes`: nombre, dirección y mapa).",
     `- Enlace de reserva de la marca: ${website}`,
     "- Mantente SIEMPRE en el tema de alquiler de carros de la marca. Si preguntan otra cosa, redirige con amabilidad.",
     "- Sé conciso. Montos en COP con separador de miles.",
@@ -132,7 +167,7 @@ export async function buildStreamConfig(
     model: openai(CHAT_MODEL),
     system: await buildSystemPrompt(brand),
     messages,
-    tools: chatTools,
+    tools: buildChatTools(brand),
     stopWhen: stepCountIs(MAX_STEPS),
   };
 }

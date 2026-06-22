@@ -1,7 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // Control what the editable knowledge base returns (null → fallback path).
-const getChatKnowledgeContent = vi.fn();
+// vi.hoisted so the fn exists before the hoisted vi.mock factory runs.
+const { getChatKnowledgeContent } = vi.hoisted(() => ({
+  getChatKnowledgeContent: vi.fn(),
+}));
 vi.mock("@/lib/chat/knowledge-store", () => ({ getChatKnowledgeContent }));
 
 import { buildSystemPrompt, chatTools } from "@/lib/chat/agent";

@@ -37,10 +37,11 @@ const PERIODS: { value: CityPeriod; label: string }[] = [
   { value: "today", label: "Hoy" },
   { value: "yesterday", label: "Ayer" },
   { value: "week", label: "Esta semana" },
+  { value: "last7", label: "Últimos 7 días" },
+  { value: "last14", label: "Últimos 14 días" },
   { value: "month", label: "Este mes" },
+  { value: "last30", label: "Últimos 30 días" },
 ];
-
-const TOP_N = 10;
 
 export function CitiesReport({
   data,
@@ -50,7 +51,7 @@ export function CitiesReport({
   franchises: FranchiseRef[];
 }) {
   const [metric, setMetric] = useState<CityMetric>("used");
-  const [period, setPeriod] = useState<CityPeriod>("month");
+  const [period, setPeriod] = useState<CityPeriod>("last7");
 
   const codes = useMemo(() => franchises.map((f) => f.code), [franchises]);
   const ranking = useMemo(
@@ -58,14 +59,14 @@ export function CitiesReport({
     [data, codes, metric, period]
   );
 
-  // Top-N cities for the stacked bar; each franchise count becomes a top-level
-  // key so Recharts can stack by franchise code.
+  // Bars for every city that actually rented in this slice (cities at 0 are kept
+  // in the table below but would only add empty bars). Each franchise count
+  // becomes a top-level key so Recharts can stack by franchise code.
   const chartData = useMemo(
     () =>
-      ranking.rows.slice(0, TOP_N).map((r) => ({
-        cityName: r.cityName,
-        ...r.byFranchise,
-      })),
+      ranking.rows
+        .filter((r) => r.total > 0)
+        .map((r) => ({ cityName: r.cityName, ...r.byFranchise })),
     [ranking]
   );
 
@@ -98,7 +99,7 @@ export function CitiesReport({
         </div>
       </div>
 
-      <ChartCard title={`Top ${TOP_N} ciudades`}>
+      <ChartCard title="Ciudades por reservas">
         {chartData.length === 0 ? (
           <p className="py-8 text-center text-sm text-muted-foreground">
             Sin datos en este período

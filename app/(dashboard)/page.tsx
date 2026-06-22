@@ -27,6 +27,7 @@ import {
 } from "@/lib/date/bogota";
 import { getFranchises } from "@/lib/queries/franchises";
 import { franchiseShortLabel } from "@/lib/franchises/short-label";
+import { franchiseColor } from "@/lib/franchises/colors";
 import { STATUS_LABELS } from "@/lib/schemas/reservation";
 import { DashboardPeriodSelector } from "./dashboard-period-selector";
 import { FranchiseLineChart } from "./dashboard-trend-charts";
@@ -124,10 +125,13 @@ export default async function DashboardPage({
   // by franchise in a fixed (display_name-ordered) sequence so the breakdown
   // line is stable across periods. byFranchise is keyed by franchise code and
   // already sums to `total` (getReservationCounts).
-  const franchiseTags = franchiseRefs.map((f) => ({
+  // The index must match the chart's franchise order (franchiseRefs) so a
+  // fallback color lands on the same hue as that franchise's line.
+  const franchiseTags = franchiseRefs.map((f, i) => ({
     code: f.code,
     short: franchiseShortLabel(f.label),
     full: f.label,
+    color: franchiseColor(f.code, i),
   }));
   const breakdownOf = (pc: PeriodCount): FranchiseBreakdown[] =>
     franchiseTags.map((t) => ({ ...t, value: pc.byFranchise[t.code] ?? 0 }));

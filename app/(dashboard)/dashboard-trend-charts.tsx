@@ -12,21 +12,7 @@ import {
 } from "recharts";
 import { ChartCard } from "@/components/charts/chart-card";
 import type { DailySeriesPoint } from "@/lib/queries/dashboard";
-
-// Per-franchise line colors, assigned by franchise CODE (not by order) per the
-// brand convention: alquilatucarro = blue, alquilame = red, alquicarros =
-// orange-amber. Unknown codes fall back to a distinct cycling palette. The
-// theme's --chart-* tokens are grayscale, so lines need their own hues.
-const FRANCHISE_COLORS: Record<string, string> = {
-  alquilatucarro: "#2563eb", // azul
-  alquilame: "#dc2626", // rojo
-  alquicarros: "#d97706", // amarillo-naranja
-};
-const FALLBACK_COLORS = ["#7c3aed", "#059669", "#0891b2", "#db2777"];
-
-function colorFor(code: string, index: number): string {
-  return FRANCHISE_COLORS[code] ?? FALLBACK_COLORS[index % FALLBACK_COLORS.length];
-}
+import { franchiseColor } from "@/lib/franchises/colors";
 
 interface FranchiseRef {
   code: string;
@@ -100,7 +86,7 @@ export function FranchiseLineChart({
                 type="monotone"
                 dataKey={f.code}
                 name={f.label}
-                stroke={colorFor(f.code, i)}
+                stroke={franchiseColor(f.code, i)}
                 strokeWidth={2}
                 dot={{ r: 2 }}
               />

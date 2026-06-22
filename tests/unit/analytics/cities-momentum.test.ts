@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { rankCityMomentum } from "@/app/(dashboard)/analytics/cities/momentum";
+import {
+  rankCityMomentum,
+  momentumWindowLabels,
+} from "@/app/(dashboard)/analytics/cities/momentum";
 import { NO_CITY_LABEL } from "@/app/(dashboard)/analytics/cities/pivot";
 import type { CityDailyPoint } from "@/lib/queries/analytics";
 
@@ -78,5 +81,23 @@ describe("rankCityMomentum", () => {
     const { rising } = rankCityMomentum(s, TODAY, "used");
     expect(rising[0].cityName).toBe(NO_CITY_LABEL);
     expect(rising[0].isNew).toBe(true);
+  });
+});
+
+describe("momentumWindowLabels", () => {
+  it("shows the recent and prior 3-day windows", () => {
+    // today 22 → recent 19–21, prior 16–18.
+    expect(momentumWindowLabels("2026-06-22")).toEqual({
+      recent: "19–21 jun",
+      prior: "16–18 jun",
+    });
+  });
+
+  it("spans the month boundary", () => {
+    // today 2 jun → recent 30 may–1 jun, prior 27–29 may.
+    expect(momentumWindowLabels("2026-06-02")).toEqual({
+      recent: "30 may–1 jun",
+      prior: "27–29 may",
+    });
   });
 });

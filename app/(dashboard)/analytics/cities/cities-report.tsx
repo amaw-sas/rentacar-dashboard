@@ -14,7 +14,6 @@ import {
 import { TrendingUp, TrendingDown, Minus } from "lucide-react";
 import { ChartCard } from "@/components/charts/chart-card";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import type { CityPeriodCounts, CityDailyPoint } from "@/lib/queries/analytics";
 import {
@@ -22,13 +21,7 @@ import {
   type CityMetric,
   type CityPeriod,
 } from "./pivot";
-import {
-  rankCityMomentum,
-  momentumWindowLabels,
-  cityDailyValues,
-  type MomentumRow,
-  type CitySparkline,
-} from "./momentum";
+import { cityDailyValues, type CitySparkline } from "./momentum";
 
 interface FranchiseRef {
   code: string;
@@ -71,14 +64,8 @@ export function CitiesReport({
     () => rankCities(data, codes, metric, period),
     [data, codes, metric, period]
   );
-  // Momentum follows the metric toggle but is fixed to the 3-day-vs-3-day
-  // window (independent of the period buttons, which control the table/chart).
-  const momentum = useMemo(
-    () => rankCityMomentum(daily, todayYMD, metric),
-    [daily, todayYMD, metric]
-  );
-  const windows = useMemo(() => momentumWindowLabels(todayYMD), [todayYMD]);
-  // Per-city 7-day sparkline for the detail table; follows the metric toggle.
+  // Per-city sparkline for the detail table's trend column; follows the metric
+  // toggle, independent of the period buttons (always the recent days).
   const sparklines = useMemo(
     () => cityDailyValues(daily, todayYMD, metric),
     [daily, todayYMD, metric]
@@ -179,7 +166,7 @@ export function CitiesReport({
                   ))}
                   <th className="px-3 py-2 text-right font-medium">Total</th>
                   <th className="px-3 py-2 text-right font-medium">
-                    Últ. 7 días
+                    Últ. 5 días
                   </th>
                 </tr>
               </thead>
@@ -228,33 +215,6 @@ export function CitiesReport({
           </div>
         )}
       </ChartCard>
-
-      {/* Momentum lives at the bottom and is INDEPENDENT of the period buttons:
-          it always compares a fixed recent 3-day window against the prior 3. */}
-      <div className="space-y-3 border-t border-border pt-6">
-        <div>
-          <h3 className="text-base font-semibold tracking-tight">
-            Tendencia por ciudad
-          </h3>
-          <p className="text-sm text-muted-foreground">
-            Reservas {metricNoun} de los últimos 3 días ({windows.recent})
-            comparadas con los 3 anteriores ({windows.prior}). No depende de los
-            botones de período de arriba.
-          </p>
-        </div>
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-          <MomentumList
-            title="En alza"
-            rows={momentum.rising}
-            direction="up"
-          />
-          <MomentumList
-            title="En baja"
-            rows={momentum.falling}
-            direction="down"
-          />
-        </div>
-      </div>
     </div>
   );
 }
@@ -318,58 +278,6 @@ function SparkCell({ spark }: { spark: CitySparkline | undefined }) {
         aria-hidden
       />
     </div>
-  );
-}
-
-function MomentumList({
-  title,
-  rows,
-  direction,
-}: {
-  title: string;
-  rows: MomentumRow[];
-  direction: "up" | "down";
-}) {
-  const Icon = direction === "up" ? TrendingUp : TrendingDown;
-  const accent = direction === "up" ? "text-emerald-600" : "text-red-600";
-
-  return (
-    <ChartCard title={title}>
-      {rows.length === 0 ? (
-        <p className="py-6 text-center text-sm text-muted-foreground">
-          {direction === "up"
-            ? "Ninguna ciudad subió"
-            : "Ninguna ciudad bajó"}
-        </p>
-      ) : (
-        <ul className="divide-y divide-border">
-          {rows.map((r) => (
-            <li
-              key={r.cityId ?? "__none__"}
-              className="flex items-center justify-between gap-3 py-2"
-            >
-              <div className="flex min-w-0 items-center gap-2">
-                <Icon className={cn("h-4 w-4 shrink-0", accent)} aria-hidden />
-                <span className="truncate text-sm">{r.cityName}</span>
-                {r.isNew && (
-                  <Badge variant="secondary" className="text-[10px]">
-                    nuevo
-                  </Badge>
-                )}
-              </div>
-              <div className="flex shrink-0 items-center gap-3 tabular-nums">
-                <span className="text-xs text-muted-foreground">
-                  antes {r.prior} · ahora {r.recent}
-                </span>
-                <span className={cn("w-10 text-right text-sm font-semibold", accent)}>
-                  {r.delta > 0 ? `+${r.delta}` : r.delta}
-                </span>
-              </div>
-            </li>
-          ))}
-        </ul>
-      )}
-    </ChartCard>
   );
 }
 

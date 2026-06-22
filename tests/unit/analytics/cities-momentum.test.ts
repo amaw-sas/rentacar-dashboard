@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   rankCityMomentum,
   momentumWindowLabels,
+  cityDailyValues,
 } from "@/app/(dashboard)/analytics/cities/momentum";
 import { NO_CITY_LABEL } from "@/app/(dashboard)/analytics/cities/pivot";
 import type { CityDailyPoint } from "@/lib/queries/analytics";
@@ -81,6 +82,48 @@ describe("rankCityMomentum", () => {
     const { rising } = rankCityMomentum(s, TODAY, "used");
     expect(rising[0].cityName).toBe(NO_CITY_LABEL);
     expect(rising[0].isNew).toBe(true);
+  });
+});
+
+describe("cityDailyValues", () => {
+  it("builds a 7-slot oldest→newest array per city, filling gaps with 0", () => {
+    // today 22 → slots map to 16,17,18,19,20,21,22.
+    const series: CityDailyPoint[] = [
+      pt("2026-06-16", "m", "Medellín", 1),
+      pt("2026-06-19", "m", "Medellín", 3),
+      pt("2026-06-22", "m", "Medellín", 5),
+    ];
+    const spark = cityDailyValues(series, TODAY, "used").get("m")!;
+    expect(spark.values).toEqual([1, 0, 0, 3, 0, 0, 5]);
+  });
+
+  it("flags trend up/down from recent 3 vs prior 3 (today excluded)", () => {
+    // prior days (16,17,18) sum vs recent (19,20,21); slot 6 (today) ignored.
+    const up: CityDailyPoint[] = [
+      pt("2026-06-18", "a", "A", 1),
+      pt("2026-06-20", "a", "A", 6),
+    ];
+    expect(cityDailyValues(up, TODAY, "used").get("a")!.trend).toBe("up");
+
+    const down: CityDailyPoint[] = [
+      pt("2026-06-17", "b", "B", 8),
+      pt("2026-06-21", "b", "B", 1),
+    ];
+    expect(cityDailyValues(down, TODAY, "used").get("b")!.trend).toBe("down");
+  });
+
+  it("ignores days outside the 7-day window", () => {
+    const series: CityDailyPoint[] = [pt("2026-06-15", "out", "Out", 9)]; // day-7
+    expect(cityDailyValues(series, TODAY, "used").has("out")).toBe(false);
+  });
+
+  it("respects the metric (created vs used)", () => {
+    const series: CityDailyPoint[] = [pt("2026-06-20", "x", "X", 0, 4)]; // created 4
+    const used = cityDailyValues(series, TODAY, "used").get("x")!;
+    expect(used.values.every((v) => v === 0)).toBe(true);
+    expect(cityDailyValues(series, TODAY, "created").get("x")!.values).toEqual([
+      0, 0, 0, 0, 4, 0, 0,
+    ]);
   });
 });
 

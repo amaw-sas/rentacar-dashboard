@@ -1,9 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 
-// Mock the MCP handler the chat wrapper delegates to (same seam as tools.test.ts
-// mocking buscarDisponibilidad).
-const crearSolicitudReserva = vi.fn();
+// Mock the MCP handler the chat wrapper delegates to. vi.hoisted so the fn exists
+// before the hoisted vi.mock factory references it.
+const { crearSolicitudReserva } = vi.hoisted(() => ({
+  crearSolicitudReserva: vi.fn(),
+}));
 vi.mock("@/lib/api/mcp/tools", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api/mcp/tools")>();
   return { ...actual, crearSolicitudReserva };

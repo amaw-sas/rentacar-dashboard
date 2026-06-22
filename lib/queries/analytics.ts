@@ -90,6 +90,35 @@ export async function getAttributionBreakdown(): Promise<
   return (data ?? []) as { attribution_channel: string | null; count: number }[];
 }
 
+// One row per (city, franchise) with the eight period×metric counts. city_id /
+// city_name are null for the "Sin ciudad" bucket (locations without a city).
+// Backed by the cities_rental_period_counts RPC (migration 066), which mirrors
+// the dashboard's period + Colombia-time semantics so the numbers reconcile.
+export interface CityPeriodCounts {
+  city_id: string | null;
+  city_name: string | null;
+  franchise: string;
+  created_today: number;
+  created_yesterday: number;
+  created_week: number;
+  created_month: number;
+  used_today: number;
+  used_yesterday: number;
+  used_week: number;
+  used_month: number;
+}
+
+export async function getCitiesRentalPeriodCounts(
+  activeCodes: string[]
+): Promise<CityPeriodCounts[]> {
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("cities_rental_period_counts", {
+    p_franchises: activeCodes,
+  });
+  if (error) throw error;
+  return (data ?? []) as CityPeriodCounts[];
+}
+
 const COMMISSION_REVENUE_SELECT = `
   id, amount, payment_status, created_at,
   reservations(id, total_price, franchise)

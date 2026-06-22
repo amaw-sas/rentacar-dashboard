@@ -5,6 +5,7 @@ const tabs = [
   { label: "Conversión", href: "/analytics/conversion" },
   { label: "Referidos", href: "/analytics/referrals" },
   { label: "Origen", href: "/analytics/attribution" },
+  { label: "Ciudades", href: "/analytics/cities" },
   { label: "Revenue", href: "/analytics/revenue" },
   { label: "Precios", href: "/analytics/pricing" },
 ];

@@ -178,7 +178,7 @@
       "post": {
         "operationId": "mcpTransport",
         "summary": "Servidor MCP de reservas (Streamable HTTP)",
-        "description": "Endpoint del servidor MCP (Model Context Protocol) para clientes de IA. **No es REST**: habla JSON-RPC sobre Streamable HTTP vía `mcp-handler`. Expone dos herramientas — `buscar_disponibilidad` y `crear_solicitud_reserva` — que envuelven el mismo flujo Localiza de `/api/reservations(/availability)`. El estado de cotización viaja como un `quote` opaco entre ambas (servidor stateless). Autenticación `x-api-key` con el secreto **`MCP_API_KEY`** (distinto de `RESERVATION_API_KEY`). Detalle de registro y uso del conector en el runbook (`docs/specs/issue-72-mcp-reservas/runbook.md`).",
+        "description": "Endpoint del servidor MCP (Model Context Protocol) para clientes de IA. **No es REST**: habla JSON-RPC sobre Streamable HTTP vía `mcp-handler`. Expone dos herramientas — `buscar_disponibilidad` y `crear_solicitud_reserva` — que envuelven el mismo flujo Localiza de `/api/reservations(/availability)`. El estado de cotización viaja como un `quote` entre ambas (servidor stateless). **Anónimo, sin autenticación** (sin OAuth, sin `x-api-key`): el control de integridad es el `quote` firmado con HMAC-SHA256 (`MCP_QUOTE_SECRET`) y con expiración de 30 min, más rate-limit de Vercel Firewall y revisión del operador (estado `nueva`). Decisión en `docs/specs/issue-172/decision-drop-oauth.md`.",
         "tags": ["MCP"],
         "parameters": [
           {
@@ -190,8 +190,7 @@
           }
         ],
         "responses": {
-          "200": { "description": "Respuesta JSON-RPC / stream MCP" },
-          "401": { "description": "x-api-key ausente o incorrecta" }
+          "200": { "description": "Respuesta JSON-RPC / stream MCP" }
         }
       }
     },

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from "vitest";
 
 // Issue #72 Steps 6-7: the two MCP tools. Holdout SCEN-108..117.
 // Services + directory are mocked; the REAL quote codec runs so SCEN-110 proves
@@ -58,6 +58,20 @@ function dir(items: Partial<LocationDirectoryItem>[]): LocationDirectoryItem[] {
     ...i,
   }));
 }
+
+// Since issue #172 the quote codec is HMAC-signed and FAILS CLOSED without a
+// strong (>= 32 char) secret; the tools exercise the real codec, so provide one
+// for the suite.
+const STRONG_SECRET = "test-quote-secret-0123456789abcdef";
+let ORIGINAL_QUOTE_SECRET: string | undefined;
+beforeAll(() => {
+  ORIGINAL_QUOTE_SECRET = process.env.MCP_QUOTE_SECRET;
+  process.env.MCP_QUOTE_SECRET = STRONG_SECRET;
+});
+afterAll(() => {
+  if (ORIGINAL_QUOTE_SECRET === undefined) delete process.env.MCP_QUOTE_SECRET;
+  else process.env.MCP_QUOTE_SECRET = ORIGINAL_QUOTE_SECRET;
+});
 
 function textOf(result: { content: unknown[] }): string {
   return result.content
@@ -214,6 +228,41 @@ describe("buscar_disponibilidad (SCEN-110..112)", () => {
       fecha_devolucion: "2026-07-05",
     });
     expect(res.isError).toBe(true);
+  });
+
+  // SCEN-136 — a MISSING/weak MCP_QUOTE_SECRET must NOT masquerade as empty
+  // availability. Without the up-front guard, every encodeQuote in the loop
+  // throws → categorias ends empty → the generic "intenta más tarde" message,
+  // indistinguishable from a data glitch. buscar must THROW (propagate a config
+  // error) before the loop instead. The service is never even reached.
+  it("SCEN-136: missing quote secret surfaces as a real error, not fake 'no availability'", async () => {
+    vi.mocked(searchAvailability).mockResolvedValue([ITEM]);
+    const saved = process.env.MCP_QUOTE_SECRET;
+    try {
+      delete process.env.MCP_QUOTE_SECRET;
+      await expect(
+        buscarDisponibilidad({
+          ciudad: "bogota",
+          fecha_recogida: "2026-07-01",
+          fecha_devolucion: "2026-07-05",
+        }),
+      ).rejects.toThrow(/MCP_QUOTE_SECRET/);
+      // The misconfiguration short-circuits before the availability call.
+      expect(vi.mocked(searchAvailability)).not.toHaveBeenCalled();
+
+      // A weak (too-short) secret is treated the same.
+      process.env.MCP_QUOTE_SECRET = "short";
+      await expect(
+        buscarDisponibilidad({
+          ciudad: "bogota",
+          fecha_recogida: "2026-07-01",
+          fecha_devolucion: "2026-07-05",
+        }),
+      ).rejects.toThrow(/MCP_QUOTE_SECRET/);
+    } finally {
+      if (saved === undefined) delete process.env.MCP_QUOTE_SECRET;
+      else process.env.MCP_QUOTE_SECRET = saved;
+    }
   });
 
   // SCEN-121 — non-positive duration → clean isError, no throw, no service call.

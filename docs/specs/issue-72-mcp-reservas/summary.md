@@ -1,3 +1,5 @@
+> **[2026-06-22] SUPERSEDED by issue #172** (see `docs/specs/issue-172/decision-drop-oauth.md`): OAuth dropped, `x-api-key` removed, `/api/mcp` is now anonymous with a signed/expiring quote. Auth references below are historical.
+
 # Planning Summary — Issue #72: MCP server de reservas
 
 **Date:** 2026-06-12

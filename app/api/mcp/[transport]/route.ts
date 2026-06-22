@@ -1,5 +1,4 @@
-import { createMcpHandler, withMcpAuth } from "mcp-handler";
-import { verifyApiKey } from "@/lib/api/mcp/auth";
+import { createMcpHandler } from "mcp-handler";
 import {
   buscarDisponibilidad,
   buscarDisponibilidadInputSchema,
@@ -60,10 +59,10 @@ const handler = createMcpHandler(
   },
 );
 
-// x-api-key shared-secret auth (Phase 1). `required: true` rejects any request
-// without a valid key (401). Phase 2 swaps verifyApiKey for an OAuth verifier.
-const authHandler = withMcpAuth(handler, (req) => verifyApiKey(req), {
-  required: true,
-});
-
-export { authHandler as GET, authHandler as POST };
+// Intentionally ANONYMOUS (issue #172): no OAuth, no x-api-key. End customers
+// connect by URL and the AI client reaches the tools unauthenticated. Anti-abuse
+// is layered elsewhere: (a) the quote is HMAC-signed + expiring (lib/api/mcp/quote.ts)
+// so prices can't be forged or replayed, and (b) Vercel Firewall rate-limits the
+// endpoint at the platform level (not configured in code). Reservations enter
+// status `nueva` for operator review, so nothing is auto-confirmed.
+export { handler as GET, handler as POST };

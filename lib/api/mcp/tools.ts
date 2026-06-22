@@ -10,7 +10,11 @@ import {
   type CreateReservationInput,
 } from "@/lib/api/reservation-service";
 import { ServiceError } from "@/lib/api/service-error";
-import { encodeQuote, decodeQuote } from "@/lib/api/mcp/quote";
+import {
+  encodeQuote,
+  decodeQuote,
+  assertQuoteSecretConfigured,
+} from "@/lib/api/mcp/quote";
 import type { ReservationStatus } from "@/lib/schemas/reservation";
 
 /**
@@ -250,6 +254,12 @@ function normalizeHora(h: string | undefined): string | null {
 export async function buscarDisponibilidad(
   args: BuscarDisponibilidadArgs,
 ): Promise<CallToolResult> {
+  // Fail loud on a misconfigured signing secret BEFORE any work. Otherwise every
+  // per-category encodeQuote below would throw and get skipped, leaving an empty
+  // result indistinguishable from genuine "no availability" — masking a server
+  // fault as a data glitch. Throwing here propagates a real (500-class) error.
+  assertQuoteSecretConfigured();
+
   const { ciudad, fecha_recogida, fecha_devolucion, sede } = args;
 
   const horaR = normalizeHora(args.hora_recogida);

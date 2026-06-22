@@ -1,5 +1,9 @@
 import { getFranchises } from "@/lib/queries/franchises";
-import { getCitiesRentalPeriodCounts } from "@/lib/queries/analytics";
+import {
+  getCitiesRentalPeriodCounts,
+  getCitiesDailySeries,
+} from "@/lib/queries/analytics";
+import { bogotaTodayYMD } from "@/lib/date/bogota";
 import { franchiseColor } from "@/lib/franchises/colors";
 import { franchiseShortLabel } from "@/lib/franchises/short-label";
 import { CitiesReport } from "./cities-report";
@@ -8,7 +12,10 @@ export default async function CitiesAnalyticsPage() {
   const franchises = await getFranchises();
   const active = (franchises ?? []).filter((f) => f.status === "active");
   const codes = active.map((f) => f.code);
-  const data = await getCitiesRentalPeriodCounts(codes);
+  const [data, daily] = await Promise.all([
+    getCitiesRentalPeriodCounts(codes),
+    getCitiesDailySeries(codes, 7),
+  ]);
 
   // Index matches the dashboard chart's franchise order so the tag colors line
   // up with the trend lines there too.
@@ -19,5 +26,12 @@ export default async function CitiesAnalyticsPage() {
     color: franchiseColor(f.code, i),
   }));
 
-  return <CitiesReport data={data} franchises={franchiseRefs} />;
+  return (
+    <CitiesReport
+      data={data}
+      daily={daily}
+      todayYMD={bogotaTodayYMD()}
+      franchises={franchiseRefs}
+    />
+  );
 }

@@ -11,15 +11,18 @@ import {
   CartesianGrid,
   Legend,
 } from "recharts";
+import { TrendingUp, TrendingDown } from "lucide-react";
 import { ChartCard } from "@/components/charts/chart-card";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import type { CityPeriodCounts } from "@/lib/queries/analytics";
+import type { CityPeriodCounts, CityDailyPoint } from "@/lib/queries/analytics";
 import {
   rankCities,
   type CityMetric,
   type CityPeriod,
 } from "./pivot";
+import { rankCityMomentum, type MomentumRow } from "./momentum";
 
 interface FranchiseRef {
   code: string;
@@ -45,9 +48,13 @@ const PERIODS: { value: CityPeriod; label: string }[] = [
 
 export function CitiesReport({
   data,
+  daily,
+  todayYMD,
   franchises,
 }: {
   data: CityPeriodCounts[];
+  daily: CityDailyPoint[];
+  todayYMD: string;
   franchises: FranchiseRef[];
 }) {
   const [metric, setMetric] = useState<CityMetric>("used");
@@ -57,6 +64,12 @@ export function CitiesReport({
   const ranking = useMemo(
     () => rankCities(data, codes, metric, period),
     [data, codes, metric, period]
+  );
+  // Momentum follows the metric toggle but is fixed to the 3-day-vs-3-day
+  // window (independent of the period buttons, which control the table/chart).
+  const momentum = useMemo(
+    () => rankCityMomentum(daily, todayYMD, metric),
+    [daily, todayYMD, metric]
   );
 
   // Bars for every city that actually rented in this slice (cities at 0 are kept
@@ -97,6 +110,21 @@ export function CitiesReport({
             onChange={setPeriod}
           />
         </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <MomentumList
+          title="En alza"
+          subtitle="Últimos 3 días vs. 3 previos"
+          rows={momentum.rising}
+          direction="up"
+        />
+        <MomentumList
+          title="En baja"
+          subtitle="Últimos 3 días vs. 3 previos"
+          rows={momentum.falling}
+          direction="down"
+        />
       </div>
 
       <ChartCard title="Ciudades por reservas">
@@ -197,6 +225,58 @@ export function CitiesReport({
         )}
       </ChartCard>
     </div>
+  );
+}
+
+function MomentumList({
+  title,
+  subtitle,
+  rows,
+  direction,
+}: {
+  title: string;
+  subtitle: string;
+  rows: MomentumRow[];
+  direction: "up" | "down";
+}) {
+  const Icon = direction === "up" ? TrendingUp : TrendingDown;
+  const accent = direction === "up" ? "text-emerald-600" : "text-red-600";
+
+  return (
+    <ChartCard title={title} description={subtitle}>
+      {rows.length === 0 ? (
+        <p className="py-6 text-center text-sm text-muted-foreground">
+          Sin cambios en este período
+        </p>
+      ) : (
+        <ul className="divide-y divide-border">
+          {rows.map((r) => (
+            <li
+              key={r.cityId ?? "__none__"}
+              className="flex items-center justify-between gap-3 py-2"
+            >
+              <div className="flex items-center gap-2">
+                <Icon className={cn("h-4 w-4 shrink-0", accent)} aria-hidden />
+                <span className="text-sm">{r.cityName}</span>
+                {r.isNew && (
+                  <Badge variant="secondary" className="text-[10px]">
+                    nuevo
+                  </Badge>
+                )}
+              </div>
+              <div className="flex items-center gap-2 tabular-nums">
+                <span className="text-xs text-muted-foreground">
+                  {r.prior} → {r.recent}
+                </span>
+                <span className={cn("text-sm font-semibold", accent)}>
+                  {r.delta > 0 ? `+${r.delta}` : r.delta}
+                </span>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </ChartCard>
   );
 }
 

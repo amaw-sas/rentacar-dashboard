@@ -101,10 +101,16 @@ export interface CityPeriodCounts {
   created_today: number;
   created_yesterday: number;
   created_week: number;
+  created_last7: number;
+  created_last14: number;
+  created_last30: number;
   created_month: number;
   used_today: number;
   used_yesterday: number;
   used_week: number;
+  used_last7: number;
+  used_last14: number;
+  used_last30: number;
   used_month: number;
 }
 

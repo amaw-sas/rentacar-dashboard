@@ -1,6 +1,13 @@
 import type { CityPeriodCounts } from "@/lib/queries/analytics";
 
-export type CityPeriod = "today" | "yesterday" | "week" | "month";
+export type CityPeriod =
+  | "today"
+  | "yesterday"
+  | "week"
+  | "last7"
+  | "last14"
+  | "last30"
+  | "month";
 export type CityMetric = "created" | "used";
 
 export const NO_CITY_LABEL = "Sin ciudad";
@@ -13,8 +20,8 @@ export interface CityRankRow {
 }
 
 export interface CityRanking {
-  rows: CityRankRow[]; // total desc, then city name asc; zero-total cities dropped
-  franchiseTotals: Record<string, number>; // column totals over the visible rows
+  rows: CityRankRow[]; // every city with rental history; total desc, then name asc
+  franchiseTotals: Record<string, number>; // column totals over all rows
   grandTotal: number;
 }
 
@@ -27,10 +34,11 @@ export function countKey(
 }
 
 // Collapses the (city, franchise) RPC rows into one ranked row per city for the
-// selected metric+period: sums each franchise's count, drops cities with no
-// rentals in this slice, and sorts by total (then name) so the busiest city
-// leads. franchiseCodes fixes the column set/order and seeds zeros so every
-// city has an entry for every franchise.
+// selected metric+period: sums each franchise's count and sorts by total (then
+// name) so the busiest city leads. EVERY city with rental history is kept —
+// including those with 0 in this slice (they sort last) — so the listing is the
+// complete set, not just the active cities. franchiseCodes fixes the column
+// set/order and seeds zeros so every city has an entry for every franchise.
 export function rankCities(
   data: CityPeriodCounts[],
   franchiseCodes: string[],
@@ -58,9 +66,9 @@ export function rankCities(
     row.total += n;
   }
 
-  const rows = Array.from(byCity.values())
-    .filter((r) => r.total > 0)
-    .sort((a, b) => b.total - a.total || a.cityName.localeCompare(b.cityName));
+  const rows = Array.from(byCity.values()).sort(
+    (a, b) => b.total - a.total || a.cityName.localeCompare(b.cityName)
+  );
 
   const franchiseTotals: Record<string, number> = Object.fromEntries(
     franchiseCodes.map((c) => [c, 0])

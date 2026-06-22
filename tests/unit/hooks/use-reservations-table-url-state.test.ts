@@ -125,24 +125,22 @@ describe("useReservationsTableUrlState — URL parsing (Steps 3+4)", () => {
     ]);
   });
 
-  // Issue #104 + #144: a sort id absent from the shared SORTABLE_COLUMNS
-  // whitelist — a disabled snapshot column (#104), one of the six columns #144
-  // dropped (franchise/status/origen/category_code/reservation_code/pickup)
-  // lingering in a pre-#144 bookmark, or any hand-edited value — must resolve to
-  // the default order, NOT enter the sorting state. Otherwise getIsSorted() would
-  // paint a sort arrow on an enableSorting:false header while the server sorts by
-  // created_at, a UI that lies about the order. parseSorting reads the same shared
-  // whitelist, so shrinking it auto-mirrors here with no hook code change.
-  it("SCEN-144-004 hydration: a non-whitelisted/disabled sort id falls back to default", () => {
+  // A sort id absent from the shared SORTABLE_COLUMNS whitelist — a disabled
+  // snapshot column (#104), one of the columns #144 dropped (status/
+  // category_code/reservation_code/pickup) lingering in a bookmark, or any
+  // hand-edited value — must resolve to the default order, NOT enter the sorting
+  // state. Otherwise getIsSorted() would paint a sort arrow on an
+  // enableSorting:false header while the server sorts by created_at, a UI that
+  // lies about the order. parseSorting reads the same shared whitelist, so
+  // changing it auto-mirrors here with no hook code change.
+  it("hydration: a non-whitelisted/disabled sort id falls back to default", () => {
     const stale = [
       // #104
       "customer:asc",
       "valor_oc:desc",
       "pickup_date:asc",
-      // #144
-      "franchise:asc",
+      // #144 (still unindexed)
       "status:desc",
-      "origen:asc",
       "category_code:asc",
       "reservation_code:desc",
       "pickup:asc",
@@ -154,6 +152,23 @@ describe("useReservationsTableUrlState — URL parsing (Steps 3+4)", () => {
         PRIORITY_SORT,
         ...DEFAULT_USER_SORT,
       ]);
+    }
+  });
+
+  // franchise + origen are whitelisted again (migration 065 indexes), so they
+  // DO hydrate into the sorting state — keeping the column id intact (origen, not
+  // attribution_channel) so getIsSorted() paints the arrow on the right header.
+  it("hydration: franchise/origen sort ids enter the sorting state", () => {
+    const cases: Array<[string, { id: string; desc: boolean }]> = [
+      ["franchise:desc", { id: "franchise", desc: true }],
+      ["franchise:asc", { id: "franchise", desc: false }],
+      ["origen:desc", { id: "origen", desc: true }],
+      ["origen:asc", { id: "origen", desc: false }],
+    ];
+    for (const [value, expected] of cases) {
+      setUrl(`sort=${value}`);
+      const { result } = renderHook(() => useReservationsTableUrlState());
+      expect(result.current.sorting, value).toEqual([PRIORITY_SORT, expected]);
     }
   });
 

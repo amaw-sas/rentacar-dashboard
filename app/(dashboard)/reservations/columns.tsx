@@ -276,10 +276,10 @@ export const columns: ColumnDef<ReservationRow, unknown>[] = [
   {
     accessorKey: "franchise",
     header: "Franquicia",
-    // Single-col index doesn't carry is_priority → server-sorting forced a
-    // full-table heapsort (230ms @ 13k rows, issue #144). Disabled; franchise is
-    // already a filter (.eq), which is what operators actually want.
-    enableSorting: false,
+    // Server-sortable: the composite index (is_priority DESC, franchise, id)
+    // carries the is_priority leading key, so ORDER BY is index-served instead
+    // of the full-table heapsort that #144 saw. Mirrors SORTABLE_COLUMNS in
+    // list-params.ts.
     cell: ({ getValue }) => (
       <Badge variant="outline">{getValue<string>()}</Badge>
     ),
@@ -288,11 +288,10 @@ export const columns: ColumnDef<ReservationRow, unknown>[] = [
     id: "origen",
     accessorKey: "attribution_channel",
     header: "Origen",
-    // Made server-sortable on purpose in #113, reverted in #144:
-    // attribution_channel has no composite order index, so sorting by it
-    // reproduced the full-table heapsort. Disabled; origen stays filterable
-    // (.eq/.is). Mirrors its removal from SORTABLE_COLUMNS in list-params.ts.
-    enableSorting: false,
+    // Server-sortable: the composite index (is_priority DESC,
+    // attribution_channel, id) carries the is_priority leading key, so the
+    // ORDER BY is index-served (no full-table heapsort). The column id "origen"
+    // maps to the attribution_channel DB column via SORTABLE_COLUMNS.
     cell: ({ getValue }) => {
       const meta = channelMeta(getValue<AttributionChannel | null>());
       return <Badge variant={meta.variant}>{meta.label}</Badge>;

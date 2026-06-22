@@ -70,6 +70,7 @@ describe("reservations columns (legacy parity)", () => {
       "phone",
       "email",
       "pickup",
+      "pickup_city",
       "reservation_code",
       "category_code",
       "franchise",
@@ -89,6 +90,7 @@ describe("reservations columns (legacy parity)", () => {
     expect(headerOf("phone")).toBe("Teléfono");
     expect(headerOf("email")).toBe("Email");
     expect(headerOf("pickup")).toBe("Recogida");
+    expect(headerOf("pickup_city")).toBe("Ciudad recogida");
     expect(headerOf("reservation_code")).toBe("Código");
     expect(headerOf("category_code")).toBe("Cat.");
     expect(headerOf("franchise")).toBe("Franquicia");
@@ -122,6 +124,43 @@ describe("reservations columns (legacy parity)", () => {
     const fn = accessorOf<string>("identification");
     expect(fn(baseRow)).toBe("1007489090");
     expect(fn({ ...baseRow, customers: null })).toBe("");
+  });
+
+  it("pickup_city accessor reads the pickup location's city name", () => {
+    const fn = accessorOf<string>("pickup_city");
+    const withCity = {
+      ...baseRow,
+      pickup_location: {
+        name: "Aeropuerto",
+        city_id: "city-1",
+        cities: { id: "city-1", name: "Bogotá" },
+      },
+    };
+    expect(fn(withCity)).toBe("Bogotá");
+    expect(fn(baseRow)).toBe(""); // cities null → empty
+    expect(fn({ ...baseRow, pickup_location: null })).toBe("");
+  });
+
+  it("pickup_city cell shows the city name, or an em dash when absent", () => {
+    const col = columns.find((c) => c.id === "pickup_city");
+    const withCity = {
+      ...baseRow,
+      pickup_location: {
+        name: "Aeropuerto",
+        city_id: "city-1",
+        cities: { id: "city-1", name: "Bogotá" },
+      },
+    };
+    const shown = render(
+      <>{flexRender(col!.cell, { row: { original: withCity } } as never)}</>,
+    );
+    expect(shown.container.textContent).toBe("Bogotá");
+    cleanup();
+    const empty = render(
+      <>{flexRender(col!.cell, { row: { original: baseRow } } as never)}</>,
+    );
+    expect(empty.container.textContent).toBe("—");
+    cleanup();
   });
 
   describe("copy-on-click cells", () => {

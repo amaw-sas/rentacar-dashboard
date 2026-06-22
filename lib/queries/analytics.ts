@@ -125,6 +125,30 @@ export async function getCitiesRentalPeriodCounts(
   return (data ?? []) as CityPeriodCounts[];
 }
 
+// One row per (day, city) with a rental in the last p_days days; backs the
+// Ciudades momentum lists (cities trending up/down). city_id/city_name are null
+// for the "Sin ciudad" bucket. RPC cities_daily_series (migration 068).
+export interface CityDailyPoint {
+  day: string; // "YYYY-MM-DD" Bogota civil date
+  city_id: string | null;
+  city_name: string | null;
+  created_count: number;
+  used_count: number;
+}
+
+export async function getCitiesDailySeries(
+  activeCodes: string[],
+  days = 7
+): Promise<CityDailyPoint[]> {
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("cities_daily_series", {
+    p_franchises: activeCodes,
+    p_days: days,
+  });
+  if (error) throw error;
+  return (data ?? []) as CityDailyPoint[];
+}
+
 const COMMISSION_REVENUE_SELECT = `
   id, amount, payment_status, created_at,
   reservations(id, total_price, franchise)

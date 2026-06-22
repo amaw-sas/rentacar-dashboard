@@ -31,6 +31,46 @@ function ymdMinus(ymd: string, n: number): string {
   return d.toISOString().slice(0, 10);
 }
 
+const MONTHS_ES = [
+  "ene",
+  "feb",
+  "mar",
+  "abr",
+  "may",
+  "jun",
+  "jul",
+  "ago",
+  "sep",
+  "oct",
+  "nov",
+  "dic",
+];
+
+function dayMonth(ymd: string): { d: number; m: number } {
+  const [, m, d] = ymd.split("-").map(Number);
+  return { d, m };
+}
+
+// "16–18 jun" (same month) or "30 may–2 jun" (crossing). Inclusive range.
+function formatRange(startYMD: string, endYMD: string): string {
+  const a = dayMonth(startYMD);
+  const b = dayMonth(endYMD);
+  if (a.m === b.m) return `${a.d}–${b.d} ${MONTHS_ES[a.m - 1]}`;
+  return `${a.d} ${MONTHS_ES[a.m - 1]}–${b.d} ${MONTHS_ES[b.m - 1]}`;
+}
+
+// Human labels for the two comparison windows, so the report can show exactly
+// which days "reciente" and "previo" cover.
+export function momentumWindowLabels(todayYMD: string): {
+  recent: string;
+  prior: string;
+} {
+  return {
+    recent: formatRange(ymdMinus(todayYMD, 3), ymdMinus(todayYMD, 1)),
+    prior: formatRange(ymdMinus(todayYMD, 6), ymdMinus(todayYMD, 4)),
+  };
+}
+
 // Aggregates the per-(day, city) series into a recent-vs-prior comparison per
 // city and splits cities into rising / falling. todayYMD is the Bogota civil
 // date the offsets are measured from; metric picks created vs used.

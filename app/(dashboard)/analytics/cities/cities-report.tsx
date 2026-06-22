@@ -22,7 +22,11 @@ import {
   type CityMetric,
   type CityPeriod,
 } from "./pivot";
-import { rankCityMomentum, type MomentumRow } from "./momentum";
+import {
+  rankCityMomentum,
+  momentumWindowLabels,
+  type MomentumRow,
+} from "./momentum";
 
 interface FranchiseRef {
   code: string;
@@ -71,6 +75,7 @@ export function CitiesReport({
     () => rankCityMomentum(daily, todayYMD, metric),
     [daily, todayYMD, metric]
   );
+  const windows = useMemo(() => momentumWindowLabels(todayYMD), [todayYMD]);
 
   // Bars for every city that actually rented in this slice (cities at 0 are kept
   // in the table below but would only add empty bars). Each franchise count
@@ -110,21 +115,6 @@ export function CitiesReport({
             onChange={setPeriod}
           />
         </div>
-      </div>
-
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <MomentumList
-          title="En alza"
-          subtitle="Últimos 3 días vs. 3 previos"
-          rows={momentum.rising}
-          direction="up"
-        />
-        <MomentumList
-          title="En baja"
-          subtitle="Últimos 3 días vs. 3 previos"
-          rows={momentum.falling}
-          direction="down"
-        />
       </div>
 
       <ChartCard title="Ciudades por reservas">
@@ -224,18 +214,43 @@ export function CitiesReport({
           </div>
         )}
       </ChartCard>
+
+      {/* Momentum lives at the bottom and is INDEPENDENT of the period buttons:
+          it always compares a fixed recent 3-day window against the prior 3. */}
+      <div className="space-y-3 border-t border-border pt-6">
+        <div>
+          <h3 className="text-base font-semibold tracking-tight">
+            Tendencia por ciudad
+          </h3>
+          <p className="text-sm text-muted-foreground">
+            Reservas {metricNoun} de los últimos 3 días ({windows.recent})
+            comparadas con los 3 anteriores ({windows.prior}). No depende de los
+            botones de período de arriba.
+          </p>
+        </div>
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <MomentumList
+            title="En alza"
+            rows={momentum.rising}
+            direction="up"
+          />
+          <MomentumList
+            title="En baja"
+            rows={momentum.falling}
+            direction="down"
+          />
+        </div>
+      </div>
     </div>
   );
 }
 
 function MomentumList({
   title,
-  subtitle,
   rows,
   direction,
 }: {
   title: string;
-  subtitle: string;
   rows: MomentumRow[];
   direction: "up" | "down";
 }) {
@@ -243,10 +258,12 @@ function MomentumList({
   const accent = direction === "up" ? "text-emerald-600" : "text-red-600";
 
   return (
-    <ChartCard title={title} description={subtitle}>
+    <ChartCard title={title}>
       {rows.length === 0 ? (
         <p className="py-6 text-center text-sm text-muted-foreground">
-          Sin cambios en este período
+          {direction === "up"
+            ? "Ninguna ciudad subió"
+            : "Ninguna ciudad bajó"}
         </p>
       ) : (
         <ul className="divide-y divide-border">
@@ -255,20 +272,20 @@ function MomentumList({
               key={r.cityId ?? "__none__"}
               className="flex items-center justify-between gap-3 py-2"
             >
-              <div className="flex items-center gap-2">
+              <div className="flex min-w-0 items-center gap-2">
                 <Icon className={cn("h-4 w-4 shrink-0", accent)} aria-hidden />
-                <span className="text-sm">{r.cityName}</span>
+                <span className="truncate text-sm">{r.cityName}</span>
                 {r.isNew && (
                   <Badge variant="secondary" className="text-[10px]">
                     nuevo
                   </Badge>
                 )}
               </div>
-              <div className="flex items-center gap-2 tabular-nums">
+              <div className="flex shrink-0 items-center gap-3 tabular-nums">
                 <span className="text-xs text-muted-foreground">
-                  {r.prior} → {r.recent}
+                  antes {r.prior} · ahora {r.recent}
                 </span>
-                <span className={cn("text-sm font-semibold", accent)}>
+                <span className={cn("w-10 text-right text-sm font-semibold", accent)}>
                   {r.delta > 0 ? `+${r.delta}` : r.delta}
                 </span>
               </div>

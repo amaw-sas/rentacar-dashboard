@@ -15,9 +15,9 @@ const itemsWithBreakdown: MetricItem[] = [
     value: 7,
     href: "/reservations?created_from=2026-06-21&created_to=2026-06-21",
     breakdown: [
-      { code: "alquicarros", short: "AC", full: "AlquiCarros", value: 1 },
-      { code: "alquilatucarro", short: "ATC", full: "AlquilaTuCarro", value: 3 },
-      { code: "alquilame", short: "AM", full: "Alquílame", value: 3 },
+      { code: "alquicarros", short: "AC", full: "AlquiCarros", value: 1, color: "#d97706" },
+      { code: "alquilatucarro", short: "ATC", full: "AlquilaTuCarro", value: 3, color: "#2563eb" },
+      { code: "alquilame", short: "AM", full: "Alquílame", value: 3, color: "#dc2626" },
     ],
   },
 ];
@@ -44,6 +44,20 @@ describe("DashboardMetricCard", () => {
     }
     const sum = itemsWithBreakdown[0].breakdown!.reduce((a, b) => a + b.value, 0);
     expect(sum).toBe(itemsWithBreakdown[0].value);
+  });
+
+  it("colors each franchise tag to match its chart line", () => {
+    render(<DashboardMetricCard title="Reservas creadas" items={itemsWithBreakdown} />);
+    // jsdom serializes the inline hex to rgb() on the style property.
+    expect((screen.getByText("AC") as HTMLElement).style.color).toMatch(
+      /rgb\(217,\s*119,\s*6\)/,
+    );
+    expect((screen.getByText("ATC") as HTMLElement).style.color).toMatch(
+      /rgb\(37,\s*99,\s*235\)/,
+    );
+    expect((screen.getByText("AM") as HTMLElement).style.color).toMatch(
+      /rgb\(220,\s*38,\s*38\)/,
+    );
   });
 
   it("exposes the full franchise name via a title tooltip", () => {

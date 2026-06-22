@@ -7,6 +7,7 @@ export interface FranchiseBreakdown {
   short: string; // compact tag, e.g. "ATC"
   full: string; // display_name, surfaced via title tooltip
   value: number;
+  color?: string; // matches this franchise's trend-chart line color
 }
 
 export interface MetricItem {
@@ -64,7 +65,9 @@ export function DashboardMetricCard({
                       title={`${b.full}: ${b.value}`}
                       className="whitespace-nowrap"
                     >
-                      {b.short}{" "}
+                      <span className="font-semibold" style={{ color: b.color }}>
+                        {b.short}
+                      </span>{" "}
                       <span className="font-medium tabular-nums text-foreground/80">
                         {b.value}
                       </span>

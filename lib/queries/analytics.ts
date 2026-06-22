@@ -90,6 +90,65 @@ export async function getAttributionBreakdown(): Promise<
   return (data ?? []) as { attribution_channel: string | null; count: number }[];
 }
 
+// One row per (city, franchise) with the eight period×metric counts. city_id /
+// city_name are null for the "Sin ciudad" bucket (locations without a city).
+// Backed by the cities_rental_period_counts RPC (migration 066), which mirrors
+// the dashboard's period + Colombia-time semantics so the numbers reconcile.
+export interface CityPeriodCounts {
+  city_id: string | null;
+  city_name: string | null;
+  franchise: string;
+  created_today: number;
+  created_yesterday: number;
+  created_week: number;
+  created_last7: number;
+  created_last14: number;
+  created_last30: number;
+  created_month: number;
+  used_today: number;
+  used_yesterday: number;
+  used_week: number;
+  used_last7: number;
+  used_last14: number;
+  used_last30: number;
+  used_month: number;
+}
+
+export async function getCitiesRentalPeriodCounts(
+  activeCodes: string[]
+): Promise<CityPeriodCounts[]> {
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("cities_rental_period_counts", {
+    p_franchises: activeCodes,
+  });
+  if (error) throw error;
+  return (data ?? []) as CityPeriodCounts[];
+}
+
+// One row per (day, city) with a rental in the last p_days days; backs the
+// Ciudades momentum lists (cities trending up/down). city_id/city_name are null
+// for the "Sin ciudad" bucket. RPC cities_daily_series (migration 068).
+export interface CityDailyPoint {
+  day: string; // "YYYY-MM-DD" Bogota civil date
+  city_id: string | null;
+  city_name: string | null;
+  created_count: number;
+  used_count: number;
+}
+
+export async function getCitiesDailySeries(
+  activeCodes: string[],
+  days = 7
+): Promise<CityDailyPoint[]> {
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("cities_daily_series", {
+    p_franchises: activeCodes,
+    p_days: days,
+  });
+  if (error) throw error;
+  return (data ?? []) as CityDailyPoint[];
+}
+
 const COMMISSION_REVENUE_SELECT = `
   id, amount, payment_status, created_at,
   reservations(id, total_price, franchise)

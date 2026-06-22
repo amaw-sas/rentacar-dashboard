@@ -211,10 +211,12 @@ describe("getReservationsPage — query construction", () => {
   });
 
   it("orders by is_priority first, then the sort column, then id (stable)", async () => {
-    await run("sort=pickup:asc");
+    // created_at is the only server-sortable column after #144; asc exercises a
+    // non-default direction through the same order chain.
+    await run("sort=created_at:asc");
     expect(rec.reservations.order).toEqual([
       ["is_priority", { ascending: false }],
-      ["pickup_date", { ascending: true }],
+      ["created_at", { ascending: true }],
       ["id", { ascending: true }],
     ]);
   });

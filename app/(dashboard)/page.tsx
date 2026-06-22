@@ -1,7 +1,6 @@
 import { Suspense } from "react";
-import { CalendarCheck, CarFront, Clock, FileText, Wallet } from "lucide-react";
+import { CalendarCheck, CarFront } from "lucide-react";
 import Link from "next/link";
-import { StatCard } from "@/components/charts/stat-card";
 import { Badge } from "@/components/ui/badge";
 import {
   Card,
@@ -13,9 +12,9 @@ import {
   getReservationCounts,
   getUsedCounts,
   getReservationDailySeries,
-  getCommissionSummary,
   getTopReferrals,
   getRecentReservations,
+  type PeriodCount,
 } from "@/lib/queries/dashboard";
 import {
   bogotaTodayYMD,
@@ -27,10 +26,16 @@ import {
   type DashboardPeriod,
 } from "@/lib/date/bogota";
 import { getFranchises } from "@/lib/queries/franchises";
+import { franchiseShortLabel } from "@/lib/franchises/short-label";
+import { franchiseColor } from "@/lib/franchises/colors";
 import { STATUS_LABELS } from "@/lib/schemas/reservation";
 import { DashboardPeriodSelector } from "./dashboard-period-selector";
 import { FranchiseLineChart } from "./dashboard-trend-charts";
-import { DashboardMetricCard, type MetricItem } from "./dashboard-metric-card";
+import {
+  DashboardMetricCard,
+  type MetricItem,
+  type FranchiseBreakdown,
+} from "./dashboard-metric-card";
 
 const STATUS_VARIANT: Record<
   string,
@@ -83,13 +88,11 @@ export default async function DashboardPage({
   // Franchises drive the chart series and its labels. Only the count/series
   // queries depend on them, so fetch franchises alongside the independent
   // queries and chain those off the resolved list — keeps everything else parallel.
-  const [franchises, commissionSummary, topReferrals, recentReservations] =
-    await Promise.all([
-      getFranchises(),
-      getCommissionSummary(),
-      getTopReferrals(5),
-      getRecentReservations(5),
-    ]);
+  const [franchises, topReferrals, recentReservations] = await Promise.all([
+    getFranchises(),
+    getTopReferrals(5),
+    getRecentReservations(5),
+  ]);
 
   const activeFranchises = (franchises ?? []).filter(
     (f) => f.status === "active"
@@ -118,26 +121,45 @@ export default async function DashboardPage({
     label: f.display_name,
   }));
 
+  // Pre-resolve the compact franchise tags once, then split each period's count
+  // by franchise in a fixed (display_name-ordered) sequence so the breakdown
+  // line is stable across periods. byFranchise is keyed by franchise code and
+  // already sums to `total` (getReservationCounts).
+  // The index must match the chart's franchise order (franchiseRefs) so a
+  // fallback color lands on the same hue as that franchise's line.
+  const franchiseTags = franchiseRefs.map((f, i) => ({
+    code: f.code,
+    short: franchiseShortLabel(f.label),
+    full: f.label,
+    color: franchiseColor(f.code, i),
+  }));
+  const breakdownOf = (pc: PeriodCount): FranchiseBreakdown[] =>
+    franchiseTags.map((t) => ({ ...t, value: pc.byFranchise[t.code] ?? 0 }));
+
   const createdItems: MetricItem[] = [
     {
       label: "Hoy",
       value: reservationCounts.today.total,
       href: reservationsHref({ created_from: today, created_to: today }),
+      breakdown: breakdownOf(reservationCounts.today),
     },
     {
       label: "Ayer",
       value: reservationCounts.yesterday.total,
       href: reservationsHref({ created_from: yesterday, created_to: yesterday }),
+      breakdown: breakdownOf(reservationCounts.yesterday),
     },
     {
       label: "Esta semana",
       value: reservationCounts.week.total,
       href: reservationsHref({ created_from: weekStart }),
+      breakdown: breakdownOf(reservationCounts.week),
     },
     {
       label: "Este mes",
       value: reservationCounts.month.total,
       href: reservationsHref({ created_from: monthStart }),
+      breakdown: breakdownOf(reservationCounts.month),
     },
   ];
 
@@ -150,6 +172,7 @@ export default async function DashboardPage({
         pickup_from: today,
         pickup_to: today,
       }),
+      breakdown: breakdownOf(usedCounts.today),
     },
     {
       label: "Ayer",
@@ -159,6 +182,7 @@ export default async function DashboardPage({
         pickup_from: yesterday,
         pickup_to: yesterday,
       }),
+      breakdown: breakdownOf(usedCounts.yesterday),
     },
     {
       label: "Esta semana",
@@ -168,6 +192,7 @@ export default async function DashboardPage({
         pickup_from: weekStart,
         pickup_to: today,
       }),
+      breakdown: breakdownOf(usedCounts.week),
     },
     {
       label: "Este mes",
@@ -177,34 +202,13 @@ export default async function DashboardPage({
         pickup_from: monthStart,
         pickup_to: monthEnd,
       }),
+      breakdown: breakdownOf(usedCounts.month),
     },
   ];
 
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
-
-      {/* Commission stat cards */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <StatCard
-          title="Comisiones pendientes"
-          value={copFormat.format(commissionSummary.pending)}
-          icon={Clock}
-          description="Por cobrar"
-        />
-        <StatCard
-          title="Comisiones facturadas"
-          value={copFormat.format(commissionSummary.invoiced)}
-          icon={FileText}
-          description="Factura emitida"
-        />
-        <StatCard
-          title="Comisiones pagadas"
-          value={copFormat.format(commissionSummary.paid)}
-          icon={Wallet}
-          description="Cobradas"
-        />
-      </div>
 
       {/* Per-franchise reservations: a period-summary card paired with a wider
           trend chart, one row per metric (created / used). The period selector

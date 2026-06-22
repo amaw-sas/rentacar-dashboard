@@ -40,24 +40,22 @@ export const SEARCH_COLUMNS = [
 // total_with_tax) and fall back to DEFAULT_SORT. Mirrors the sortable columns in
 // columns.tsx.
 //
-// Issue #104: the five snapshot-identity sort keys (customer/identification/
-// phone/email → customer_*_at_booking, valor_oc → total_price_localiza) were
-// REMOVED. None has an order index, and the only sort index
-// (idx_reservations_priority_created: is_priority DESC, created_at DESC)
-// presorts only is_priority, so ordering by a snapshot column degraded to a
-// full-table top-N heapsort (measured 42ms @ 13k rows, ~1.6s @ 500k). Product
-// chose to drop server-sortability rather than carry up to ten composite
-// asc/desc indexes — operators locate these rows via the #102 trgm search, not
-// by sorting. The matching headers set enableSorting:false in columns.tsx;
-// keeping them out here is the server-side half (a hand-edited ?sort= the
-// client no longer emits still falls back to DEFAULT_SORT).
+// Every entry must be backed by a composite index that LEADS with is_priority
+// (the query always emits `ORDER BY is_priority DESC, <col>, id`). Without that
+// leading key Postgres falls back to a full-table heapsort — the regression #104
+// and #144 removed for the unindexed snapshot/derived columns (customer/id/phone/
+// email, valor_oc, status, category_code, reservation_code, pickup_date).
+//
+// Sortable today:
+//   created_at → idx_reservations_priority_created (is_priority DESC, created_at)
+//   franchise  → idx_reservations_priority_franchise (is_priority DESC, franchise, id)
+//   origen     → attribution_channel, idx_reservations_priority_attribution
+//                (is_priority DESC, attribution_channel, id)
+// franchise/origen indexes were added so these low-cardinality columns are
+// index-served (≈3ms) instead of the 230ms heapsort #144 measured.
 export const SORTABLE_COLUMNS: Record<string, string> = {
   created_at: "created_at",
-  pickup: "pickup_date",
-  reservation_code: "reservation_code",
-  category_code: "category_code",
   franchise: "franchise",
-  status: "status",
   origen: "attribution_channel",
 };
 

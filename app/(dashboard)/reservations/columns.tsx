@@ -113,6 +113,7 @@ const NAME_MAX = 20;
 const ID_MAX = 15;
 const PHONE_MAX = 15;
 const EMAIL_MAX = 20;
+const CITY_MAX = 18;
 
 function truncate(value: string, max: number) {
   return value.length > max ? `${value.slice(0, max - 1)}…` : value;
@@ -235,12 +236,32 @@ export const columns: ColumnDef<ReservationRow, unknown>[] = [
     id: "pickup",
     accessorKey: "pickup_date",
     header: "Recogida",
+    // No composite order index (single-col idx_reservations_pickup_date never
+    // carries the is_priority leading key) → server-sorting forced a full-table
+    // heapsort (issue #144). Disabled; operators narrow by the pickup date-range
+    // filter. Mirrors its removal from SORTABLE_COLUMNS in list-params.ts.
+    enableSorting: false,
     cell: ({ row }) =>
       renderPickup(row.original.pickup_date, row.original.pickup_hour),
   },
   {
+    id: "pickup_city",
+    accessorFn: (row) => row.pickup_location?.cities?.name ?? "",
+    header: "Ciudad recogida",
+    // Derived from the pickup location's city relation; no order index backs it
+    // so server-sorting is disabled, consistent with the "pickup" column.
+    enableSorting: false,
+    cell: ({ row }) => {
+      const name = row.original.pickup_location?.cities?.name;
+      return name ? truncate(name, CITY_MAX) : "—";
+    },
+  },
+  {
     accessorKey: "reservation_code",
     header: "Código",
+    // No order index → server-sorting forced a full-table heapsort (issue #144).
+    // Disabled; operators find a code via the #102 trgm search, not by sorting.
+    enableSorting: false,
     cell: ({ getValue }) => (
       <CopyableText value={getValue<string>()} label="código" />
     ),
@@ -248,10 +269,17 @@ export const columns: ColumnDef<ReservationRow, unknown>[] = [
   {
     accessorKey: "category_code",
     header: "Cat.",
+    // No order index at all → server-sorting forced a full-table heapsort
+    // (issue #144). Disabled.
+    enableSorting: false,
   },
   {
     accessorKey: "franchise",
     header: "Franquicia",
+    // Server-sortable: the composite index (is_priority DESC, franchise, id)
+    // carries the is_priority leading key, so ORDER BY is index-served instead
+    // of the full-table heapsort that #144 saw. Mirrors SORTABLE_COLUMNS in
+    // list-params.ts.
     cell: ({ getValue }) => (
       <Badge variant="outline">{getValue<string>()}</Badge>
     ),
@@ -260,8 +288,10 @@ export const columns: ColumnDef<ReservationRow, unknown>[] = [
     id: "origen",
     accessorKey: "attribution_channel",
     header: "Origen",
-    // Server-sortable: column id "origen" maps to attribution_channel in
-    // SORTABLE_COLUMNS. enableSorting defaults to true — do not disable.
+    // Server-sortable: the composite index (is_priority DESC,
+    // attribution_channel, id) carries the is_priority leading key, so the
+    // ORDER BY is index-served (no full-table heapsort). The column id "origen"
+    // maps to the attribution_channel DB column via SORTABLE_COLUMNS.
     cell: ({ getValue }) => {
       const meta = channelMeta(getValue<AttributionChannel | null>());
       return <Badge variant={meta.variant}>{meta.label}</Badge>;
@@ -280,6 +310,10 @@ export const columns: ColumnDef<ReservationRow, unknown>[] = [
   {
     accessorKey: "status",
     header: "Estado",
+    // Single-col index doesn't carry is_priority → server-sorting forced a
+    // full-table heapsort (issue #144). Disabled; status is already a filter
+    // (.eq), which is what operators actually want.
+    enableSorting: false,
     cell: ({ getValue }) => {
       const status = getValue<string>();
       return (

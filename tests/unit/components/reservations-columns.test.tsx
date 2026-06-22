@@ -43,8 +43,17 @@ const baseRow: ReservationRow = {
   referrals: { id: "ref-1", name: "Daniela", code: "DAN" },
 };
 
+// @tanstack columns key off `accessorKey` unless given an explicit `id`; match
+// either so accessorKey-only columns (franchise/status/category_code/
+// reservation_code) resolve the same way as id-keyed ones.
+function findColumn(id: string) {
+  return columns.find(
+    (c) => (c.id ?? (c as { accessorKey?: string }).accessorKey) === id,
+  );
+}
+
 function headerOf(id: string) {
-  const col = columns.find((c) => (c.id ?? (c as { accessorKey?: string }).accessorKey) === id);
+  const col = findColumn(id);
   if (!col) throw new Error(`column ${id} not found`);
   return col.header as string;
 }
@@ -61,6 +70,7 @@ describe("reservations columns (legacy parity)", () => {
       "phone",
       "email",
       "pickup",
+      "pickup_city",
       "reservation_code",
       "category_code",
       "franchise",
@@ -80,6 +90,7 @@ describe("reservations columns (legacy parity)", () => {
     expect(headerOf("phone")).toBe("Teléfono");
     expect(headerOf("email")).toBe("Email");
     expect(headerOf("pickup")).toBe("Recogida");
+    expect(headerOf("pickup_city")).toBe("Ciudad recogida");
     expect(headerOf("reservation_code")).toBe("Código");
     expect(headerOf("category_code")).toBe("Cat.");
     expect(headerOf("franchise")).toBe("Franquicia");
@@ -113,6 +124,43 @@ describe("reservations columns (legacy parity)", () => {
     const fn = accessorOf<string>("identification");
     expect(fn(baseRow)).toBe("1007489090");
     expect(fn({ ...baseRow, customers: null })).toBe("");
+  });
+
+  it("pickup_city accessor reads the pickup location's city name", () => {
+    const fn = accessorOf<string>("pickup_city");
+    const withCity = {
+      ...baseRow,
+      pickup_location: {
+        name: "Aeropuerto",
+        city_id: "city-1",
+        cities: { id: "city-1", name: "Bogotá" },
+      },
+    };
+    expect(fn(withCity)).toBe("Bogotá");
+    expect(fn(baseRow)).toBe(""); // cities null → empty
+    expect(fn({ ...baseRow, pickup_location: null })).toBe("");
+  });
+
+  it("pickup_city cell shows the city name, or an em dash when absent", () => {
+    const col = columns.find((c) => c.id === "pickup_city");
+    const withCity = {
+      ...baseRow,
+      pickup_location: {
+        name: "Aeropuerto",
+        city_id: "city-1",
+        cities: { id: "city-1", name: "Bogotá" },
+      },
+    };
+    const shown = render(
+      <>{flexRender(col!.cell, { row: { original: withCity } } as never)}</>,
+    );
+    expect(shown.container.textContent).toBe("Bogotá");
+    cleanup();
+    const empty = render(
+      <>{flexRender(col!.cell, { row: { original: baseRow } } as never)}</>,
+    );
+    expect(empty.container.textContent).toBe("—");
+    cleanup();
   });
 
   describe("copy-on-click cells", () => {
@@ -285,7 +333,11 @@ describe("reservations columns (legacy parity)", () => {
       expect(container.textContent).toBe("Desconocido");
     });
 
-    it("does not opt out of sorting", () => {
+    // origen is server-sortable again: the composite index
+    // (is_priority DESC, attribution_channel, id) carries the is_priority
+    // leading key, so the ORDER BY is index-served instead of heapsorting. The
+    // header must NOT opt out of sorting.
+    it("stays server-sortable (composite index on attribution_channel)", () => {
       const col = columns.find((c) => c.id === "origen");
       expect(col).not.toHaveProperty("enableSorting", false);
     });
@@ -347,16 +399,44 @@ describe("reservations columns (legacy parity)", () => {
     });
   });
 
-  // Issue #104: the four snapshot-identity columns and valor_oc were dropped
-  // from SORTABLE_COLUMNS (no order index → full-table heapsort). Their headers
-  // must go inert so they neither render a misleading sort arrow nor emit a
-  // ?sort= the server silently falls back to DEFAULT_SORT on. origen stays
-  // sortable (it maps to the indexed attribution_channel) — guarded separately.
-  describe("dropped snapshot sort columns go inert (#104)", () => {
-    for (const id of ["customer", "identification", "phone", "email", "valor_oc"]) {
+  // Columns with no composite order index stay inert: #104 dropped the four
+  // snapshot-identity columns and valor_oc; #144 dropped status, category_code,
+  // reservation_code and pickup. None is backed by an is_priority-leading index,
+  // so sorting by them would force a full-table heapsort. Their headers must
+  // neither render a misleading sort arrow nor emit a ?sort= the server silently
+  // falls back to DEFAULT_SORT on. (franchise and origen left this list once
+  // migration 065 added their composite indexes.)
+  describe("unindexed columns go inert (#104 + #144)", () => {
+    for (const id of [
+      // #104
+      "customer",
+      "identification",
+      "phone",
+      "email",
+      "valor_oc",
+      // #144
+      "status",
+      "category_code",
+      "reservation_code",
+      "pickup",
+      // never server-sortable: derived/joined or 2-level join
+      "pickup_city",
+    ]) {
       it(`${id} opts out of sorting`, () => {
-        const col = columns.find((c) => c.id === id);
+        const col = findColumn(id);
         expect(col).toHaveProperty("enableSorting", false);
+      });
+    }
+  });
+
+  // The server-sortable columns: each is backed by a composite index that leads
+  // with is_priority (created_at since #056; franchise + origen since
+  // migration 065), so the ORDER BY is index-served instead of heapsorting.
+  describe("indexed columns stay server-sortable", () => {
+    for (const id of ["created_at", "franchise", "origen"]) {
+      it(`${id} keeps sorting enabled`, () => {
+        const col = findColumn(id);
+        expect(col).not.toHaveProperty("enableSorting", false);
       });
     }
   });

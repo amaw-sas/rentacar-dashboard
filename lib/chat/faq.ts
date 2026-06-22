@@ -1,13 +1,26 @@
 import { RENTAL_REQUIREMENTS } from "@/lib/api/rental-requirements";
+import { getChatKnowledgeContent } from "@/lib/chat/knowledge-store";
 
 /**
- * Knowledge section injected into the chatbot system prompt. REUSES
- * `RENTAL_REQUIREMENTS` (the business-authored source of truth, kept in sync with
- * the post-reservation email) instead of duplicating policy text — so the bot
- * never invents requirements. RAG over real WhatsApp conversations is a future
- * phase; V1 answers FAQs from this curated, authoritative content.
+ * Knowledge section injected into the chatbot system prompt as FALLBACK content,
+ * secondary to the structured tools (cotizar, info_sedes, tarifa_mensual,
+ * info_gamas). Primary source is the editable knowledge base (chat_knowledge,
+ * scope 'shared'), edited from the dashboard. If that table is empty or
+ * unreachable, falls back to the curated RENTAL_REQUIREMENTS (kept in sync with
+ * the post-reservation email) so the bot never loses its baseline policy facts.
  */
-export function buildKnowledgeSection(): string {
+export async function buildKnowledgeSection(): Promise<string> {
+  const stored = await getChatKnowledgeContent();
+  const body = stored ?? buildRequirementsFallback();
+  return [
+    "CONOCIMIENTO (respaldo — úsalo para políticas, requisitos, objeciones y tono; secundario a las herramientas):",
+    "",
+    body,
+  ].join("\n");
+}
+
+/** Baseline policy text derived from the authoritative requirements constant. */
+function buildRequirementsFallback(): string {
   const r = RENTAL_REQUIREMENTS;
 
   const docs = r.documentosRequeridos
@@ -17,8 +30,6 @@ export function buildKnowledgeSection(): string {
   const politicas = r.politicasDeUso.map((p) => `- ${p}`).join("\n");
 
   return [
-    "CONOCIMIENTO (requisitos de alquiler — responde dudas con esto, no inventes):",
-    "",
     "Documentos requeridos:",
     docs,
     "",

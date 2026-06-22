@@ -16,6 +16,14 @@ export interface CityMomentum {
   falling: MomentumRow[]; // delta < 0, biggest drop first
 }
 
+// Days plotted in the per-city sparkline (today-6 .. today, oldest → newest).
+export const SPARK_DAYS = 7;
+
+export interface CitySparkline {
+  values: number[]; // SPARK_DAYS daily counts, oldest → newest
+  trend: "up" | "down" | "flat"; // 3 full days vs prior 3, same window as momentum
+}
+
 // Window: 3 FULL days vs the 3 before them, EXCLUDING today (partial). For
 // today = D the recent window is [D-1, D-2, D-3] and the prior is [D-4, D-5,
 // D-6]. Excluding today avoids the partial-day undercount that makes a midday
@@ -121,4 +129,50 @@ export function rankCityMomentum(
     .sort((a, b) => a.delta - b.delta || b.prior - a.prior);
 
   return { rising, falling };
+}
+
+// Same recent-3-vs-prior-3 (today excluded) comparison rankCityMomentum uses,
+// but read off a fixed 7-slot array: slots [3,4,5] are the recent full days,
+// [0,1,2] the prior ones.
+function sparklineTrend(values: number[]): "up" | "down" | "flat" {
+  const recent = values[3] + values[4] + values[5];
+  const prior = values[0] + values[1] + values[2];
+  if (recent > prior) return "up";
+  if (recent < prior) return "down";
+  return "flat";
+}
+
+// Per-city daily counts for the sparkline column, keyed by city id ("__none__"
+// for the null-city bucket). Each array is SPARK_DAYS long (today-6 .. today,
+// oldest → newest) with missing days filled to 0, so every sparkline shares the
+// same x-axis. Follows the Creadas/Utilizadas metric.
+export function cityDailyValues(
+  series: CityDailyPoint[],
+  todayYMD: string,
+  metric: CityMetric
+): Map<string, CitySparkline> {
+  const field = metric === "used" ? "used_count" : "created_count";
+  const dayIndex = new Map<string, number>();
+  for (let i = 0; i < SPARK_DAYS; i++) {
+    dayIndex.set(ymdMinus(todayYMD, SPARK_DAYS - 1 - i), i);
+  }
+
+  const byCity = new Map<string, number[]>();
+  for (const p of series) {
+    const idx = dayIndex.get(p.day);
+    if (idx === undefined) continue;
+    const key = p.city_id ?? "__none__";
+    let arr = byCity.get(key);
+    if (!arr) {
+      arr = new Array(SPARK_DAYS).fill(0);
+      byCity.set(key, arr);
+    }
+    arr[idx] += Number(p[field] ?? 0);
+  }
+
+  const out = new Map<string, CitySparkline>();
+  for (const [key, values] of byCity) {
+    out.set(key, { values, trend: sparklineTrend(values) });
+  }
+  return out;
 }

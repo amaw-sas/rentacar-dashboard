@@ -14,6 +14,8 @@ import {
   runInfoGamas,
 } from "@/lib/chat/knowledge-tools";
 import { crearReservaSchema, runCrearReserva } from "@/lib/chat/reserva-tool";
+import { buildFallbackLinks } from "@/lib/chat/reserva-link";
+import { getLocationDirectory } from "@/lib/api/location-directory";
 import type { PersistedMessage } from "@/lib/chat/persistence";
 
 /**
@@ -237,7 +239,43 @@ export function buildChatTools(brand: string, latestQuotes?: LatestQuotes) {
           phone: args.phone,
           franchise: brand,
         });
-        return result.ok ? result.data : { error: result.message };
+        if (result.ok) return result.data;
+
+        // Booking failed for real (provider down / no availability). Don't loop —
+        // hand the customer pre-filled fallback links so the lead isn't lost.
+        // Best-effort: any failure resolving them degrades to just the message.
+        let links: { webUrl: string; whatsappUrl: string } | null = null;
+        try {
+          const directory = await getLocationDirectory();
+          links = buildFallbackLinks(
+            {
+              brand,
+              quote: resolved.quote,
+              gamaDescripcion: latestQuotes?.entries.find(
+                (e) =>
+                  e.categoria.trim().toLowerCase() ===
+                  args.categoria.trim().toLowerCase(),
+              )?.descripcion,
+              customer: {
+                fullname: args.fullname,
+                identification_type: args.identification_type,
+                identification: args.identification,
+                email: args.email,
+                phone: args.phone,
+              },
+            },
+            directory,
+          );
+        } catch (e) {
+          console.error("[chat] buildFallbackLinks failed", e);
+        }
+        return links
+          ? {
+              error: result.message,
+              completar_en_web: links.webUrl,
+              whatsapp_asesor: links.whatsappUrl,
+            }
+          : { error: result.message };
       },
     }),
   };
@@ -280,7 +318,7 @@ export async function buildSystemPrompt(
     "  3) Pide confirmación EXPLÍCITA ('¿Confirmo tu reserva?'). NO llames `crear_reserva` sin un sí claro.",
     "  4) Llama `crear_reserva` indicando la `categoria` (el CÓDIGO de gama, ej. 'C') que el cliente eligió, tal como apareció en `cotizar`. El sistema usa la cotización guardada — NO necesitas el `quote`. En el turno de confirmación NO vuelvas a llamar `cotizar` ni `info_sedes`: ve directo a `crear_reserva`.",
     "  5) Al recibir el número de solicitud, entrégaselo y recuérdale: la recogida es en un local Localiza (dale nombre, dirección y mapa con `info_sedes`); requisitos (tarjeta de crédito física, documento de identidad, licencia vigente); el pago es en la sede, no anticipado.",
-    "  6) Si `crear_reserva` pide actualizar el precio o falla (cotización antigua, sin disponibilidad, o rechazo del proveedor), vuelve a cotizar las mismas fechas y sede; si el precio cambió, INFÓRMASELO al cliente y pide confirmación de nuevo antes de reservar.",
+    "  6) Si `crear_reserva` pide actualizar el precio (cotización antigua), vuelve a cotizar las mismas fechas y sede; si el precio cambió, INFÓRMASELO al cliente y pide confirmación de nuevo antes de reservar. Si falla por error del proveedor, reintenta UNA sola vez; si vuelve a fallar y la herramienta te devuelve `completar_en_web` y `whatsapp_asesor`, discúlpate breve, NO reintentes más y ofrécelos como enlaces markdown CORTOS: `[Terminar mi reserva en la web](completar_en_web)` y `[Escribir a un asesor](whatsapp_asesor)`. Nunca pegues la URL larga en el texto.",
     "- Para confirmar solo necesitas la `categoria`; NO re-cotices solo para confirmar. Re-cotiza únicamente si el cliente cambió la ciudad, las fechas o la gama, o si `crear_reserva` te lo pide.",
     "",
     "REGLAS:",

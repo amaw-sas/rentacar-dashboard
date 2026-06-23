@@ -14,7 +14,15 @@ vi.mock("@/lib/chat/reserva-tool", async (importOriginal) => {
   return { ...actual, runCrearReserva };
 });
 
+// Mock the location directory read (agent.ts uses it only on the booking-failure
+// fallback path); keep the rest of the module (types are erased anyway).
+const { getLocationDirectory } = vi.hoisted(() => ({
+  getLocationDirectory: vi.fn(),
+}));
+vi.mock("@/lib/api/location-directory", () => ({ getLocationDirectory }));
+
 import { buildSystemPrompt, buildChatTools } from "@/lib/chat/agent";
+import { encodeQuote } from "@/lib/api/mcp/quote";
 
 beforeEach(() => {
   getChatKnowledgeContent.mockReset();
@@ -132,6 +140,64 @@ describe("buildChatTools", () => {
       }),
     );
     expect(res).toMatchObject({ numero_solicitud: "AVX9" });
+    if (prev !== undefined) process.env.CHAT_RESERVATIONS_ENABLED = prev;
+    else delete process.env.CHAT_RESERVATIONS_ENABLED;
+  });
+
+  it("crear_reserva returns fallback links (web + WhatsApp) when the provider booking fails", async () => {
+    const prev = process.env.CHAT_RESERVATIONS_ENABLED;
+    process.env.CHAT_RESERVATIONS_ENABLED = "true";
+    runCrearReserva.mockResolvedValue({ ok: false, message: "Sin disponibilidad" });
+    getLocationDirectory.mockResolvedValue([
+      {
+        slug: "armenia-aeropuerto",
+        code: "AAEOQ",
+        city: "armenia",
+        name: "Armenia Aeropuerto",
+        status: "active",
+        pickup_address: "x",
+        pickup_map: "y",
+        schedule: {},
+      },
+    ]);
+    const realQuote = encodeQuote({
+      pickupLocation: "AAEOQ",
+      returnLocation: "AAEOQ",
+      pickupDateTime: "2026-08-01T12:00:00",
+      returnDateTime: "2026-08-08T12:00:00",
+      selected_days: 7,
+      categoryCode: "FX",
+      referenceToken: "r",
+      rateQualifier: "q",
+      total_price: 1,
+      total_price_to_pay: 1,
+      tax_fee: 0,
+      iva_fee: 0,
+      coverage_days: 0,
+      coverage_price: 0,
+      return_fee: 0,
+      extra_hours: 0,
+      extra_hours_price: 0,
+    });
+    const tools = buildChatTools("alquilatucarro", {
+      quotedAtMs: null,
+      entries: [{ categoria: "FX", descripcion: "económico", quote: realQuote }],
+    });
+    const res = (await tools.crear_reserva.execute!(
+      {
+        categoria: "FX",
+        fullname: "Diego Melo",
+        identification_type: "CC",
+        identification: "1",
+        email: "a@b.co",
+        phone: "300",
+      },
+      { toolCallId: "t", messages: [] },
+    )) as { error: string; completar_en_web?: string; whatsapp_asesor?: string };
+    expect(res.error).toBe("Sin disponibilidad");
+    expect(res.completar_en_web).toContain("/armenia/buscar-vehiculos/");
+    expect(res.completar_en_web).toContain("/categoria/fx");
+    expect(res.whatsapp_asesor).toContain("wa.me/573016729250");
     if (prev !== undefined) process.env.CHAT_RESERVATIONS_ENABLED = prev;
     else delete process.env.CHAT_RESERVATIONS_ENABLED;
   });

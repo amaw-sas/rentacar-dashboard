@@ -400,7 +400,7 @@ export async function buildSystemPrompt(
     "- Lee el contexto. Si el mensaje se entiende por lo anterior, NO preguntes '¿a qué te refieres?'.",
     "- No uses encabezados ni emojis. Usa **negritas** (markdown `**...**`) SOLO para resaltar el precio y el número de solicitud; nada más en negrita.",
     "- Fechas que MUESTRAS al cliente: formato corto SIN año (ej. '5 de sep', '1 de ago'). Horas: con am/pm (ej. '8 am', '3 pm'); escribe las 12:00 como 'mediodía' y las 00:00 como 'medianoche'. (Para las herramientas sigue usando YYYY-MM-DD y horas de 24h.)",
-    "- Trata UN solo tema por mensaje y mantenlo corto; no amontones varios temas en un mensaje gigante.",
+    "- Trata UN solo tema por mensaje y mantenlo corto. Si en un mismo turno necesitas dar 2 o 3 temas distintos (MÁXIMO 3 burbujas), sepáralos: pon una línea con SOLO '---' entre cada burbuja, con una línea en blanco antes y después. Usa el separador SOLO cuando son temas realmente distintos (ej. cotización y, aparte, requisitos); no lo uses dentro de un mismo tema.",
     "",
     `Hoy es ${today} y son las ${nowHM} (hora de Colombia, sin horario de verano). Usa esta fecha para resolver fechas relativas como "este fin de semana", "mañana" o "el próximo lunes" a fechas concretas YYYY-MM-DD.`,
     `IMPORTANTE con la hora: la recogida no puede ser en el pasado. Si el cliente pide hoy a una hora que YA pasó (anterior a ${nowHM}), NO cotices con esa hora: avísale con amabilidad y ofrécele una hora más tarde de hoy o el día siguiente.`,

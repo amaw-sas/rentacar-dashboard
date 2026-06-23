@@ -60,3 +60,15 @@ al conector de ChatGPT sin romper a Claude ni al server anónimo ya deployado.
 **When**: el handler retorna un resultado de error (`isError: true`, p. ej. quote inválido, ciudad no resuelta, sin disponibilidad)
 **Then**: el resultado NO incluye `structuredContent` (el SDK exime los errores de validar el schema) y conserva su mensaje en español — los SCEN-101..136 actuales siguen verdes
 **Evidence**: el `CallToolResult` de error (sin `structuredContent`) + suite `tests/unit/api/mcp/*` verde
+
+## SCEN-W9 (review): un Content-Type no-JSON no provoca 415 en el mensaje real
+**Given**: el wrapper del MCP (descubierto en review: el SDK 415-ea cualquier POST cuyo Content-Type no sea `application/json`, y el conector de ChatGPT manda Content-Type no-JSON — su probe usa `application/octet-stream`)
+**When**: llega un `POST` con body JSON-RPC no vacío y `Content-Type: application/octet-stream`
+**Then**: el handler reenvía al SDK con `Content-Type: application/json` (forzado, porque el endpoint solo recibe JSON-RPC), evitando el 415; el Accept también queda normalizado y el body intacto
+**Evidence**: el `Content-Type` recibido por el handler interno (`application/json`) + body preservado
+
+## SCEN-W10 (review): una descripción ausente/no-string degrada, no tumba la respuesta
+**Given**: `buscar_disponibilidad` con `outputSchema` que exige `descripcion: string` (descubierto en review: `categoryDescription` es el único campo de salida sin validación upstream — los precios pasan por el zod de `encodeQuote`)
+**When**: Localiza devuelve una gama con `categoryDescription` ausente/no-string pero precios válidos
+**Then**: esa gama se devuelve igual con `descripcion` degradada al código de categoría (no se descarta toda la respuesta), y el `structuredContent` valida contra el `outputSchema` (el SDK no lanza "Output validation error")
+**Evidence**: el `structuredContent` de éxito con `descripcion === categoryCode` + validación zod ok

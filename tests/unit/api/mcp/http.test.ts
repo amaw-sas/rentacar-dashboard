@@ -82,6 +82,36 @@ describe("withChatGptConnectorCompat", () => {
     const got = received[0];
     expect(got.method).toBe("POST");
     expect(got.headers.get("accept")).toBe(MCP_ACCEPT);
+    // Content-Type forced to JSON (SCEN-W9) and the stale Content-Length dropped.
+    expect(got.headers.get("content-type")).toBe("application/json");
+    expect(got.headers.get("content-length")).toBeNull();
+    expect(await got.text()).toBe(body);
+  });
+
+  // SCEN-W9 — a non-JSON Content-Type (the connector's probe uses
+  // application/octet-stream) must be normalized to application/json so the SDK
+  // does not 415 the real message.
+  it("SCEN-W9: non-JSON Content-Type → forced to application/json, body preserved", async () => {
+    const { handler, received } = spyHandler();
+    const wrapped = withChatGptConnectorCompat(handler);
+    const body = JSON.stringify({
+      jsonrpc: "2.0",
+      id: 3,
+      method: "tools/call",
+      params: { name: "buscar_disponibilidad", arguments: {} },
+    });
+
+    await wrapped(
+      new Request("https://x/api/mcp/mcp", {
+        method: "POST",
+        headers: { accept: "*/*", "content-type": "application/octet-stream" },
+        body,
+      }),
+    );
+
+    const got = received[0];
+    expect(got.headers.get("content-type")).toBe("application/json");
+    expect(got.headers.get("accept")).toBe(MCP_ACCEPT);
     expect(await got.text()).toBe(body);
   });
 

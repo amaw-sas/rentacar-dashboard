@@ -32,6 +32,12 @@ function normalizedHeaders(request: Request): Headers {
   if (needsAcceptNormalization(headers.get("accept"))) {
     headers.set("accept", MCP_ACCEPT);
   }
+  // The forwarded body is the already-decoded string we re-read, so the original
+  // Content-Length/Content-Encoding no longer describe it. Drop them: the runtime
+  // recomputes Content-Length for the new body, and nothing downstream tries to
+  // re-decode plaintext as gzip.
+  headers.delete("content-length");
+  headers.delete("content-encoding");
   return headers;
 }
 
@@ -51,10 +57,17 @@ export function withChatGptConnectorCompat(
       if (raw.trim().length === 0) {
         return Response.json({ ok: true });
       }
+      const headers = normalizedHeaders(request);
+      // The SDK 415s any POST whose Content-Type is not application/json, and the
+      // ChatGPT connector has been observed sending a non-JSON Content-Type (its
+      // probe uses application/octet-stream). This endpoint only ever receives a
+      // JSON-RPC envelope, so force application/json for the delegated message —
+      // fixing the 415 the same way the Accept normalization fixes the 406.
+      headers.set("content-type", "application/json");
       return handler(
         new Request(request.url, {
           method: "POST",
-          headers: normalizedHeaders(request),
+          headers,
           body: raw,
         }),
       );

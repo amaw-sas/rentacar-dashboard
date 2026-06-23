@@ -504,6 +504,31 @@ describe("ChatGPT readiness metadata (SCEN-W4..W8)", () => {
     expect(parsed.success).toBe(true);
   });
 
+  // SCEN-W10 — a missing/non-string description degrades to the category code
+  // instead of failing the whole response at SDK output-validation time.
+  it("SCEN-W10: non-string description degrades to the code, structuredContent stays valid", async () => {
+    vi.mocked(searchAvailability).mockResolvedValue([
+      // categoryDescription deliberately absent (as Localiza may omit it for an
+      // uncurated gama); cast through unknown to model the runtime boundary.
+      { ...ITEM, categoryDescription: undefined as unknown as string },
+    ]);
+
+    const res = await buscarDisponibilidad({
+      ciudad: "bogota",
+      fecha_recogida: "2026-07-01",
+      fecha_devolucion: "2026-07-05",
+    });
+
+    expect(res.isError).toBeFalsy();
+    const cat = (res.structuredContent as { categorias: { descripcion: string }[] })
+      .categorias[0];
+    expect(cat.descripcion).toBe("C"); // degraded to categoryCode
+    const parsed = z
+      .object(buscarDisponibilidadOutputSchema)
+      .safeParse(res.structuredContent);
+    expect(parsed.success).toBe(true);
+  });
+
   // SCEN-W6 — crear success must carry structuredContent valid against its schema.
   it("SCEN-W6: crear success → structuredContent valid against its outputSchema", async () => {
     vi.mocked(searchAvailability).mockResolvedValue([ITEM]);

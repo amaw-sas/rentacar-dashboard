@@ -378,7 +378,15 @@ export async function buscarDisponibilidad(
       });
       categorias.push({
         categoria: item.categoryCode,
-        descripcion: item.categoryDescription,
+        // Guard the one output field with no upstream validation: the prices go
+        // through encodeQuote's zod (a bad number skips the category), but
+        // descripcion is never quoted. If Localiza omits it / sends a non-string,
+        // a declared outputSchema (descripcion: z.string()) would make the SDK
+        // reject the WHOLE response. Degrade to the code instead.
+        descripcion:
+          typeof item.categoryDescription === "string"
+            ? item.categoryDescription
+            : item.categoryCode,
         dias: selected_days,
         precio_total: pricing.total_price,
         precio_a_pagar: pricing.total_price_to_pay,

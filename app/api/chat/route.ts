@@ -4,7 +4,7 @@ import {
   streamText,
   type UIMessage,
 } from "ai";
-import { buildStreamConfig } from "@/lib/chat/agent";
+import { buildStreamConfig, extractLatestQuotes } from "@/lib/chat/agent";
 import {
   createConversation,
   appendMessages,
@@ -161,7 +161,13 @@ export async function POST(request: Request) {
     return jsonError("Mensajes con formato inválido", 400);
   }
 
-  const result = streamText(await buildStreamConfig(brand, modelMessages));
+  // Resolve the latest cotizar quotes server-side so the booking tool injects the
+  // quote by gama code — the LLM corrupts the opaque blob when echoing it back.
+  const latestQuotes = history ? extractLatestQuotes(history) : undefined;
+
+  const result = streamText(
+    await buildStreamConfig(brand, modelMessages, latestQuotes),
+  );
 
   // Drain even if the client disconnects, so onFinish persists the reply.
   result.consumeStream();

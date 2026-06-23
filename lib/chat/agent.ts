@@ -14,6 +14,7 @@ import {
   runInfoGamas,
 } from "@/lib/chat/knowledge-tools";
 import { crearReservaSchema, runCrearReserva } from "@/lib/chat/reserva-tool";
+import type { PersistedMessage } from "@/lib/chat/persistence";
 
 /**
  * Chatbot agent. OpenAI gpt-5-mini. The model id is the only line to change to
@@ -32,11 +33,135 @@ export const CHAT_MODEL = "gpt-5-mini";
 const MAX_STEPS = 6;
 
 /**
- * Build the tools exposed to the agent for a given brand. A function (not a
- * static object) so `crear_reserva` can inject `franchise = brand` server-side —
- * the LLM never supplies the franchise.
+ * Max age of a quote before booking re-quotes instead of using it. The quote
+ * itself never expires (decodeQuote has no TTL), but its price is frozen at
+ * search time — booking a stale one risks charging an outdated rate. Default 1h,
+ * overridable per environment. Reactive backstop: if Localiza rejects an old
+ * token, the bot re-cotizes anyway (system prompt step 6).
  */
-export function buildChatTools(brand: string) {
+function quoteMaxAgeMs(): number {
+  const hours = Number(process.env.CHAT_QUOTE_MAX_AGE_HOURS);
+  return (Number.isFinite(hours) && hours > 0 ? hours : 1) * 60 * 60 * 1000;
+}
+
+/** One quoted gama from the latest `cotizar` result, kept server-side. */
+export interface ChatQuoteEntry {
+  categoria: string;
+  descripcion?: string;
+  quote: string;
+}
+
+/** The latest cotizar result, resolved server-side so the LLM never echoes the quote. */
+export interface LatestQuotes {
+  quotedAtMs: number | null;
+  entries: ChatQuoteEntry[];
+}
+
+/**
+ * Extract the most recent `cotizar` result from persisted history so the server
+ * can resolve `categoria → quote` itself. Walks newest-first and returns the
+ * first assistant message carrying a completed `tool-cotizar` part. `quotedAtMs`
+ * comes from that message's `created_at` (null for legacy rows → no age-check).
+ */
+export function extractLatestQuotes(history: PersistedMessage[]): LatestQuotes {
+  for (let i = history.length - 1; i >= 0; i--) {
+    const parts = history[i]?.parts;
+    if (!Array.isArray(parts)) continue;
+    for (const part of parts) {
+      const p = part as {
+        type?: string;
+        state?: string;
+        output?: { disponibilidad?: { categorias?: unknown } };
+      };
+      if (p.type !== "tool-cotizar" || p.state !== "output-available") continue;
+      const categorias = p.output?.disponibilidad?.categorias;
+      if (!Array.isArray(categorias)) continue;
+      const entries: ChatQuoteEntry[] = [];
+      for (const c of categorias) {
+        const row = c as {
+          categoria?: unknown;
+          descripcion?: unknown;
+          quote?: unknown;
+        };
+        if (typeof row.categoria === "string" && typeof row.quote === "string") {
+          entries.push({
+            categoria: row.categoria,
+            descripcion:
+              typeof row.descripcion === "string" ? row.descripcion : undefined,
+            quote: row.quote,
+          });
+        }
+      }
+      if (entries.length === 0) continue;
+      const ts = history[i]?.created_at;
+      const quotedAtMs = ts ? Date.parse(ts) : NaN;
+      return {
+        quotedAtMs: Number.isFinite(quotedAtMs) ? quotedAtMs : null,
+        entries,
+      };
+    }
+  }
+  return { quotedAtMs: null, entries: [] };
+}
+
+/** Resolve a gama the LLM named to its stored quote: exact code, then descripcion. */
+function resolveQuote(
+  latest: LatestQuotes | undefined,
+  categoria: string,
+): string | undefined {
+  if (!latest || latest.entries.length === 0) return undefined;
+  const norm = categoria.trim().toLowerCase();
+  const exact = latest.entries.find(
+    (e) => e.categoria.trim().toLowerCase() === norm,
+  );
+  if (exact) return exact.quote;
+  const byDesc = latest.entries.find((e) =>
+    (e.descripcion ?? "").toLowerCase().includes(norm),
+  );
+  return byDesc?.quote;
+}
+
+export type BookingResolution =
+  | { ok: true; quote: string }
+  | { ok: false; error: string };
+
+/**
+ * Decide the quote to book with, server-side (`nowMs` injected for testability):
+ * resolve the LLM-named gama to its stored quote and reject a stale one. The two
+ * error paths read naturally because the bot relays them verbatim, then re-cotizes.
+ */
+export function resolveBookingQuote(
+  latestQuotes: LatestQuotes | undefined,
+  categoria: string,
+  nowMs: number,
+): BookingResolution {
+  const quote = resolveQuote(latestQuotes, categoria);
+  if (!quote) {
+    return {
+      ok: false,
+      error:
+        "No tengo a la mano la cotización de esa gama. Déjame cotizar de nuevo.",
+    };
+  }
+  if (
+    latestQuotes?.quotedAtMs != null &&
+    nowMs - latestQuotes.quotedAtMs > quoteMaxAgeMs()
+  ) {
+    return {
+      ok: false,
+      error:
+        "Tu cotización ya tiene un rato; déjame actualizar el precio antes de reservar.",
+    };
+  }
+  return { ok: true, quote };
+}
+
+/**
+ * Build the tools exposed to the agent for a given brand. A function (not a
+ * static object) so `crear_reserva` can inject `franchise = brand` AND the
+ * resolved `quote` server-side — the LLM never supplies either.
+ */
+export function buildChatTools(brand: string, latestQuotes?: LatestQuotes) {
   return {
     cotizar: tool({
       description:
@@ -80,9 +205,9 @@ export function buildChatTools(brand: string) {
     }),
     crear_reserva: tool({
       description:
-        "Crea la reserva REAL a partir del `quote` de la gama elegida más los datos " +
-        "del cliente. Llama esto SOLO después de resumir la reserva y recibir una " +
-        "confirmación EXPLÍCITA del cliente. Devuelve el número de solicitud.",
+        "Crea la reserva REAL: indica la `categoria` (código de gama) que el cliente " +
+        "eligió más sus datos. Llama esto SOLO después de resumir la reserva y recibir " +
+        "una confirmación EXPLÍCITA del cliente. Devuelve el número de solicitud.",
       inputSchema: crearReservaSchema,
       execute: async (args) => {
         // Gated: off by default so the public endpoint never books until Inc. 4
@@ -93,7 +218,25 @@ export function buildChatTools(brand: string) {
             error: `Por ahora la reserva se completa en el sitio: ${website}`,
           };
         }
-        const result = await runCrearReserva({ ...args, franchise: brand });
+
+        // Resolve the quote server-side (the LLM only named the gama) and reject a
+        // stale price. Either error is relayed verbatim → the bot re-cotizes.
+        const resolved = resolveBookingQuote(
+          latestQuotes,
+          args.categoria,
+          Date.now(),
+        );
+        if (!resolved.ok) return { error: resolved.error };
+
+        const result = await runCrearReserva({
+          quote: resolved.quote,
+          fullname: args.fullname,
+          identification_type: args.identification_type,
+          identification: args.identification,
+          email: args.email,
+          phone: args.phone,
+          franchise: brand,
+        });
         return result.ok ? result.data : { error: result.message };
       },
     }),
@@ -135,10 +278,10 @@ export async function buildSystemPrompt(
     "  1) Pide de forma natural (uno o dos a la vez, no como formulario): nombre completo, tipo y número de documento (CC, CE o PA), correo y teléfono. Si el cliente ya dio algún dato, no lo vuelvas a pedir.",
     "  2) RESUME la reserva: gama elegida, fechas, sede de recogida (usa `info_sedes`), valor total con descuento, y los datos del cliente.",
     "  3) Pide confirmación EXPLÍCITA ('¿Confirmo tu reserva?'). NO llames `crear_reserva` sin un sí claro.",
-    "  4) Llama `crear_reserva` con el `quote` EXACTO que `cotizar` devolvió para la gama elegida. En el turno de confirmación NO vuelvas a llamar `cotizar` ni `info_sedes`: ya tienes el `quote` y la sede en el contexto; reutilízalos y ve directo a `crear_reserva` (la creación de la reserva es lenta y re-cotizar agota el tiempo de respuesta).",
+    "  4) Llama `crear_reserva` indicando la `categoria` (el CÓDIGO de gama, ej. 'C') que el cliente eligió, tal como apareció en `cotizar`. El sistema usa la cotización guardada — NO necesitas el `quote`. En el turno de confirmación NO vuelvas a llamar `cotizar` ni `info_sedes`: ve directo a `crear_reserva`.",
     "  5) Al recibir el número de solicitud, entrégaselo y recuérdale: la recogida es en un local Localiza (dale nombre, dirección y mapa con `info_sedes`); requisitos (tarjeta de crédito física, documento de identidad, licencia vigente); el pago es en la sede, no anticipado.",
-    "  6) Si `crear_reserva` falla (cotización vencida o sin disponibilidad), vuelve a cotizar y reintenta.",
-    "- Usa EXACTAMENTE el `quote` de la gama que el cliente eligió. El `quote` no caduca, así que NO re-cotices solo para confirmar; re-cotiza únicamente si el cliente cambió la ciudad, las fechas o la gama.",
+    "  6) Si `crear_reserva` pide actualizar el precio o falla (cotización antigua, sin disponibilidad, o rechazo del proveedor), vuelve a cotizar las mismas fechas y sede; si el precio cambió, INFÓRMASELO al cliente y pide confirmación de nuevo antes de reservar.",
+    "- Para confirmar solo necesitas la `categoria`; NO re-cotices solo para confirmar. Re-cotiza únicamente si el cliente cambió la ciudad, las fechas o la gama, o si `crear_reserva` te lo pide.",
     "",
     "REGLAS:",
     "- Si falta la ciudad o las fechas, pregúntalas. No asumas ni cotices con datos incompletos.",
@@ -164,12 +307,13 @@ export async function buildSystemPrompt(
 export async function buildStreamConfig(
   brand: string,
   messages: ModelMessage[],
+  latestQuotes?: LatestQuotes,
 ) {
   return {
     model: openai(CHAT_MODEL),
     system: await buildSystemPrompt(brand),
     messages,
-    tools: buildChatTools(brand),
+    tools: buildChatTools(brand, latestQuotes),
     stopWhen: stepCountIs(MAX_STEPS),
   };
 }

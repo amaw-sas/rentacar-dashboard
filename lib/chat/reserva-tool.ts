@@ -15,14 +15,19 @@ import { crearSolicitudReserva } from "@/lib/api/mcp/tools";
  * layer; this runner always books when called.
  */
 
-// Chat-facing input: the minimal fields the bot collects. `franchise` is added
-// server-side by the agent, so it is NOT in this schema.
+// Chat-facing input: the minimal fields the bot collects. The LLM picks the
+// gama by its short `categoria` CODE — never the opaque quote: a base64url blob
+// of hundreds of chars that the model corrupts when echoing it back, which made
+// `decodeQuote` reject every booking. The server resolves categoria → quote from
+// the last cotizar result (see lib/chat/agent.ts). `franchise` and `quote` are
+// both injected server-side, so neither is in this schema.
 export const crearReservaSchema = z.object({
-  quote: z
+  categoria: z
     .string()
     .min(1)
     .describe(
-      "El 'quote' opaco que devolvió `cotizar` para la gama que el cliente eligió.",
+      "El CÓDIGO de gama que el cliente eligió (ej. 'C'), tal como lo devolvió " +
+        "`cotizar` en el campo `categoria`. NO el quote.",
     ),
   fullname: z.string().min(1).describe("Nombre completo del cliente."),
   identification_type: z
@@ -36,13 +41,26 @@ export const crearReservaSchema = z.object({
 
 export type CrearReservaArgs = z.infer<typeof crearReservaSchema>;
 
+// Server-facing input for the runner: the agent injects the resolved `quote`
+// (looked up from categoria) and the `franchise` before calling. Decoupled from
+// the LLM schema on purpose — the model never supplies the quote.
+export interface RunCrearReservaInput {
+  quote: string;
+  fullname: string;
+  identification_type: string;
+  identification: string;
+  email: string;
+  phone: string;
+  franchise: string;
+}
+
 export type CrearReservaResult =
   | { ok: true; data: unknown }
   | { ok: false; message: string };
 
-/** Create a reservation. `franchise` is supplied by the caller (the brand). */
+/** Create a reservation. `quote` and `franchise` are supplied by the caller. */
 export async function runCrearReserva(
-  args: CrearReservaArgs & { franchise: string },
+  args: RunCrearReservaInput,
 ): Promise<CrearReservaResult> {
   const result = await crearSolicitudReserva({
     quote: args.quote,

@@ -10,6 +10,7 @@ const h = vi.hoisted(() => ({
   convert: vi.fn(),
   streamText: vi.fn(),
   buildStreamConfig: vi.fn(),
+  extractLatestQuotes: vi.fn(),
   loadMessages: vi.fn(),
   createConversation: vi.fn(),
   appendMessages: vi.fn(),
@@ -20,7 +21,10 @@ vi.mock("ai", () => ({
   convertToModelMessages: h.convert,
   streamText: h.streamText,
 }));
-vi.mock("@/lib/chat/agent", () => ({ buildStreamConfig: h.buildStreamConfig }));
+vi.mock("@/lib/chat/agent", () => ({
+  buildStreamConfig: h.buildStreamConfig,
+  extractLatestQuotes: h.extractLatestQuotes,
+}));
 vi.mock("@/lib/chat/persistence", () => ({
   loadMessages: h.loadMessages,
   createConversation: h.createConversation,
@@ -49,6 +53,7 @@ beforeEach(() => {
   process.env.OPENAI_API_KEY = "test-key";
   h.convert.mockImplementation(async (msgs: unknown) => msgs); // identity
   h.buildStreamConfig.mockResolvedValue({});
+  h.extractLatestQuotes.mockReturnValue({ quotedAtMs: null, entries: [] });
   h.appendMessages.mockResolvedValue(undefined);
   h.countRecentMessages.mockResolvedValue(0);
   h.createConversation.mockResolvedValue("conv-new");
@@ -79,10 +84,19 @@ describe("chat route — model context assembly", () => {
       },
     ];
     h.loadMessages.mockResolvedValue(history);
+    const latest = { quotedAtMs: 123, entries: [{ categoria: "C", quote: "OPAQUE_QUOTE" }] };
+    h.extractLatestQuotes.mockReturnValue(latest);
 
     await POST(req({ brand: "alquilatucarro", conversationId: "conv-1", messages: [userMsg("Si")] }));
 
     expect(h.loadMessages).toHaveBeenCalledWith("conv-1");
+    // server resolves the quote from history and hands it to the stream config
+    expect(h.extractLatestQuotes).toHaveBeenCalledWith(history);
+    expect(h.buildStreamConfig).toHaveBeenCalledWith(
+      "alquilatucarro",
+      expect.anything(),
+      latest,
+    );
     const [ctx, opts] = h.convert.mock.calls[0];
     // history (2) + current user message (1)
     expect(ctx).toHaveLength(3);

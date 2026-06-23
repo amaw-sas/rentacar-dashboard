@@ -120,7 +120,7 @@ describe("loadMessages", () => {
 
     expect(result).toBe(rows); // verbatim, not reshaped
     expect(from).toHaveBeenCalledWith("chat_messages");
-    expect(select).toHaveBeenCalledWith("role, content, parts");
+    expect(select).toHaveBeenCalledWith("role, content, parts, created_at");
     expect(eq).toHaveBeenCalledWith("conversation_id", "conv-1");
     expect(orderCreated).toHaveBeenCalledWith("created_at", { ascending: true });
     expect(orderId).toHaveBeenCalledWith("id", { ascending: true });

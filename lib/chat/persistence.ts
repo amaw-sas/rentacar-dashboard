@@ -13,6 +13,9 @@ export interface PersistedMessage {
   role: "user" | "assistant" | "tool" | "system";
   content: string | null;
   parts?: unknown;
+  // ISO timestamp of the row. Loaded so the route can age-check the last quote
+  // (re-cotizar instead of booking a stale price). Optional: not all callers set it.
+  created_at?: string | null;
 }
 
 /** Create a conversation row and return its id. */
@@ -64,7 +67,7 @@ export async function loadMessages(
 ): Promise<PersistedMessage[]> {
   const { data, error } = await client
     .from("chat_messages")
-    .select("role, content, parts")
+    .select("role, content, parts, created_at")
     .eq("conversation_id", conversationId)
     .order("created_at", { ascending: true })
     .order("id", { ascending: true });

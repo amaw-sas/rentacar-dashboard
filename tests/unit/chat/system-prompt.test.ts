@@ -7,6 +7,13 @@ const { getChatKnowledgeContent } = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/chat/knowledge-store", () => ({ getChatKnowledgeContent }));
 
+// Mock only the booking RUNNER; keep crearReservaSchema (agent.ts needs it).
+const { runCrearReserva } = vi.hoisted(() => ({ runCrearReserva: vi.fn() }));
+vi.mock("@/lib/chat/reserva-tool", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/chat/reserva-tool")>();
+  return { ...actual, runCrearReserva };
+});
+
 import { buildSystemPrompt, buildChatTools } from "@/lib/chat/agent";
 
 beforeEach(() => {
@@ -81,7 +88,7 @@ describe("buildChatTools", () => {
     const tools = buildChatTools("alquilatucarro");
     const res = (await tools.crear_reserva.execute!(
       {
-        quote: "q",
+        categoria: "C",
         fullname: "Test",
         identification_type: "CC",
         identification: "1",
@@ -92,5 +99,40 @@ describe("buildChatTools", () => {
     )) as { error: string };
     expect(res.error).toContain("https://alquilatucarro.com");
     if (prev !== undefined) process.env.CHAT_RESERVATIONS_ENABLED = prev;
+  });
+
+  it("crear_reserva injects the quote resolved by gama and books when the flag is on", async () => {
+    const prev = process.env.CHAT_RESERVATIONS_ENABLED;
+    process.env.CHAT_RESERVATIONS_ENABLED = "true";
+    runCrearReserva.mockResolvedValue({
+      ok: true,
+      data: { numero_solicitud: "AVX9" },
+    });
+    const tools = buildChatTools("alquilatucarro", {
+      quotedAtMs: null, // legacy → no age-check, books
+      entries: [{ categoria: "C", descripcion: "económico", quote: "REAL_QUOTE" }],
+    });
+    const res = await tools.crear_reserva.execute!(
+      {
+        categoria: "C",
+        fullname: "Test",
+        identification_type: "CC",
+        identification: "1",
+        email: "a@b.co",
+        phone: "300",
+      },
+      { toolCallId: "t", messages: [] },
+    );
+    // the LLM never supplied the quote — the server injected REAL_QUOTE by gama
+    expect(runCrearReserva).toHaveBeenCalledWith(
+      expect.objectContaining({
+        quote: "REAL_QUOTE",
+        franchise: "alquilatucarro",
+        fullname: "Test",
+      }),
+    );
+    expect(res).toMatchObject({ numero_solicitud: "AVX9" });
+    if (prev !== undefined) process.env.CHAT_RESERVATIONS_ENABLED = prev;
+    else delete process.env.CHAT_RESERVATIONS_ENABLED;
   });
 });

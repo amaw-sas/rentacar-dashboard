@@ -135,7 +135,8 @@ a cada dominio: acéptala.
 
 ## Relación con la conexión MCP
 
-Esta guía es el equivalente para ChatGPT de la conexión MCP (que sirve para
-Claude y otros clientes con soporte MCP). Ambas exponen el mismo flujo: consultar
-es libre, reservar pide clave. La diferencia es solo el mecanismo de conexión:
-aquí, Actions sobre el OpenAPI; allá, el endpoint MCP.
+Esta guía es la vía Actions/OpenAPI. La otra vía es el **conector MCP**
+([conectar-chatgpt-mcp.md](./conectar-chatgpt-mcp.md)), que sirve tanto a ChatGPT
+como a Claude y otros clientes con soporte MCP. Diferencia clave: ahí la conexión
+es anónima (sin clave) y el precio viaja firmado en la cotización; aquí, las
+Actions cotizan libres y la reserva pide `x-api-key`. Elige una según el cliente.

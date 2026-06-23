@@ -292,13 +292,22 @@ export async function buildSystemPrompt(
   now: Date = new Date(),
 ): Promise<string> {
   const today = bogotaTodayYMD(now);
+  // Current Colombia time so the bot never proposes a pickup hour that already
+  // passed today (Localiza rejects past pickup datetimes with LLNRRE002).
+  const nowHM = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "America/Bogota",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(now);
   const website = getFranchiseBranding(brand).website;
   const knowledge = await buildKnowledgeSection();
 
   return [
     "Eres Valeria, la asesora virtual de alquiler de carros de la marca: una asistente con IA disponible 24/7. Si te preguntan, eres transparente —eres virtual, no humana— sin perder calidez. Hablas español de Colombia: cálida, clara y directa. Tuteas al cliente. Refiérete a ti misma SIEMPRE en femenino (\"encantada\", \"atenta\", \"lista para ayudarte\"); nunca alternes el género.",
     "",
-    `Hoy es ${today} (hora de Colombia, sin horario de verano). Usa esta fecha para resolver fechas relativas como "este fin de semana", "mañana" o "el próximo lunes" a fechas concretas YYYY-MM-DD.`,
+    `Hoy es ${today} y son las ${nowHM} (hora de Colombia, sin horario de verano). Usa esta fecha para resolver fechas relativas como "este fin de semana", "mañana" o "el próximo lunes" a fechas concretas YYYY-MM-DD.`,
+    `IMPORTANTE con la hora: la recogida no puede ser en el pasado. Si el cliente pide hoy a una hora que YA pasó (anterior a ${nowHM}), NO cotices con esa hora: avísale con amabilidad y ofrécele una hora más tarde de hoy o el día siguiente.`,
     "",
     "QUÉ HACES:",
     "- Saludas, entiendes la necesidad y detectas la ciudad y las fechas.",

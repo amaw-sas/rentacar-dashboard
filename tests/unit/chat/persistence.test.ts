@@ -4,6 +4,7 @@ import {
   createConversation,
   appendMessages,
   countRecentMessages,
+  loadMessages,
 } from "@/lib/chat/persistence";
 
 // Chat persistence writes via the service-role admin client. Each function
@@ -85,6 +86,66 @@ describe("appendMessages", () => {
     await appendMessages("conv-1", [], client);
 
     expect(from).not.toHaveBeenCalled();
+  });
+});
+
+describe("loadMessages", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("reads the thread oldest-first, returning parts verbatim", async () => {
+    const rows = [
+      { role: "user", content: "hola", parts: [{ type: "text", text: "hola" }] },
+      {
+        role: "assistant",
+        content: "",
+        parts: [
+          {
+            type: "tool-cotizar",
+            toolCallId: "call_1",
+            state: "output-available",
+            input: { ciudad: "cartagena" },
+            output: { disponibilidad: { quote: "OPAQUE_QUOTE" } },
+          },
+        ],
+      },
+    ];
+    const orderId = vi.fn().mockResolvedValue({ data: rows, error: null });
+    const orderCreated = vi.fn().mockReturnValue({ order: orderId });
+    const eq = vi.fn().mockReturnValue({ order: orderCreated });
+    const select = vi.fn().mockReturnValue({ eq });
+    const from = vi.fn().mockReturnValue({ select });
+    const client = { from } as unknown as SupabaseClient;
+
+    const result = await loadMessages("conv-1", client);
+
+    expect(result).toBe(rows); // verbatim, not reshaped
+    expect(from).toHaveBeenCalledWith("chat_messages");
+    expect(select).toHaveBeenCalledWith("role, content, parts");
+    expect(eq).toHaveBeenCalledWith("conversation_id", "conv-1");
+    expect(orderCreated).toHaveBeenCalledWith("created_at", { ascending: true });
+    expect(orderId).toHaveBeenCalledWith("id", { ascending: true });
+  });
+
+  it("returns an empty array when there are no rows", async () => {
+    const orderId = vi.fn().mockResolvedValue({ data: null, error: null });
+    const orderCreated = vi.fn().mockReturnValue({ order: orderId });
+    const eq = vi.fn().mockReturnValue({ order: orderCreated });
+    const select = vi.fn().mockReturnValue({ eq });
+    const from = vi.fn().mockReturnValue({ select });
+    const client = { from } as unknown as SupabaseClient;
+
+    await expect(loadMessages("conv-1", client)).resolves.toEqual([]);
+  });
+
+  it("throws when Supabase returns an error", async () => {
+    const orderId = vi.fn().mockResolvedValue({ data: null, error: { message: "boom" } });
+    const orderCreated = vi.fn().mockReturnValue({ order: orderId });
+    const eq = vi.fn().mockReturnValue({ order: orderCreated });
+    const select = vi.fn().mockReturnValue({ eq });
+    const from = vi.fn().mockReturnValue({ select });
+    const client = { from } as unknown as SupabaseClient;
+
+    await expect(loadMessages("conv-1", client)).rejects.toEqual({ message: "boom" });
   });
 });
 

@@ -9,6 +9,7 @@ import {
   createConversation,
   appendMessages,
   countRecentMessages,
+  loadMessages,
   type PersistedMessage,
 } from "@/lib/chat/persistence";
 
@@ -54,6 +55,23 @@ function extractText(message: UIMessage): string {
 
 function jsonError(message: string, status: number) {
   return NextResponse.json({ error: message }, { status, headers: CORS_HEADERS });
+}
+
+/**
+ * Adapt a persisted row to the UIMessage shape `convertToModelMessages` expects
+ * (it accepts messages without an `id`). `parts` is reused VERBATIM when present
+ * so tool calls/results round-trip; legacy rows (null parts, pre history-reload)
+ * fall back to a single text part so old conversations still load. Tool-role rows
+ * are never persisted today — drop them defensively (UIMessage has no tool role).
+ */
+function toUIMessage(row: PersistedMessage): Omit<UIMessage, "id"> | null {
+  if (row.role !== "user" && row.role !== "assistant" && row.role !== "system") {
+    return null;
+  }
+  const parts = Array.isArray(row.parts)
+    ? (row.parts as UIMessage["parts"])
+    : ([{ type: "text", text: row.content ?? "" }] as UIMessage["parts"]);
+  return { role: row.role, parts };
 }
 
 export async function POST(request: Request) {
@@ -102,17 +120,43 @@ export async function POST(request: Request) {
     }
   }
 
-  // Persist the incoming user message before streaming (best-effort).
   const lastUser = messages[messages.length - 1];
+
+  // Reload prior turns from Supabase (the server is the source of truth) so tool
+  // context — the opaque `cotizar` quote among it — survives across turns; the
+  // widget only resends plain text. READ BEFORE persisting the incoming user
+  // message below, so history never contains the current turn regardless of that
+  // fire-and-forget write. Any load failure degrades to the request messages.
+  // Gate on the REQUEST id, not the resolved one: a just-created conversation
+  // has no prior turns, so skip the empty round-trip on the first message.
+  let history: PersistedMessage[] | null = null;
+  if (body.conversationId) {
+    try {
+      history = await loadMessages(body.conversationId);
+    } catch (e) {
+      console.error("[chat] loadMessages failed", e);
+    }
+  }
+
+  // Persist the incoming user message before streaming (best-effort).
   if (conversationId && lastUser?.role === "user") {
     appendMessages(conversationId, [
       { role: "user", content: extractText(lastUser), parts: lastUser.parts },
     ]).catch((e) => console.error("[chat] persist user failed", e));
   }
 
+  // Model context = reloaded history + the current incoming user message. New
+  // conversation or load failure → fall back to the request body (prior behavior).
+  const uiContext: Array<Omit<UIMessage, "id">> =
+    history && history.length > 0
+      ? [...history.flatMap((m) => toUIMessage(m) ?? []), lastUser]
+      : messages;
+
   let modelMessages;
   try {
-    modelMessages = await convertToModelMessages(messages);
+    modelMessages = await convertToModelMessages(uiContext, {
+      ignoreIncompleteToolCalls: true,
+    });
   } catch {
     return jsonError("Mensajes con formato inválido", 400);
   }

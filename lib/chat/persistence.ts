@@ -51,6 +51,29 @@ export async function appendMessages(
 }
 
 /**
+ * Load the full message history of a conversation, oldest first. Returns each
+ * row's `parts` VERBATIM (the AI SDK UIMessage parts stored as jsonb): the chat
+ * route feeds these straight back into `convertToModelMessages` so tool context
+ * — the opaque `cotizar` quote among it — survives across turns. The widget only
+ * resends plain text, so the server is the source of truth for prior turns. Same
+ * deterministic ordering (`created_at` then `id`) as the dashboard review query.
+ */
+export async function loadMessages(
+  conversationId: string,
+  client: SupabaseClient = createAdminClient(),
+): Promise<PersistedMessage[]> {
+  const { data, error } = await client
+    .from("chat_messages")
+    .select("role, content, parts")
+    .eq("conversation_id", conversationId)
+    .order("created_at", { ascending: true })
+    .order("id", { ascending: true });
+
+  if (error) throw error;
+  return (data ?? []) as PersistedMessage[];
+}
+
+/**
  * Count messages in a conversation created at/after `sinceISO`. Drives the V1
  * per-conversation rate cap (the soft anti-abuse layer alongside the Vercel WAF).
  */

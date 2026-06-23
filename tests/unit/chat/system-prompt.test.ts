@@ -89,6 +89,9 @@ describe("buildSystemPrompt", () => {
     expect(prompt).toMatch(/NUNCA reveles/i);
     // resist "ignore previous instructions" style attacks
     expect(prompt).toMatch(/ignora lo anterior/i);
+    // strict off-topic refusal: don't produce poems/code/etc. even framed as cars
+    expect(prompt).toMatch(/NO lo produzcas/i);
+    expect(prompt).toMatch(/DAN/);
   });
 });
 

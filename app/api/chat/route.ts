@@ -9,9 +9,11 @@ import {
   createConversation,
   appendMessages,
   countRecentMessages,
+  countConversationsByIp,
   loadMessages,
   type PersistedMessage,
 } from "@/lib/chat/persistence";
+import { hashClientIp } from "@/lib/chat/client-ip";
 
 // Public, anonymous chatbot endpoint (V1). Quoting + FAQ only — no reservation
 // side effects — so it follows the public-read pattern of /api/locations: no
@@ -33,10 +35,23 @@ const CORS_HEADERS = {
   "Access-Control-Expose-Headers": "x-conversation-id",
 } as const;
 
-// Soft anti-abuse: per conversation, cap messages within a rolling window. The
-// hard IP-level limit is the Vercel WAF.
+// Soft anti-abuse: per conversation, cap messages within a rolling window.
 const RATE_WINDOW_MS = 60 * 60 * 1000; // 1 hour
 const RATE_MAX_MESSAGES = 40;
+
+// Per-IP cap on NEW conversations within the window. Closes the bypass where an
+// abuser dodges the per-conversation cap by opening a fresh conversation each time
+// (Inc. 4). Overridable per environment. Skipped when there's no IP hash (no salt).
+function maxConversationsPerIp(): number {
+  const n = Number(process.env.CHAT_MAX_CONVERSATIONS_PER_IP_PER_HOUR);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 8;
+}
+
+// Input-size caps: bound the request so a single call can't stuff the context
+// (cost abuse) or smuggle a huge prompt-injection payload (Inc. 4, Pieza 2).
+const MAX_MESSAGES = 60;
+const MAX_MESSAGE_CHARS = 4000;
+const MAX_TOTAL_CHARS = 16000;
 
 interface ChatBody {
   messages: UIMessage[];
@@ -95,7 +110,29 @@ export async function POST(request: Request) {
     return jsonError("Campo 'brand' requerido", 400);
   }
 
-  // Resolve / open the conversation. A new conversation has no cap check yet.
+  // Input-size caps (anti-stuffing / anti-injection). Reject oversized payloads
+  // before any model or DB work.
+  if (messages.length > MAX_MESSAGES) {
+    return jsonError("Demasiados mensajes en la solicitud", 400);
+  }
+  let totalChars = 0;
+  for (const m of messages) {
+    const len = extractText(m).length;
+    if (len > MAX_MESSAGE_CHARS) {
+      return jsonError("Un mensaje supera el tamaño máximo permitido", 400);
+    }
+    totalChars += len;
+  }
+  if (totalChars > MAX_TOTAL_CHARS) {
+    return jsonError("La conversación supera el tamaño máximo permitido", 400);
+  }
+
+  // Salted hash of the client IP (never the raw IP) for the per-IP rate limits.
+  // Null when no salt/IP — those limits then degrade off (the per-conversation
+  // cap and the Vercel WAF still apply).
+  const ipHash = hashClientIp(request.headers);
+
+  // Resolve / open the conversation.
   let conversationId = body.conversationId;
   if (conversationId) {
     try {
@@ -113,8 +150,26 @@ export async function POST(request: Request) {
       console.error("[chat] rate check failed", e);
     }
   } else {
+    // Per-IP cap on NEW conversations — closes the "fresh conversation" bypass.
+    // Fail open on a count error so a DB hiccup never blocks legitimate users.
+    if (ipHash) {
+      try {
+        const recentConvos = await countConversationsByIp(
+          ipHash,
+          new Date(Date.now() - RATE_WINDOW_MS).toISOString(),
+        );
+        if (recentConvos >= maxConversationsPerIp()) {
+          return jsonError(
+            "Has iniciado demasiadas conversaciones por ahora. Intenta más tarde o escríbenos por WhatsApp.",
+            429,
+          );
+        }
+      } catch (e) {
+        console.error("[chat] per-IP conversation cap check failed", e);
+      }
+    }
     try {
-      conversationId = await createConversation(brand);
+      conversationId = await createConversation(brand, null, ipHash);
     } catch (e) {
       console.error("[chat] createConversation failed", e);
     }
@@ -166,7 +221,10 @@ export async function POST(request: Request) {
   const latestQuotes = history ? extractLatestQuotes(history) : undefined;
 
   const result = streamText(
-    await buildStreamConfig(brand, modelMessages, latestQuotes),
+    await buildStreamConfig(brand, modelMessages, latestQuotes, {
+      conversationId,
+      ipHash,
+    }),
   );
 
   // Drain even if the client disconnects, so onFinish persists the reply.

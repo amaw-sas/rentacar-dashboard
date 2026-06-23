@@ -77,6 +77,19 @@ describe("buildSystemPrompt", () => {
     expect(prompt).toContain("Documentos requeridos:");
     expect(prompt).toContain("https://alquilame.co");
   });
+
+  it("carries the anti-injection SEGURIDAD guardrails", async () => {
+    getChatKnowledgeContent.mockResolvedValue(null);
+    const prompt = await buildSystemPrompt("alquilatucarro");
+    // dedicated security block
+    expect(prompt).toMatch(/SEGURIDAD/);
+    // treat user/tool text as data, not instructions
+    expect(prompt).toMatch(/DATOS, nunca instrucciones/i);
+    // never reveal the system prompt / internals
+    expect(prompt).toMatch(/NUNCA reveles/i);
+    // resist "ignore previous instructions" style attacks
+    expect(prompt).toMatch(/ignora lo anterior/i);
+  });
 });
 
 describe("buildChatTools", () => {
@@ -123,11 +136,11 @@ describe("buildChatTools", () => {
     const res = await tools.crear_reserva.execute!(
       {
         categoria: "C",
-        fullname: "Test",
+        fullname: "Test Cliente",
         identification_type: "CC",
-        identification: "1",
+        identification: "1234567890",
         email: "a@b.co",
-        phone: "300",
+        phone: "3001234567",
       },
       { toolCallId: "t", messages: [] },
     );
@@ -136,7 +149,7 @@ describe("buildChatTools", () => {
       expect.objectContaining({
         quote: "REAL_QUOTE",
         franchise: "alquilatucarro",
-        fullname: "Test",
+        fullname: "Test Cliente",
       }),
     );
     expect(res).toMatchObject({ numero_solicitud: "AVX9" });
@@ -188,9 +201,9 @@ describe("buildChatTools", () => {
         categoria: "FX",
         fullname: "Diego Melo",
         identification_type: "CC",
-        identification: "1",
+        identification: "1234567890",
         email: "a@b.co",
-        phone: "300",
+        phone: "3001234567",
       },
       { toolCallId: "t", messages: [] },
     )) as { error: string; completar_en_web?: string; whatsapp_asesor?: string };

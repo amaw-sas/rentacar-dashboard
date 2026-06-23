@@ -4,6 +4,7 @@ import {
   createConversation,
   appendMessages,
   countRecentMessages,
+  countConversationsByIp,
   loadMessages,
 } from "@/lib/chat/persistence";
 
@@ -21,13 +22,19 @@ describe("createConversation", () => {
     const from = vi.fn().mockReturnValue({ insert });
     const client = { from } as unknown as SupabaseClient;
 
-    const id = await createConversation("alquilatucarro", "Manizales", client);
+    const id = await createConversation(
+      "alquilatucarro",
+      "Manizales",
+      "iphash",
+      client,
+    );
 
     expect(id).toBe("conv-1");
     expect(from).toHaveBeenCalledWith("chat_conversations");
     expect(insert).toHaveBeenCalledWith({
       brand: "alquilatucarro",
       city_detected: "Manizales",
+      ip_hash: "iphash",
     });
   });
 
@@ -39,8 +46,28 @@ describe("createConversation", () => {
     const client = { from } as unknown as SupabaseClient;
 
     await expect(
-      createConversation("alquilame", null, client),
+      createConversation("alquilame", null, null, client),
     ).rejects.toEqual({ message: "boom" });
+  });
+});
+
+describe("countConversationsByIp", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("counts conversations from an IP at/after the given instant", async () => {
+    const gte = vi.fn().mockResolvedValue({ count: 4, error: null });
+    const eq = vi.fn().mockReturnValue({ gte });
+    const select = vi.fn().mockReturnValue({ eq });
+    const from = vi.fn().mockReturnValue({ select });
+    const client = { from } as unknown as SupabaseClient;
+
+    const n = await countConversationsByIp("iphash", "2026-06-20T00:00:00Z", client);
+
+    expect(n).toBe(4);
+    expect(from).toHaveBeenCalledWith("chat_conversations");
+    expect(select).toHaveBeenCalledWith("id", { count: "exact", head: true });
+    expect(eq).toHaveBeenCalledWith("ip_hash", "iphash");
+    expect(gte).toHaveBeenCalledWith("created_at", "2026-06-20T00:00:00Z");
   });
 });
 

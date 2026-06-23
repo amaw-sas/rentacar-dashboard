@@ -15,6 +15,7 @@ const h = vi.hoisted(() => ({
   createConversation: vi.fn(),
   appendMessages: vi.fn(),
   countRecentMessages: vi.fn(),
+  countConversationsByIp: vi.fn(),
 }));
 
 vi.mock("ai", () => ({
@@ -30,6 +31,7 @@ vi.mock("@/lib/chat/persistence", () => ({
   createConversation: h.createConversation,
   appendMessages: h.appendMessages,
   countRecentMessages: h.countRecentMessages,
+  countConversationsByIp: h.countConversationsByIp,
 }));
 
 import { POST } from "@/app/api/chat/route";
@@ -56,6 +58,7 @@ beforeEach(() => {
   h.extractLatestQuotes.mockReturnValue({ quotedAtMs: null, entries: [] });
   h.appendMessages.mockResolvedValue(undefined);
   h.countRecentMessages.mockResolvedValue(0);
+  h.countConversationsByIp.mockResolvedValue(0);
   h.createConversation.mockResolvedValue("conv-new");
   h.streamText.mockReturnValue({
     consumeStream: vi.fn(),
@@ -96,6 +99,7 @@ describe("chat route — model context assembly", () => {
       "alquilatucarro",
       expect.anything(),
       latest,
+      { conversationId: "conv-1", ipHash: null },
     );
     const [ctx, opts] = h.convert.mock.calls[0];
     // history (2) + current user message (1)
@@ -117,7 +121,7 @@ describe("chat route — model context assembly", () => {
 
     await POST(req({ brand: "alquilatucarro", messages }));
 
-    expect(h.createConversation).toHaveBeenCalledWith("alquilatucarro");
+    expect(h.createConversation).toHaveBeenCalledWith("alquilatucarro", null, null);
     expect(h.loadMessages).not.toHaveBeenCalled();
     expect(h.convert.mock.calls[0][0]).toEqual(messages);
   });
@@ -139,5 +143,30 @@ describe("chat route — model context assembly", () => {
     await POST(req({ brand: "alquilatucarro", conversationId: "conv-1", messages }));
 
     expect(h.convert.mock.calls[0][0]).toEqual(messages);
+  });
+});
+
+describe("chat route — input-size caps (anti-stuffing / anti-injection)", () => {
+  it("rejects too many messages with 400 and never builds the stream", async () => {
+    const messages = Array.from({ length: 61 }, (_, i) => userMsg(`m${i}`));
+    const res = await POST(req({ brand: "alquilatucarro", messages }));
+    expect(res.status).toBe(400);
+    expect(h.buildStreamConfig).not.toHaveBeenCalled();
+  });
+
+  it("rejects a single oversized message with 400", async () => {
+    const res = await POST(
+      req({ brand: "alquilatucarro", messages: [userMsg("x".repeat(4001))] }),
+    );
+    expect(res.status).toBe(400);
+    expect(h.buildStreamConfig).not.toHaveBeenCalled();
+  });
+
+  it("rejects an oversized total payload with 400", async () => {
+    // 5 messages × 3500 chars = 17500 > 16000 total cap (each under the per-msg cap)
+    const messages = Array.from({ length: 5 }, () => userMsg("x".repeat(3500)));
+    const res = await POST(req({ brand: "alquilatucarro", messages }));
+    expect(res.status).toBe(400);
+    expect(h.buildStreamConfig).not.toHaveBeenCalled();
   });
 });

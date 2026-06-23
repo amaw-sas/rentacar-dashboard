@@ -18,20 +18,45 @@ export interface PersistedMessage {
   created_at?: string | null;
 }
 
-/** Create a conversation row and return its id. */
+/**
+ * Create a conversation row and return its id. `ipHash` is the salted SHA-256 of
+ * the client IP (never the raw IP) — stored so the per-IP rate limit can count
+ * new conversations per address. Null when no salt/IP is available.
+ */
 export async function createConversation(
   brand: string,
   cityDetected?: string | null,
+  ipHash?: string | null,
   client: SupabaseClient = createAdminClient(),
 ): Promise<string> {
   const { data, error } = await client
     .from("chat_conversations")
-    .insert({ brand, city_detected: cityDetected ?? null })
+    .insert({ brand, city_detected: cityDetected ?? null, ip_hash: ipHash ?? null })
     .select("id")
     .single();
 
   if (error) throw error;
   return data.id as string;
+}
+
+/**
+ * Count conversations opened from one IP at/after `sinceISO`. Drives the per-IP
+ * new-conversation cap — the layer that closes the "open a fresh conversation to
+ * dodge the per-conversation message cap" bypass.
+ */
+export async function countConversationsByIp(
+  ipHash: string,
+  sinceISO: string,
+  client: SupabaseClient = createAdminClient(),
+): Promise<number> {
+  const { count, error } = await client
+    .from("chat_conversations")
+    .select("id", { count: "exact", head: true })
+    .eq("ip_hash", ipHash)
+    .gte("created_at", sinceISO);
+
+  if (error) throw error;
+  return count ?? 0;
 }
 
 /** Append one or more messages to a conversation. No-op on an empty array. */

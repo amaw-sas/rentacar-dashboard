@@ -163,10 +163,17 @@ function splitDateTime(dt: string): { date: string; hour: string } {
 /** Extract the human-readable ES message from a propagated ServiceError. */
 function serviceErrorMessage(e: ServiceError): string {
   const p = e.payload as Record<string, unknown>;
-  const msg = p.shortText ?? p.message ?? p.error;
-  return typeof msg === "string"
-    ? msg
-    : "Ocurrió un error procesando la solicitud.";
+  const shortText = typeof p.shortText === "string" ? p.shortText : undefined;
+  const message = typeof p.message === "string" ? p.message : undefined;
+  const error = typeof p.error === "string" ? p.error : undefined;
+  // Localiza warnings arrive with shortText = the RAW code (e.g. "LLNRRE002") and
+  // a friendly Spanish `message` already mapped by the proxy. Prefer the message
+  // so the user never sees the bare code. Any other error keeps shortText-first.
+  const isRawLocalizaCode = !!shortText && /^LLN[A-Z]+\d+/.test(shortText);
+  const msg = isRawLocalizaCode
+    ? message ?? shortText
+    : shortText ?? message ?? error;
+  return msg ?? "Ocurrió un error procesando la solicitud.";
 }
 
 function errorResult(text: string): CallToolResult {
@@ -249,6 +256,7 @@ function normalizeHora(h: string | undefined): string | null {
 
 export async function buscarDisponibilidad(
   args: BuscarDisponibilidadArgs,
+  now: Date = new Date(),
 ): Promise<CallToolResult> {
   const { ciudad, fecha_recogida, fecha_devolucion, sede } = args;
 
@@ -278,6 +286,17 @@ export async function buscarDisponibilidad(
 
   const pickupDateTime = `${fecha_recogida}T${horaR}:00`;
   const returnDateTime = `${fecha_devolucion}T${horaD}:00`;
+
+  // Reject a pickup already in the past (Bogota time, UTC-5 no DST). Localiza
+  // rejects it at booking with LLNRRE002; catch it earlier with a clear message
+  // so the bot never quotes an unbookable slot (e.g. "hoy 10:00" once it's 13:00).
+  const pickupInstant = new Date(`${pickupDateTime}-05:00`);
+  if (!Number.isNaN(pickupInstant.getTime()) && pickupInstant.getTime() < now.getTime()) {
+    return errorResult(
+      "La fecha y hora de recogida ya pasaron. Elige una hora más tarde de hoy o una fecha futura.",
+    );
+  }
+
   const selected_days = computeSelectedDays(pickupDateTime, returnDateTime);
 
   // Non-positive duration (same instant, inverted range, or an unparseable date

@@ -33,7 +33,8 @@ const handler = createMcpHandler(
           "reenviar tal cual a crear_solicitud_reserva para la gama elegida.",
         inputSchema: buscarDisponibilidadInputSchema,
       },
-      buscarDisponibilidad,
+      // Wrap so the MCP `extra` arg isn't passed as buscarDisponibilidad's `now`.
+      (args) => buscarDisponibilidad(args),
     );
 
     server.registerTool(

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // Issue #72 Steps 6-7: the two MCP tools. Holdout SCEN-108..117.
 // Services + directory are mocked; the REAL quote codec runs so SCEN-110 proves
@@ -125,9 +125,47 @@ describe("resolveLocationCode", () => {
 describe("buscar_disponibilidad (SCEN-110..112)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Pin "now" so the past-pickup guard is deterministic and the 2026-07-01
+    // fixtures stay in the future regardless of the real clock.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-25T12:00:00.000Z"));
     vi.mocked(getLocationDirectory).mockResolvedValue(
       dir([{ city: "Bogotá", code: "AABOG01" }]),
     );
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("rejects a pickup datetime already in the past (no service call)", async () => {
+    const res = await buscarDisponibilidad({
+      ciudad: "bogota",
+      fecha_recogida: "2026-06-20", // before the pinned now
+      fecha_devolucion: "2026-06-27",
+    });
+    expect(res.isError).toBe(true);
+    expect(textOf(res)).toMatch(/ya pasaron|futura/i);
+    expect(vi.mocked(searchAvailability)).not.toHaveBeenCalled();
+  });
+
+  it("surfaces the friendly Spanish message for a raw Localiza code (LLNRRE002)", async () => {
+    vi.mocked(searchAvailability).mockRejectedValue(
+      new ServiceError(500, {
+        error: "inferior_pickup_date",
+        message: "Selecciona la fecha de recogida igual o posterior a la fecha actual",
+        shortText: "LLNRRE002",
+      }),
+    );
+    const res = await buscarDisponibilidad({
+      ciudad: "bogota",
+      fecha_recogida: "2026-07-01",
+      fecha_devolucion: "2026-07-05",
+    });
+    expect(res.isError).toBe(true);
+    expect(textOf(res)).toBe(
+      "Selecciona la fecha de recogida igual o posterior a la fecha actual",
+    );
+    expect(textOf(res)).not.toMatch(/LLNRRE002/);
   });
 
   // SCEN-110 — happy path: ES categories + a decodable quote per category.

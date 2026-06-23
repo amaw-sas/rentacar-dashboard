@@ -2,9 +2,14 @@ import { createMcpHandler } from "mcp-handler";
 import {
   buscarDisponibilidad,
   buscarDisponibilidadInputSchema,
+  buscarDisponibilidadAnnotations,
+  buscarDisponibilidadOutputSchema,
   crearSolicitudReserva,
   crearSolicitudReservaInputSchema,
+  crearSolicitudReservaAnnotations,
+  crearSolicitudReservaOutputSchema,
 } from "@/lib/api/mcp/tools";
+import { withChatGptConnectorCompat } from "@/lib/api/mcp/http";
 
 // MCP server for AI reservation clients (issue #72). Streamable HTTP, stateless:
 // the quote context round-trips in the tool args (no session store). The Localiza
@@ -31,6 +36,8 @@ const handler = createMcpHandler(
           "el precio en COP, descripción en español y un 'quote' opaco que debes " +
           "reenviar tal cual a crear_solicitud_reserva para la gama elegida.",
         inputSchema: buscarDisponibilidadInputSchema,
+        outputSchema: buscarDisponibilidadOutputSchema,
+        annotations: buscarDisponibilidadAnnotations,
       },
       buscarDisponibilidad,
     );
@@ -44,6 +51,8 @@ const handler = createMcpHandler(
           "buscar_disponibilidad más los datos del cliente. Devuelve el estado y el " +
           "número de solicitud. No soporta seguro total en esta fase.",
         inputSchema: crearSolicitudReservaInputSchema,
+        outputSchema: crearSolicitudReservaOutputSchema,
+        annotations: crearSolicitudReservaAnnotations,
       },
       crearSolicitudReserva,
     );
@@ -65,4 +74,9 @@ const handler = createMcpHandler(
 // so prices can't be forged or replayed, and (b) Vercel Firewall rate-limits the
 // endpoint at the platform level (not configured in code). Reservations enter
 // status `nueva` for operator review, so nothing is auto-confirmed.
-export { handler as GET, handler as POST };
+//
+// The handler is wrapped (issue #172 WS3) so the ChatGPT connector can reach it:
+// the wrapper answers ChatGPT's empty-body liveness probe with a 200 and
+// normalizes a wildcard Accept the SDK would otherwise 406. See lib/api/mcp/http.ts.
+const chatgptReadyHandler = withChatGptConnectorCompat(handler);
+export { chatgptReadyHandler as GET, chatgptReadyHandler as POST };

@@ -177,9 +177,13 @@ function errorResult(text: string): CallToolResult {
   return { content: [{ type: "text", text }], isError: true };
 }
 
-function jsonResult(payload: unknown): CallToolResult {
+function jsonResult(payload: Record<string, unknown>): CallToolResult {
   return {
     content: [{ type: "text", text: JSON.stringify(payload, null, 2) }],
+    // structuredContent is REQUIRED for any success result once a tool declares
+    // an outputSchema — the SDK throws "Output validation error" otherwise
+    // (issue #172 WS3). Error results (errorResult) are exempt, so they omit it.
+    structuredContent: payload,
   };
 }
 
@@ -224,6 +228,39 @@ export const buscarDisponibilidadInputSchema = {
     .describe(
       "Nombre o slug de sede para desambiguar ciudades con varias sedes.",
     ),
+};
+
+/**
+ * Tool annotations (issue #172 WS3). ChatGPT reads these hints to decide whether
+ * it may execute a tool; without them it treats every tool as potentially
+ * destructive and refuses. buscar is a pure read.
+ */
+export const buscarDisponibilidadAnnotations = {
+  title: "Buscar disponibilidad",
+  readOnlyHint: true,
+  destructiveHint: false,
+  openWorldHint: false,
+} as const;
+
+/**
+ * Output schema (issue #172 WS3). Must match the success payload of jsonResult
+ * exactly — the SDK validates structuredContent against it and rejects a
+ * mismatch. ChatGPT also warns when it is absent.
+ */
+export const buscarDisponibilidadOutputSchema = {
+  sede: z.string(),
+  dias: z.number(),
+  categorias: z.array(
+    z.object({
+      categoria: z.string(),
+      descripcion: z.string(),
+      dias: z.number(),
+      precio_total: z.number(),
+      precio_a_pagar: z.number(),
+      iva: z.number(),
+      quote: z.string(),
+    }),
+  ),
 };
 
 interface BuscarDisponibilidadArgs {
@@ -390,6 +427,26 @@ export const crearSolicitudReservaInputSchema = {
   flight: z.boolean().optional().describe("Llega en vuelo."),
   aeroline: z.string().optional().describe("Aerolínea (si llega en vuelo)."),
   flight_number: z.string().optional().describe("Número de vuelo."),
+};
+
+/**
+ * Tool annotations (issue #172 WS3). crear writes (creates a reservation in
+ * Localiza) and reaches an external system, but it is not destructive of
+ * existing data and is not idempotent (each call is a new request).
+ */
+export const crearSolicitudReservaAnnotations = {
+  title: "Crear solicitud de reserva",
+  readOnlyHint: false,
+  destructiveHint: false,
+  idempotentHint: false,
+  openWorldHint: true,
+} as const;
+
+/** Output schema (issue #172 WS3). Matches the success payload of jsonResult. */
+export const crearSolicitudReservaOutputSchema = {
+  estado: z.string(),
+  numero_solicitud: z.string(),
+  mensaje: z.string(),
 };
 
 interface CrearSolicitudReservaArgs {

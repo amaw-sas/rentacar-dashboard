@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from "vitest";
+import { z } from "zod";
 
 // Issue #72 Steps 6-7: the two MCP tools. Holdout SCEN-108..117.
 // Services + directory are mocked; the REAL quote codec runs so SCEN-110 proves
@@ -20,6 +21,10 @@ import {
   resolveLocationCode,
   buscarDisponibilidad,
   crearSolicitudReserva,
+  buscarDisponibilidadAnnotations,
+  buscarDisponibilidadOutputSchema,
+  crearSolicitudReservaAnnotations,
+  crearSolicitudReservaOutputSchema,
   type AvailabilityItem,
 } from "@/lib/api/mcp/tools";
 import { decodeQuote } from "@/lib/api/mcp/quote";
@@ -453,5 +458,98 @@ describe("crear_solicitud_reserva (SCEN-113..117)", () => {
     await crearSolicitudReserva({ quote, ...CUSTOMER });
     const input = vi.mocked(createReservation).mock.calls[0][0];
     expect(input.total_insurance).not.toBe(true);
+  });
+});
+
+// WS3 (issue #172): ChatGPT connector readiness — annotations + outputSchema +
+// structuredContent. Holdout SCEN-W4..W6, W8.
+describe("ChatGPT readiness metadata (SCEN-W4..W8)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(getLocationDirectory).mockResolvedValue(
+      dir([{ city: "Bogotá", code: "AABOG01" }]),
+    );
+  });
+
+  // SCEN-W4 — annotations carry the safety hints ChatGPT reads to allow execution.
+  it("SCEN-W4: tool annotations carry the correct safety hints", () => {
+    expect(buscarDisponibilidadAnnotations.readOnlyHint).toBe(true);
+    expect(buscarDisponibilidadAnnotations.destructiveHint).toBe(false);
+    expect(buscarDisponibilidadAnnotations.openWorldHint).toBe(false);
+
+    expect(crearSolicitudReservaAnnotations.readOnlyHint).toBe(false);
+    expect(crearSolicitudReservaAnnotations.destructiveHint).toBe(false);
+    expect(crearSolicitudReservaAnnotations.idempotentHint).toBe(false);
+    expect(crearSolicitudReservaAnnotations.openWorldHint).toBe(true);
+  });
+
+  // SCEN-W5 — buscar success must carry structuredContent that validates against
+  // its outputSchema, or the SDK throws "Output validation error".
+  it("SCEN-W5: buscar success → structuredContent valid against its outputSchema", async () => {
+    vi.mocked(searchAvailability).mockResolvedValue([ITEM]);
+    const res = await buscarDisponibilidad({
+      ciudad: "bogota",
+      fecha_recogida: "2026-07-01",
+      fecha_devolucion: "2026-07-05",
+    });
+
+    expect(res.isError).toBeFalsy();
+    expect(res.structuredContent).toBeDefined();
+    // mirrors the text payload exactly
+    expect(res.structuredContent).toEqual(JSON.parse(textOf(res)));
+    // and validates against the declared schema → SDK won't reject it
+    const parsed = z
+      .object(buscarDisponibilidadOutputSchema)
+      .safeParse(res.structuredContent);
+    expect(parsed.success).toBe(true);
+  });
+
+  // SCEN-W6 — crear success must carry structuredContent valid against its schema.
+  it("SCEN-W6: crear success → structuredContent valid against its outputSchema", async () => {
+    vi.mocked(searchAvailability).mockResolvedValue([ITEM]);
+    const buscar = await buscarDisponibilidad({
+      ciudad: "bogota",
+      fecha_recogida: "2026-07-01",
+      fecha_devolucion: "2026-07-05",
+    });
+    const quote = JSON.parse(textOf(buscar)).categorias[0].quote;
+
+    vi.mocked(createReservation).mockResolvedValue({
+      reserveCode: "ABC123",
+      reservationStatus: "reservado",
+    });
+    const res = await crearSolicitudReserva({
+      quote,
+      fullname: "Juan Pérez",
+      identification_type: "CC",
+      identification: "123456789",
+      email: "juan@example.com",
+      phone: "3001234567",
+      franchise: "alquilatucarro",
+    });
+
+    expect(res.isError).toBeFalsy();
+    expect(res.structuredContent).toBeDefined();
+    expect(res.structuredContent).toEqual(JSON.parse(textOf(res)));
+    const parsed = z
+      .object(crearSolicitudReservaOutputSchema)
+      .safeParse(res.structuredContent);
+    expect(parsed.success).toBe(true);
+  });
+
+  // SCEN-W8 — error results must NOT carry structuredContent (the SDK exempts
+  // isError results from schema validation; emitting it would be a latent bug).
+  it("SCEN-W8: error results carry no structuredContent", async () => {
+    const res = await crearSolicitudReserva({
+      quote: "@@@garbage@@@",
+      fullname: "x",
+      identification_type: "CC",
+      identification: "1",
+      email: "x@x.com",
+      phone: "3",
+      franchise: "alquilatucarro",
+    });
+    expect(res.isError).toBe(true);
+    expect(res.structuredContent).toBeUndefined();
   });
 });

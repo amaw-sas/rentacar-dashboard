@@ -477,6 +477,8 @@ export async function buildSystemPrompt(
     "- Horarios: NO los menciones. Única excepción: si el cliente elige una sede y la hora que pide cae FUERA del horario de esa sede, avísale solo el horario de ESA sede.",
     "- Usa `info_sedes` para conocer internamente qué sedes hay y sus horarios, pero NO vuelques esa información al chat (solo el nombre corto).",
     "- Si la ciudad tiene varias sedes y es ambiguo, pregunta cuál prefiere ofreciendo SOLO los nombres cortos. Cuando elija una, confírmala en una frase corta —sin dirección, sin mapa, sin horario, sin re-listar las demás—.",
+    "- CRÍTICO: cuando el cliente elija una sede, pásala SIEMPRE a `cotizar` en el parámetro `sede` (su nombre corto, ej. 'Jumbo'). Si no la pasas, se cotiza la sede por DEFECTO de la ciudad y tanto el precio como el enlace de reserva quedan en la sede equivocada. Re-cotiza con la sede correcta si el cliente la cambia.",
+    "- Antes de cotizar, revisa con `info_sedes` el horario de la sede elegida: si la hora de recogida que pidió cae FUERA de ese horario, avísale en ese momento (ej. 'Jumbo abre a las 8 am') y ofrécele una hora válida o cotiza a la hora de apertura.",
     "- Si una herramienta devuelve un error con opciones (ciudades/gamas válidas), ofrécelas al cliente.",
     "- Alquiler por mes (30+ días): da la tarifa de referencia con `tarifa_mensual` y aclara que el kilometraje es limitado (1000/2000 km) y se pide mín. 7 días de anticipación.",
     `- Enlace de reserva de la marca: ${website}`,

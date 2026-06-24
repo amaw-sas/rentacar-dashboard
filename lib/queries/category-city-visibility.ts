@@ -2,18 +2,21 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 /**
- * Category codes (e.g. 'C', 'CX') that are VISIBLE in a city, by city slug.
- * A category shows in a city when visibility_mode = 'all', or 'restricted' and
- * the city is in its category_city_visibility list. Used to filter the chat/MCP
- * availability so it never offers a gama the dashboard hid for that city.
+ * Category codes (e.g. 'CX') HIDDEN in a city, by city slug — exactly the same
+ * rule the website uses (isCategoryVisibleInCity): a category is hidden only when
+ * visibility_mode = 'restricted' AND it has a non-empty allowed-cities list AND
+ * this city is NOT in it. 'all', and 'restricted' with an EMPTY list, stay visible
+ * nationwide (fail open — a half-configured restriction must never delist a sellable
+ * gama). Used to filter the chat/MCP quote so it never offers a hidden gama.
  *
- * Admin client: the public chat route has no session. Returns null when the city
- * slug is unknown (caller then doesn't filter — fail open). Codes are uppercased.
+ * Admin client: the public chat route has no session. Returns an EMPTY set (hide
+ * nothing) when the city slug is unknown. Codes are uppercased.
  */
-export async function getVisibleCategoryCodesForCitySlug(
+export async function getHiddenCategoryCodesForCitySlug(
   citySlug: string,
-): Promise<Set<string> | null> {
+): Promise<Set<string>> {
   const supabase = createAdminClient();
+  const hidden = new Set<string>();
 
   const { data: city, error: cityErr } = await supabase
     .from("cities")
@@ -21,40 +24,37 @@ export async function getVisibleCategoryCodesForCitySlug(
     .eq("slug", citySlug)
     .maybeSingle();
   if (cityErr) throw cityErr;
-  if (!city) return null;
+  if (!city) return hidden;
+  const cityId = city.id as string;
 
-  const { data: allCats, error: allErr } = await supabase
+  const { data: restricted, error: rErr } = await supabase
     .from("vehicle_categories")
-    .select("code")
-    .eq("visibility_mode", "all");
-  if (allErr) throw allErr;
+    .select("id, code")
+    .eq("visibility_mode", "restricted");
+  if (rErr) throw rErr;
+  if (!restricted || restricted.length === 0) return hidden;
 
-  const { data: vis, error: visErr } = await supabase
+  const restrictedIds = (restricted as Array<{ id: string }>).map((c) => c.id);
+  const { data: vis, error: vErr } = await supabase
     .from("category_city_visibility")
-    .select("category_id")
-    .eq("city_id", city.id as string);
-  if (visErr) throw visErr;
+    .select("category_id, city_id")
+    .in("category_id", restrictedIds);
+  if (vErr) throw vErr;
 
-  const restrictedIds = (vis ?? []).map((r) => r.category_id as string);
-  let restricted: Array<{ code: string | null }> = [];
-  if (restrictedIds.length > 0) {
-    const { data, error } = await supabase
-      .from("vehicle_categories")
-      .select("code")
-      .eq("visibility_mode", "restricted")
-      .in("id", restrictedIds);
-    if (error) throw error;
-    restricted = (data ?? []) as Array<{ code: string | null }>;
+  // category_id → set of whitelisted city ids
+  const allowed = new Map<string, Set<string>>();
+  for (const row of (vis ?? []) as Array<{ category_id: string; city_id: string }>) {
+    if (!allowed.has(row.category_id)) allowed.set(row.category_id, new Set());
+    allowed.get(row.category_id)!.add(row.city_id);
   }
 
-  const codes = new Set<string>();
-  for (const c of (allCats ?? []) as Array<{ code: string | null }>) {
-    if (c.code) codes.add(c.code.toUpperCase());
+  for (const c of restricted as Array<{ id: string; code: string | null }>) {
+    const cities = allowed.get(c.id);
+    if (c.code && cities && cities.size > 0 && !cities.has(cityId)) {
+      hidden.add(c.code.toUpperCase());
+    }
   }
-  for (const c of restricted) {
-    if (c.code) codes.add(c.code.toUpperCase());
-  }
-  return codes;
+  return hidden;
 }
 
 export async function getCategoryVisibility(categoryId: string) {

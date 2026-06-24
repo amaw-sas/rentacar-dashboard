@@ -11,7 +11,7 @@ import {
 } from "@/lib/api/reservation-service";
 import { ServiceError } from "@/lib/api/service-error";
 import { encodeQuote, decodeQuote } from "@/lib/api/mcp/quote";
-import { getVisibleCategoryCodesForCitySlug } from "@/lib/queries/category-city-visibility";
+import { getHiddenCategoryCodesForCitySlug } from "@/lib/queries/category-city-visibility";
 import type { ReservationStatus } from "@/lib/schemas/reservation";
 
 /**
@@ -339,13 +339,13 @@ export async function buscarDisponibilidad(
   try {
     const citySlug = directory.find((l) => l.code === code)?.city;
     if (citySlug) {
-      const visibleCodes = await getVisibleCategoryCodesForCitySlug(citySlug);
-      if (visibleCodes) {
-        const filtered = items.filter((it) =>
-          visibleCodes.has(it.categoryCode.toUpperCase()),
+      const hidden = await getHiddenCategoryCodesForCitySlug(citySlug);
+      if (hidden.size > 0) {
+        const filtered = items.filter(
+          (it) => !hidden.has(it.categoryCode.toUpperCase()),
         );
-        // Only apply the filter if it leaves something — an empty result is more
-        // likely a data gap than "no car is available in this city".
+        // Only apply if it leaves something — an empty result is more likely a
+        // data gap than "no car is available in this city".
         if (filtered.length > 0) visibleItems = filtered;
       }
     }

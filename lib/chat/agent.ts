@@ -526,6 +526,6 @@ export async function buildStreamConfig(
     // gpt-5 follows the nuanced rules well but its default reasoning is slow
     // (~50s/turn → risks the route's maxDuration on a booking turn that also
     // calls Localiza). 'low' keeps the adherence gains while staying responsive.
-    providerOptions: { openai: { reasoningEffort: "low" } },
+    providerOptions: { openai: { reasoningEffort: "minimal" } },
   };
 }

@@ -13,7 +13,11 @@ import {
   infoGamasSchema,
   runInfoGamas,
 } from "@/lib/chat/knowledge-tools";
-import { crearReservaSchema, runCrearReserva } from "@/lib/chat/reserva-tool";
+import {
+  crearReservaSchema,
+  runCrearReserva,
+  type CrearReservaArgs,
+} from "@/lib/chat/reserva-tool";
 import { buildFallbackLinks } from "@/lib/chat/reserva-link";
 import { getLocationDirectory } from "@/lib/api/location-directory";
 import type { PersistedMessage } from "@/lib/chat/persistence";
@@ -185,6 +189,58 @@ export function resolveBookingQuote(
 }
 
 /**
+ * Build the pre-filled fallback links (finish-on-web + advisor WhatsApp) for a
+ * booking that couldn't be created in chat — provider failure OR a rate cap. So
+ * the lead is never lost. Best-effort: any failure resolving them returns null.
+ */
+async function buildBookingFallback(
+  brand: string,
+  quote: string,
+  args: CrearReservaArgs,
+  latestQuotes?: LatestQuotes,
+): Promise<{ webUrl: string; whatsappUrl: string } | null> {
+  try {
+    const directory = await getLocationDirectory();
+    return buildFallbackLinks(
+      {
+        brand,
+        quote,
+        gamaDescripcion: latestQuotes?.entries.find(
+          (e) =>
+            e.categoria.trim().toLowerCase() ===
+            args.categoria.trim().toLowerCase(),
+        )?.descripcion,
+        customer: {
+          fullname: args.fullname,
+          identification_type: args.identification_type,
+          identification: args.identification,
+          email: args.email,
+          phone: args.phone,
+        },
+      },
+      directory,
+    );
+  } catch (e) {
+    console.error("[chat] buildFallbackLinks failed", e);
+    return null;
+  }
+}
+
+/** Shape an error reply, attaching the fallback links as button data when present. */
+function errorWithFallback(
+  message: string,
+  links: { webUrl: string; whatsappUrl: string } | null,
+) {
+  return links
+    ? {
+        error: message,
+        completar_en_web: links.webUrl,
+        whatsapp_asesor: links.whatsappUrl,
+      }
+    : { error: message };
+}
+
+/**
  * Build the tools exposed to the agent for a given brand. A function (not a
  * static object) so `crear_reserva` can inject `franchise = brand` AND the
  * resolved `quote` server-side — the LLM never supplies either.
@@ -269,39 +325,53 @@ export function buildChatTools(
         const valid = validateCustomerData(args);
         if (!valid.ok) return { error: valid.error };
 
-        // Anti-abuse rate caps (only when the route threaded context). Counts
-        // PRIOR successful bookings; both fail open so a DB hiccup never blocks a
-        // genuine booking. A cap hit is a guard, not a provider failure → no event.
-        if (ctx?.conversationId) {
-          const n = await countSuccessfulBookingsForConversation(
-            ctx.conversationId,
-          );
-          if (n >= envInt("CHAT_MAX_BOOKINGS_PER_CONVERSATION", 3)) {
-            return {
-              error:
-                "Ya registré varias reservas en esta conversación. Si necesitas otra, escríbenos por WhatsApp y un asesor te ayuda.",
-            };
-          }
-        }
-        if (ctx?.ipHash) {
-          const sinceISO = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-          const n = await countSuccessfulBookingsForIp(ctx.ipHash, sinceISO);
-          if (n >= envInt("CHAT_MAX_BOOKINGS_PER_IP_PER_DAY", 5)) {
-            return {
-              error:
-                "Has alcanzado el máximo de reservas por hoy. Si necesitas otra, escríbenos por WhatsApp y un asesor te ayuda.",
-            };
-          }
-        }
-
         // Resolve the quote server-side (the LLM only named the gama) and reject a
-        // stale price. Either error is relayed verbatim → the bot re-cotizes.
+        // stale price. Done BEFORE the caps so a cap block can still hand over the
+        // pre-filled fallback links. Either error is relayed verbatim → re-cotiza.
         const resolved = resolveBookingQuote(
           latestQuotes,
           args.categoria,
           Date.now(),
         );
         if (!resolved.ok) return { error: resolved.error };
+
+        // Anti-abuse rate caps (only when the route threaded context). Counts
+        // PRIOR successful bookings; both fail open so a DB hiccup never blocks a
+        // genuine booking. On a cap hit, hand over the web/WhatsApp fallback so the
+        // lead isn't lost (and the bot has buttons to show, not an empty promise).
+        if (ctx?.conversationId) {
+          const n = await countSuccessfulBookingsForConversation(
+            ctx.conversationId,
+          );
+          if (n >= envInt("CHAT_MAX_BOOKINGS_PER_CONVERSATION", 3)) {
+            const links = await buildBookingFallback(
+              brand,
+              resolved.quote,
+              args,
+              latestQuotes,
+            );
+            return errorWithFallback(
+              "Ya registré varias reservas en esta conversación; abajo te dejo las opciones para terminar.",
+              links,
+            );
+          }
+        }
+        if (ctx?.ipHash) {
+          const sinceISO = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+          const n = await countSuccessfulBookingsForIp(ctx.ipHash, sinceISO);
+          if (n >= envInt("CHAT_MAX_BOOKINGS_PER_IP_PER_DAY", 5)) {
+            const links = await buildBookingFallback(
+              brand,
+              resolved.quote,
+              args,
+              latestQuotes,
+            );
+            return errorWithFallback(
+              "Por hoy alcanzaste el máximo de reservas; abajo te dejo las opciones para terminar.",
+              links,
+            );
+          }
+        }
 
         const start = Date.now();
         const result = await runCrearReserva({
@@ -327,40 +397,14 @@ export function buildChatTools(
         if (result.ok) return result.data;
 
         // Booking failed for real (provider down / no availability). Don't loop —
-        // hand the customer pre-filled fallback links so the lead isn't lost.
-        // Best-effort: any failure resolving them degrades to just the message.
-        let links: { webUrl: string; whatsappUrl: string } | null = null;
-        try {
-          const directory = await getLocationDirectory();
-          links = buildFallbackLinks(
-            {
-              brand,
-              quote: resolved.quote,
-              gamaDescripcion: latestQuotes?.entries.find(
-                (e) =>
-                  e.categoria.trim().toLowerCase() ===
-                  args.categoria.trim().toLowerCase(),
-              )?.descripcion,
-              customer: {
-                fullname: args.fullname,
-                identification_type: args.identification_type,
-                identification: args.identification,
-                email: args.email,
-                phone: args.phone,
-              },
-            },
-            directory,
-          );
-        } catch (e) {
-          console.error("[chat] buildFallbackLinks failed", e);
-        }
-        return links
-          ? {
-              error: result.message,
-              completar_en_web: links.webUrl,
-              whatsapp_asesor: links.whatsappUrl,
-            }
-          : { error: result.message };
+        // hand the customer the pre-filled fallback links so the lead isn't lost.
+        const links = await buildBookingFallback(
+          brand,
+          resolved.quote,
+          args,
+          latestQuotes,
+        );
+        return errorWithFallback(result.message, links);
       },
     }),
   };
@@ -392,7 +436,7 @@ export async function buildSystemPrompt(
     "Eres Valeria, la asesora virtual de alquiler de carros de la marca: una asistente con IA disponible 24/7. Si te preguntan, eres transparente —eres virtual, no humana— sin perder calidez. Hablas español de Colombia: cálida, clara y directa. Tuteas al cliente. Refiérete a ti misma SIEMPRE en femenino; nunca alternes el género.",
     "",
     "TONO Y ESTILO (CRÍTICO — debes sonar humana, no un bot):",
-    "- Saluda y preséntate UNA sola vez, en tu PRIMER mensaje, y pregunta en qué le puedes ayudar (o por la ciudad y las fechas). NO abras ofreciendo ni preguntando por los requisitos ('¿ya conoces los requisitos?'): eso solo va si el cliente lo pide. Después NUNCA vuelvas a saludar ('hola', 'buen día') ni a presentarte ('soy Valeria').",
+    "- Saluda y preséntate UNA sola vez, en tu PRIMER mensaje, y pregunta en qué le puedes ayudar (o por la ciudad y las fechas). El saludo debe ir acorde a la hora actual de Colombia que tienes arriba: 'buenos días' antes de las 12:00, 'buenas tardes' de 12:00 a 18:59, 'buenas noches' de 19:00 en adelante. NO abras ofreciendo ni preguntando por los requisitos ('¿ya conoces los requisitos?'): eso solo va si el cliente lo pide. Después NUNCA vuelvas a saludar ni a presentarte ('soy Valeria').",
     "- Evita las muletillas repetidas ('encantada', 'lista para ayudarte', 'estoy atenta', 'con gusto', 'perfecto'). Úsalas muy rara vez; nunca dos turnos seguidos.",
     "- Mensajes CORTOS (1–3 frases). Haz UNA sola pregunta a la vez: la que de verdad necesitas para avanzar. Nada de formularios ni varias preguntas juntas.",
     "- NO repitas en cada turno datos, fechas ni resúmenes ya dichos. Da por sentado lo que el cliente ya confirmó y avanza.",
@@ -420,10 +464,10 @@ export async function buildSystemPrompt(
     "- Solo después de cotizar y cuando el cliente quiera reservar una gama concreta:",
     "  1) Pide de forma natural (uno o dos a la vez, no como formulario): nombre completo, tipo y número de documento (CC, CE o PA), correo y teléfono. Si el cliente ya dio algún dato, no lo vuelvas a pedir.",
     "  2) RESUME la reserva UNA sola vez y breve: gama, fechas, sede (nombre corto) y el **precio** total con descuento (en negrita). NO re-listes los datos del cliente (nombre, documento, correo, teléfono) — ya los dio. Sin direcciones, sin mapas, sin horarios, sin requisitos.",
-    "  3) Pide confirmación EXPLÍCITA ('¿Confirmo tu reserva?'). NO llames `crear_reserva` sin un sí claro.",
+    "  3) Pide confirmación EXPLÍCITA ('¿Confirmo tu reserva?') UNA sola vez. En cuanto el cliente diga que sí, llama `crear_reserva` de inmediato: NO vuelvas a resumir ni a re-preguntar la confirmación. NO llames `crear_reserva` sin un sí claro.",
     "  4) Llama `crear_reserva` indicando la `categoria` (el CÓDIGO de gama, ej. 'C') que el cliente eligió, tal como apareció en `cotizar`. El sistema usa la cotización guardada — NO necesitas el `quote`. En el turno de confirmación NO vuelvas a llamar `cotizar` ni `info_sedes`: ve directo a `crear_reserva`.",
     "  5) Al recibir el número de solicitud, dáselo en **negrita** y dile que le enviaste todos los detalles de la reserva (sede, dirección, mapa, instrucciones y requisitos) a su correo y WhatsApp. NO repitas aquí los datos del cliente, ni la dirección/mapa, ni los requisitos, ni menciones al proveedor. NO ofrezcas servicios adicionales (conductor, silla de bebé, GPS, etc.). Cierra breve y queda a disposición.",
-    "  6) Si `crear_reserva` pide actualizar el precio (cotización antigua), vuelve a cotizar las mismas fechas y sede; si el precio cambió, INFÓRMASELO al cliente y pide confirmación de nuevo antes de reservar. Si falla por error del proveedor, reintenta UNA sola vez; si vuelve a fallar y la herramienta te devuelve `completar_en_web`/`whatsapp_asesor`, discúlpate breve, NO reintentes más y dile que abajo le dejas dos opciones para terminar (en la web o con un asesor por WhatsApp). IMPORTANTE: NUNCA escribas URLs ni enlaces tú misma ni los inventes — el sistema muestra los botones automáticamente a partir de la respuesta de la herramienta.",
+    "  6) Si `crear_reserva` pide actualizar el precio (cotización antigua), vuelve a cotizar las mismas fechas y sede; si el precio cambió, INFÓRMASELO al cliente y pide confirmación de nuevo antes de reservar. Si falla por error del proveedor, reintenta UNA sola vez; si vuelve a fallar y la herramienta te devuelve `completar_en_web`/`whatsapp_asesor`, discúlpate breve, NO reintentes más y dile que abajo le dejas dos opciones para terminar (en la web o con un asesor por WhatsApp). IMPORTANTE: NUNCA escribas URLs ni enlaces tú misma ni los inventes, y NO narres que 'activas' o 'muestras' un botón ni describas botones. Di en UNA frase breve que abajo le dejas las opciones para terminar (en la web o con un asesor por WhatsApp) y el sistema las muestra solo. Si la herramienta NO devolvió esas opciones, no prometas botones: dile que escriba por WhatsApp al asesor.",
     "- Para confirmar solo necesitas la `categoria`; NO re-cotices solo para confirmar. Re-cotiza únicamente si el cliente cambió la ciudad, las fechas o la gama, o si `crear_reserva` te lo pide.",
     "",
     "REGLAS:",

@@ -11,6 +11,7 @@ import {
 } from "@/lib/api/reservation-service";
 import { ServiceError } from "@/lib/api/service-error";
 import { encodeQuote, decodeQuote } from "@/lib/api/mcp/quote";
+import { getVisibleCategoryCodesForCitySlug } from "@/lib/queries/category-city-visibility";
 import type { ReservationStatus } from "@/lib/schemas/reservation";
 
 /**
@@ -330,11 +331,33 @@ export async function buscarDisponibilidad(
     );
   }
 
+  // Drop gamas the dashboard hid for this city (category_city_visibility). Localiza
+  // returns its full fleet per branch; the business restricts some gamas per city
+  // (e.g. CX not offered in Barranquilla). Fail OPEN: any lookup error leaves the
+  // full list rather than blocking a quote.
+  let visibleItems = items;
+  try {
+    const citySlug = directory.find((l) => l.code === code)?.city;
+    if (citySlug) {
+      const visibleCodes = await getVisibleCategoryCodesForCitySlug(citySlug);
+      if (visibleCodes) {
+        const filtered = items.filter((it) =>
+          visibleCodes.has(it.categoryCode.toUpperCase()),
+        );
+        // Only apply the filter if it leaves something — an empty result is more
+        // likely a data gap than "no car is available in this city".
+        if (filtered.length > 0) visibleItems = filtered;
+      }
+    }
+  } catch (e) {
+    console.error("[mcp] category visibility filter failed", e);
+  }
+
   // Build a quote per category. A malformed item (missing numeric field → NaN →
   // encodeQuote's zod rejects it) is SKIPPED, not allowed to crash the whole
   // response — degrade to the categories that priced cleanly.
   const categorias: Array<Record<string, unknown>> = [];
-  for (const item of items) {
+  for (const item of visibleItems) {
     try {
       const pricing = deriveStandardPricing(item);
       const quote = encodeQuote({

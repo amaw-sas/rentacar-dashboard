@@ -39,7 +39,7 @@ import {
  * CHAT_RESERVATIONS_ENABLED — off by default, so the public endpoint has no
  * booking side effect until Inc. 4 turns it on per brand.
  */
-export const CHAT_MODEL = "gpt-5-mini";
+export const CHAT_MODEL = "gpt-5";
 
 /** Max tool-calling steps per turn (room for a quote/lookup/booking + the reply). */
 const MAX_STEPS = 6;

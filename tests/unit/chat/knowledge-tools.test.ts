@@ -111,7 +111,7 @@ describe("info_sedes", () => {
 // --- tarifa_mensual --------------------------------------------------------
 
 describe("tarifa_mensual", () => {
-  it("picks the active pricing row for today and ignores expired ones", async () => {
+  it("picks the active pricing row for the rental date and ignores expired ones", async () => {
     tables = {
       rental_companies: LOCALIZA,
       vehicle_categories: { data: [{ id: "cat-c", code: "C", name: "Económico" }] },
@@ -135,7 +135,10 @@ describe("tarifa_mensual", () => {
         ],
       },
     };
-    const res = (await runTarifaMensual({ gama: "c" })) as {
+    const res = (await runTarifaMensual({
+      gama: "c",
+      fecha_recogida: "2026-06-15",
+    })) as {
       gama: string;
       mensual_1000km: number;
     };
@@ -180,7 +183,7 @@ describe("tarifa_mensual", () => {
     expect(res.mensual_2000km).toBe(4613000);
   });
 
-  it("falls back to today's row when fecha_recogida is missing or malformed", async () => {
+  it("errors (never falls back to today) when fecha_recogida is missing or malformed", async () => {
     tables = {
       rental_companies: LOCALIZA,
       vehicle_categories: {
@@ -193,18 +196,21 @@ describe("tarifa_mensual", () => {
             valid_from: "2020-01-01",
             valid_until: null,
             monthly_1k_price: 4542000,
-            monthly_2k_price: 5029000,
-            monthly_3k_price: 5029000,
-            monthly_insurance_price: 476000,
           },
         ],
       },
     };
-    const res = (await runTarifaMensual({
+    const malformed = (await runTarifaMensual({
       gama: "cx",
       fecha_recogida: "no-es-fecha",
-    })) as { mensual_1000km: number };
-    expect(res.mensual_1000km).toBe(4542000);
+    })) as { error: string };
+    expect(malformed.error).toMatch(/fecha de inicio/i);
+
+    const missing = (await runTarifaMensual({
+      gama: "cx",
+      fecha_recogida: "",
+    })) as { error: string };
+    expect(missing.error).toMatch(/fecha de inicio/i);
   });
 
   it("errors with available gamas when the gama is unknown", async () => {
@@ -212,7 +218,10 @@ describe("tarifa_mensual", () => {
       rental_companies: LOCALIZA,
       vehicle_categories: { data: [{ id: "cat-c", code: "C", name: "Económico" }] },
     };
-    const res = (await runTarifaMensual({ gama: "Z" })) as { error: string };
+    const res = (await runTarifaMensual({
+      gama: "Z",
+      fecha_recogida: "2026-06-15",
+    })) as { error: string };
     expect(res.error).toContain("C");
   });
 
@@ -231,7 +240,10 @@ describe("tarifa_mensual", () => {
         ],
       },
     };
-    const res = (await runTarifaMensual({ gama: "C" })) as { error: string };
+    const res = (await runTarifaMensual({
+      gama: "C",
+      fecha_recogida: "2026-06-15",
+    })) as { error: string };
     expect(res.error).toMatch(/mensual/i);
   });
 });

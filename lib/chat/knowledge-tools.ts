@@ -4,7 +4,6 @@ import {
   getLocationDirectory,
   type LocationDirectoryItem,
 } from "@/lib/api/location-directory";
-import { bogotaTodayYMD } from "@/lib/date/bogota";
 
 /**
  * Structured knowledge tools for the chat agent (Chat Fase 2 · Incremento 2).
@@ -145,17 +144,27 @@ export const tarifaMensualSchema = {
     .describe("Código o nombre de gama, p. ej. 'C', 'F', 'GC', 'económico'."),
   fecha_recogida: z
     .string()
-    .optional()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "Usa el formato YYYY-MM-DD.")
     .describe(
-      "Fecha de inicio del alquiler en YYYY-MM-DD. Selecciona la tarifa vigente " +
-        "para ESE mes (las tarifas mensuales cambian por mes). Si se omite, usa hoy.",
+      "Fecha de inicio del alquiler en YYYY-MM-DD. OBLIGATORIA: selecciona la " +
+        "tarifa vigente para ESE mes (las tarifas mensuales cambian por mes). Si el " +
+        "cliente aún no dio la fecha de inicio, pídesela antes de llamar esta herramienta.",
     ),
 };
 
 export async function runTarifaMensual(args: {
   gama: string;
-  fecha_recogida?: string;
+  fecha_recogida: string;
 }): Promise<unknown> {
+  // The rental month drives the price; we NEVER fall back to today. A missing or
+  // malformed date returns an error so the bot asks for it instead of silently
+  // quoting the wrong month.
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(args.fecha_recogida ?? "")) {
+    return {
+      error:
+        "Necesito la fecha de inicio del alquiler (YYYY-MM-DD) para darte la tarifa mensual correcta.",
+    };
+  }
   const companyId = await getLocalizaCompanyId();
   if (!companyId) {
     return { error: "No pude consultar tarifas en este momento." };
@@ -190,13 +199,10 @@ export async function runTarifaMensual(args: {
     .eq("category_id", cat.id)
     .order("valid_from", { ascending: false });
 
-  // Select the pricing row valid for the RENTAL month, not for today: monthly
-  // rates vary by month, so a quote for August must use August's row even if the
-  // chat runs in June. Fall back to today when no (or a malformed) date is given.
-  const refDate =
-    args.fecha_recogida && /^\d{4}-\d{2}-\d{2}$/.test(args.fecha_recogida)
-      ? args.fecha_recogida
-      : bogotaTodayYMD();
+  // Select the pricing row valid for the RENTAL month (validated above), not for
+  // today: monthly rates vary by month, so a quote for August must use August's
+  // row even if the chat runs in June.
+  const refDate = args.fecha_recogida;
   const active = (pricing ?? []).find(
     (p) =>
       p.status === "active" &&

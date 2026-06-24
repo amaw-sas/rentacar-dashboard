@@ -8,6 +8,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   getReservationCounts,
   getUsedCounts,
@@ -63,6 +64,12 @@ const copFormat = new Intl.NumberFormat("es-CO", {
   maximumFractionDigits: 0,
 });
 
+// The page shell resolves only the URL-derived period (no DB), so the title,
+// section heading and period selector paint immediately. The two data-heavy
+// sections each stream in behind a Suspense boundary: ReservationsSection runs
+// ~24 count round-trips + the series RPC; BottomSection runs the referral and
+// recent-reservations reads. Splitting them means a slow query in one section no
+// longer blocks first paint of the whole page (home slow-load fix).
 export default async function DashboardPage({
   searchParams,
 }: {
@@ -85,19 +92,50 @@ export default async function DashboardPage({
     readParam("to")
   );
 
-  // Franchises drive the chart series and its labels. Only the count/series
-  // queries depend on them, so fetch franchises alongside the independent
-  // queries and chain those off the resolved list — keeps everything else parallel.
-  const [franchises, topReferrals, recentReservations] = await Promise.all([
-    getFranchises(),
-    getTopReferrals(5),
-    getRecentReservations(5),
-  ]);
+  return (
+    <div className="space-y-6">
+      <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
 
+      {/* Per-franchise reservations: a period-summary card paired with a wider
+          trend chart, one row per metric (created / used). The period selector
+          drives both charts' date range; the cards show fixed periods. */}
+      <div className="space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-lg font-semibold tracking-tight">
+            Reservas por franquicia
+          </h2>
+          <Suspense fallback={<div className="h-9" />}>
+            <DashboardPeriodSelector period={period} from={fromYMD} to={toYMD} />
+          </Suspense>
+        </div>
+
+        <Suspense fallback={<ReservationsSectionSkeleton />}>
+          <ReservationsSection fromYMD={fromYMD} toYMD={toYMD} />
+        </Suspense>
+      </div>
+
+      <Suspense fallback={<BottomSectionSkeleton />}>
+        <BottomSection />
+      </Suspense>
+    </div>
+  );
+}
+
+// Metric cards + trend charts for created/used reservations. Fetches franchises
+// (the chart series depend on them), then the counts/series in parallel.
+async function ReservationsSection({
+  fromYMD,
+  toYMD,
+}: {
+  fromYMD: string;
+  toYMD: string;
+}) {
+  const franchises = await getFranchises();
   const activeFranchises = (franchises ?? []).filter(
     (f) => f.status === "active"
   );
   const activeCodes = activeFranchises.map((f) => f.code);
+
   const [reservationCounts, usedCounts, dailySeries] = await Promise.all([
     getReservationCounts(activeCodes),
     getUsedCounts(activeCodes),
@@ -207,173 +245,214 @@ export default async function DashboardPage({
   ];
 
   return (
-    <div className="space-y-6">
-      <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
-
-      {/* Per-franchise reservations: a period-summary card paired with a wider
-          trend chart, one row per metric (created / used). The period selector
-          drives both charts' date range; the cards show fixed periods. */}
-      <div className="space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-lg font-semibold tracking-tight">
-            Reservas por franquicia
-          </h2>
-          <Suspense fallback={<div className="h-9" />}>
-            <DashboardPeriodSelector period={period} from={fromYMD} to={toYMD} />
-          </Suspense>
-        </div>
-
-        {/* Created */}
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
-          <DashboardMetricCard
+    <div className="space-y-4">
+      {/* Created */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
+        <DashboardMetricCard
+          title="Reservas creadas"
+          icon={CalendarCheck}
+          items={createdItems}
+        />
+        <div className="lg:col-span-3">
+          <FranchiseLineChart
             title="Reservas creadas"
-            icon={CalendarCheck}
-            items={createdItems}
+            description="Por día y franquicia"
+            series={dailySeries}
+            franchises={franchiseRefs}
+            metric="created_count"
           />
-          <div className="lg:col-span-3">
-            <FranchiseLineChart
-              title="Reservas creadas"
-              description="Por día y franquicia"
-              series={dailySeries}
-              franchises={franchiseRefs}
-              metric="created_count"
-            />
-          </div>
         </div>
+      </div>
 
-        {/* Used */}
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
-          <DashboardMetricCard
+      {/* Used */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
+        <DashboardMetricCard
+          title="Reservas utilizadas"
+          icon={CarFront}
+          items={usedItems}
+        />
+        <div className="lg:col-span-3">
+          <FranchiseLineChart
             title="Reservas utilizadas"
-            icon={CarFront}
-            items={usedItems}
+            description="Recogidas por día y franquicia"
+            series={dailySeries}
+            franchises={franchiseRefs}
+            metric="used_count"
           />
-          <div className="lg:col-span-3">
-            <FranchiseLineChart
-              title="Reservas utilizadas"
-              description="Recogidas por día y franquicia"
-              series={dailySeries}
-              franchises={franchiseRefs}
-              metric="used_count"
-            />
-          </div>
         </div>
       </div>
+    </div>
+  );
+}
 
-      {/* Bottom sections */}
-      <div className="grid gap-4 lg:grid-cols-2">
-        {/* Top referrals */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Top Referidos del Mes</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {topReferrals.length === 0 ? (
-              <p className="text-sm text-muted-foreground">
-                Sin referidos este mes
-              </p>
-            ) : (
-              <div className="space-y-3">
-                {topReferrals.map((ref, i) => (
-                  <div
-                    key={ref.code}
-                    className="flex items-center justify-between"
-                  >
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span className="text-sm font-medium text-muted-foreground w-5 shrink-0">
-                        {i + 1}.
-                      </span>
-                      <span className="text-sm font-medium truncate">
-                        {ref.name}
-                      </span>
-                      <Badge variant="outline" className="shrink-0">
-                        {ref.code}
-                      </Badge>
-                    </div>
-                    <span className="text-sm font-semibold tabular-nums ml-2">
-                      {ref.count}
+// Top referrals + recent reservations — independent of the period selector, so
+// they stream on their own boundary.
+async function BottomSection() {
+  const [topReferrals, recentReservations] = await Promise.all([
+    getTopReferrals(5),
+    getRecentReservations(5),
+  ]);
+
+  return (
+    <div className="grid gap-4 lg:grid-cols-2">
+      {/* Top referrals */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Top Referidos del Mes</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {topReferrals.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              Sin referidos este mes
+            </p>
+          ) : (
+            <div className="space-y-3">
+              {topReferrals.map((ref, i) => (
+                <div
+                  key={ref.code}
+                  className="flex items-center justify-between"
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="text-sm font-medium text-muted-foreground w-5 shrink-0">
+                      {i + 1}.
                     </span>
+                    <span className="text-sm font-medium truncate">
+                      {ref.name}
+                    </span>
+                    <Badge variant="outline" className="shrink-0">
+                      {ref.code}
+                    </Badge>
                   </div>
-                ))}
+                  <span className="text-sm font-semibold tabular-nums ml-2">
+                    {ref.count}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Recent reservations */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Reservas Recientes</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {recentReservations.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              Sin reservas registradas
+            </p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b text-left text-muted-foreground">
+                    <th className="pb-2 font-medium">Código</th>
+                    <th className="pb-2 font-medium">Cliente</th>
+                    <th className="pb-2 font-medium">Estado</th>
+                    <th className="pb-2 font-medium text-right">Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {recentReservations.map((r) => {
+                    const rawCustomer = r.customers as
+                      | { first_name: string; last_name: string }
+                      | { first_name: string; last_name: string }[]
+                      | null;
+                    const customer = Array.isArray(rawCustomer)
+                      ? rawCustomer[0]
+                      : rawCustomer;
+                    const status = r.status as string;
+                    const customerName =
+                      r.customer_name_at_booking ??
+                      (customer
+                        ? `${customer.first_name} ${customer.last_name}`
+                        : "—");
+
+                    return (
+                      <tr key={r.id} className="border-b last:border-0">
+                        <td className="py-2">
+                          <Link
+                            href={`/reservations/${r.id}`}
+                            prefetch={false}
+                            className="text-primary hover:underline font-medium"
+                          >
+                            {r.reservation_code ?? "—"}
+                          </Link>
+                        </td>
+                        <td className="py-2 truncate max-w-[140px]">
+                          {customerName}
+                        </td>
+                        <td className="py-2">
+                          <Badge variant={STATUS_VARIANT[status] ?? "secondary"}>
+                            {STATUS_LABELS[
+                              status as keyof typeof STATUS_LABELS
+                            ] ?? status}
+                          </Badge>
+                        </td>
+                        <td className="py-2 text-right tabular-nums">
+                          {r.total_price != null
+                            ? copFormat.format(r.total_price)
+                            : "—"}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+// Suspense fallbacks — sized to the real layout so streaming doesn't shift it.
+function ReservationsSectionSkeleton() {
+  return (
+    <div className="space-y-4">
+      {Array.from({ length: 2 }).map((_, row) => (
+        <div key={row} className="grid grid-cols-1 gap-4 lg:grid-cols-4">
+          <Card className="min-w-0">
+            <CardContent className="pt-4 space-y-3">
+              <Skeleton className="h-4 w-32" />
+              {Array.from({ length: 4 }).map((_, i) => (
+                <div key={i} className="flex items-center justify-between">
+                  <Skeleton className="h-4 w-20" />
+                  <Skeleton className="h-4 w-10" />
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+          <Card className="lg:col-span-3">
+            <CardContent className="pt-4">
+              <Skeleton className="h-[260px] w-full" />
+            </CardContent>
+          </Card>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function BottomSectionSkeleton() {
+  return (
+    <div className="grid gap-4 lg:grid-cols-2">
+      {Array.from({ length: 2 }).map((_, card) => (
+        <Card key={card}>
+          <CardContent className="pt-4 space-y-3">
+            <Skeleton className="h-5 w-40" />
+            {Array.from({ length: 5 }).map((_, i) => (
+              <div key={i} className="flex items-center justify-between">
+                <Skeleton className="h-4 w-32" />
+                <Skeleton className="h-4 w-12" />
               </div>
-            )}
+            ))}
           </CardContent>
         </Card>
-
-        {/* Recent reservations */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Reservas Recientes</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {recentReservations.length === 0 ? (
-              <p className="text-sm text-muted-foreground">
-                Sin reservas registradas
-              </p>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b text-left text-muted-foreground">
-                      <th className="pb-2 font-medium">Código</th>
-                      <th className="pb-2 font-medium">Cliente</th>
-                      <th className="pb-2 font-medium">Estado</th>
-                      <th className="pb-2 font-medium text-right">Total</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {recentReservations.map((r) => {
-                      const rawCustomer = r.customers as
-                        | { first_name: string; last_name: string }
-                        | { first_name: string; last_name: string }[]
-                        | null;
-                      const customer = Array.isArray(rawCustomer)
-                        ? rawCustomer[0]
-                        : rawCustomer;
-                      const status = r.status as string;
-                      const customerName =
-                        r.customer_name_at_booking ??
-                        (customer
-                          ? `${customer.first_name} ${customer.last_name}`
-                          : "—");
-
-                      return (
-                        <tr key={r.id} className="border-b last:border-0">
-                          <td className="py-2">
-                            <Link
-                              href={`/reservations/${r.id}`}
-                              className="text-primary hover:underline font-medium"
-                            >
-                              {r.reservation_code ?? "—"}
-                            </Link>
-                          </td>
-                          <td className="py-2 truncate max-w-[140px]">
-                            {customerName}
-                          </td>
-                          <td className="py-2">
-                            <Badge
-                              variant={STATUS_VARIANT[status] ?? "secondary"}
-                            >
-                              {STATUS_LABELS[
-                                status as keyof typeof STATUS_LABELS
-                              ] ?? status}
-                            </Badge>
-                          </td>
-                          <td className="py-2 text-right tabular-nums">
-                            {r.total_price != null
-                              ? copFormat.format(r.total_price)
-                              : "—"}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
+      ))}
     </div>
   );
 }

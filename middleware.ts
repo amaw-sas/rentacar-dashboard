@@ -12,6 +12,7 @@ export const PUBLIC_API_PREFIXES = [
   "/api/openapi",
   "/api/mcp",
   "/api/chat",
+  "/chat-test",
 ];
 
 export async function middleware(request: NextRequest) {

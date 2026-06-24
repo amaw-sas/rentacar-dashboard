@@ -26,7 +26,7 @@ export const dynamic = "force-dynamic";
 // crear_reserva input, and then calls the Localiza proxy — which alone consumes
 // the ~30s the website's /api/reservations route budgets for booking. The chat
 // adds the model + tool overhead on top, so it needs the extra headroom.
-export const maxDuration = 60;
+export const maxDuration = 90;
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",

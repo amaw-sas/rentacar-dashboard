@@ -143,6 +143,70 @@ describe("tarifa_mensual", () => {
     expect(res.mensual_1000km).toBe(4149000);
   });
 
+  it("selects the pricing row valid for the rental month, not today", async () => {
+    tables = {
+      rental_companies: LOCALIZA,
+      vehicle_categories: {
+        data: [{ id: "cat-cx", code: "CX", name: "Económico Automático" }],
+      },
+      category_pricing: {
+        data: [
+          {
+            status: "active",
+            valid_from: "2026-06-01",
+            valid_until: "2026-06-30",
+            monthly_1k_price: 4542000,
+            monthly_2k_price: 5029000,
+            monthly_3k_price: 5029000,
+            monthly_insurance_price: 476000,
+          },
+          {
+            status: "active",
+            valid_from: "2026-08-01",
+            valid_until: "2026-08-31",
+            monthly_1k_price: 4166000,
+            monthly_2k_price: 4613000,
+            monthly_3k_price: 4613000,
+            monthly_insurance_price: 476000,
+          },
+        ],
+      },
+    };
+    const res = (await runTarifaMensual({
+      gama: "cx",
+      fecha_recogida: "2026-08-05",
+    })) as { mensual_1000km: number; mensual_2000km: number };
+    expect(res.mensual_1000km).toBe(4166000);
+    expect(res.mensual_2000km).toBe(4613000);
+  });
+
+  it("falls back to today's row when fecha_recogida is missing or malformed", async () => {
+    tables = {
+      rental_companies: LOCALIZA,
+      vehicle_categories: {
+        data: [{ id: "cat-cx", code: "CX", name: "Económico Automático" }],
+      },
+      category_pricing: {
+        data: [
+          {
+            status: "active",
+            valid_from: "2020-01-01",
+            valid_until: null,
+            monthly_1k_price: 4542000,
+            monthly_2k_price: 5029000,
+            monthly_3k_price: 5029000,
+            monthly_insurance_price: 476000,
+          },
+        ],
+      },
+    };
+    const res = (await runTarifaMensual({
+      gama: "cx",
+      fecha_recogida: "no-es-fecha",
+    })) as { mensual_1000km: number };
+    expect(res.mensual_1000km).toBe(4542000);
+  });
+
   it("errors with available gamas when the gama is unknown", async () => {
     tables = {
       rental_companies: LOCALIZA,

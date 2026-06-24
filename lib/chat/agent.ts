@@ -527,10 +527,10 @@ export async function buildStreamConfig(
     messages,
     tools: buildChatTools(brand, latestQuotes, ctx),
     stopWhen: stepCountIs(MAX_STEPS),
-    // 'minimal' reasoning starved adherence (re-greeting, payment loops, garbled
-    // sede hours, off-domain hallucinations). 'medium' restores the nuanced rule-
-    // following; maxDuration=90s covers a booking turn that also calls Localiza.
-    // Dial down to 'low' if latency hurts and quality holds.
-    providerOptions: { openai: { reasoningEffort: "medium" } },
+    // 'low' is the sweet spot: GPT-5 intelligence index is ~64 at low vs ~67 at
+    // medium (near-identical adherence) but ~3x faster (~10s vs ~29s/turn).
+    // 'minimal' (44) starved rule-following; 'medium' overpaid latency for ~no
+    // quality gain. maxDuration=90s still covers a booking turn that calls Localiza.
+    providerOptions: { openai: { reasoningEffort: "low" } },
   };
 }

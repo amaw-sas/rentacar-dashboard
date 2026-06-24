@@ -178,9 +178,49 @@ describe("tarifa_mensual", () => {
     const res = (await runTarifaMensual({
       gama: "cx",
       fecha_recogida: "2026-08-05",
-    })) as { mensual_1000km: number; mensual_2000km: number };
+    })) as {
+      mensual_1000km: number;
+      mensual_2000km: number;
+      seguro_total_mensual?: number;
+    };
     expect(res.mensual_1000km).toBe(4166000);
     expect(res.mensual_2000km).toBe(4613000);
+    // Seguro total NOT surfaced in a normal monthly quote.
+    expect(res.seguro_total_mensual).toBeUndefined();
+  });
+
+  it("omits the seguro total by default and includes it only with incluir_seguro", async () => {
+    tables = {
+      rental_companies: LOCALIZA,
+      vehicle_categories: {
+        data: [{ id: "cat-cx", code: "CX", name: "Económico Automático" }],
+      },
+      category_pricing: {
+        data: [
+          {
+            status: "active",
+            valid_from: "2020-01-01",
+            valid_until: null,
+            monthly_1k_price: 4166000,
+            monthly_2k_price: 4613000,
+            monthly_3k_price: 4613000,
+            monthly_insurance_price: 476000,
+          },
+        ],
+      },
+    };
+    const sin = (await runTarifaMensual({
+      gama: "cx",
+      fecha_recogida: "2026-08-05",
+    })) as { seguro_total_mensual?: number };
+    expect(sin.seguro_total_mensual).toBeUndefined();
+
+    const con = (await runTarifaMensual({
+      gama: "cx",
+      fecha_recogida: "2026-08-05",
+      incluir_seguro: true,
+    })) as { seguro_total_mensual?: number };
+    expect(con.seguro_total_mensual).toBe(476000);
   });
 
   it("errors (never falls back to today) when fecha_recogida is missing or malformed", async () => {

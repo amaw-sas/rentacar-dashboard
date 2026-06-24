@@ -150,11 +150,19 @@ export const tarifaMensualSchema = {
         "tarifa vigente para ESE mes (las tarifas mensuales cambian por mes). Si el " +
         "cliente aún no dio la fecha de inicio, pídesela antes de llamar esta herramienta.",
     ),
+  incluir_seguro: z
+    .boolean()
+    .optional()
+    .describe(
+      "Pásalo como true SOLO si el cliente pregunta por el seguro/seguro total. " +
+        "Por defecto la tarifa NO incluye el valor del seguro total (el básico ya va incluido en el alquiler).",
+    ),
 };
 
 export async function runTarifaMensual(args: {
   gama: string;
   fecha_recogida: string;
+  incluir_seguro?: boolean;
 }): Promise<unknown> {
   // The rental month drives the price; we NEVER fall back to today. A missing or
   // malformed date returns an error so the bot asks for it instead of silently
@@ -215,13 +223,18 @@ export async function runTarifaMensual(args: {
     };
   }
 
+  // Only surface the seguro total value when the client explicitly asked for it
+  // (incluir_seguro): otherwise it must NOT appear in a normal monthly quote — the
+  // basic insurance is already included and the total is an optional add-on.
   return {
     gama: cat.code,
     nombre: cat.name,
     mensual_1000km: active.monthly_1k_price,
     mensual_2000km: active.monthly_2k_price,
     mensual_3000km: active.monthly_3k_price,
-    seguro_mensual: active.monthly_insurance_price,
+    ...(args.incluir_seguro
+      ? { seguro_total_mensual: active.monthly_insurance_price }
+      : {}),
     nota: "Kilometraje LIMITADO (1000/2000 km). Mínimo 7 días de anticipación. Valor nacional, no varía por ciudad.",
   };
 }

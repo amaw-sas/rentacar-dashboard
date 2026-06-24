@@ -111,7 +111,7 @@ Ciudades con servicio: Bogotá, Medellín, Cali, Barranquilla, Cartagena, Monter
 ### 2.6 Seguros
 | Seguro | Estado | Detalle |
 |---|---|---|
-| **Básico** | Incluido | Cubre prácticamente todo **excepto daños > $3.570.000 COP**. |
+| **Básico** | Incluido | Deducible de **$3.570.000 COP**: el cliente asume hasta ese monto por daños y el seguro cubre el excedente. Daño menor a $3.570.000 → lo paga el cliente completo; daño mayor → el cliente paga $3.570.000 y el seguro cubre el resto. |
 | **Todo riesgo / total** | Opcional, en sede, con sobrecosto | Ej.: +~$348.000 sobre el básico en un caso. |
 | **Conductor adicional** | Opcional, +$12.000/día | Cuando titular ≠ conductor; ambos presentes en sede. |
 
@@ -223,7 +223,7 @@ Tarifas mensuales de referencia: Gama C $4.149.000 (1000km)/$4.635.000 (2000km);
 - **¿Puedo viajar con mascotas?** → "Sí. Ten en cuenta que aplica lavada completa al retornar ($150.000–$225.000)."
 - **¿La tarjeta queda en garantía?** → "No, solo se usa para el pago y se devuelve de inmediato."
 - **¿Cómo funciona el pico y placa?** → (respuesta larga §6).
-- **¿Qué cubre el seguro?** → "Seguro básico incluido que cubre casi todo, excepto daños superiores a $3.570.000. Todo riesgo opcional en sede."
+- **¿Qué cubre el seguro?** → "El alquiler ya incluye seguro básico, con un deducible de $3.570.000: tú asumes hasta ese monto por daños y el seguro cubre el excedente (si el daño es menor a $3.570.000 lo pagas tú; si es mayor, pagas $3.570.000 y el seguro cubre el resto). El seguro total es opcional, se toma en sede con costo adicional y reduce ese deducible."
 - **¿Cómo hago la reserva?** → "Solo necesito nombre completo, documento, teléfono y correo. No pido datos de la tarjeta."
 - **¿Cuál es el más espacioso de la gama?** → (excepción a "por gamas": el Kwid tiene un poco más de espacio; o sugerir subir a gama F).
 

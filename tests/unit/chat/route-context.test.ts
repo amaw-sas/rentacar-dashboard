@@ -25,6 +25,7 @@ vi.mock("ai", () => ({
 vi.mock("@/lib/chat/agent", () => ({
   buildStreamConfig: h.buildStreamConfig,
   extractLatestQuotes: h.extractLatestQuotes,
+  CHAT_MODEL_USES_GATEWAY: false,
 }));
 vi.mock("@/lib/chat/persistence", () => ({
   loadMessages: h.loadMessages,

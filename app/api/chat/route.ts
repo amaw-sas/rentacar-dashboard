@@ -4,7 +4,11 @@ import {
   streamText,
   type UIMessage,
 } from "ai";
-import { buildStreamConfig, extractLatestQuotes } from "@/lib/chat/agent";
+import {
+  buildStreamConfig,
+  extractLatestQuotes,
+  CHAT_MODEL_USES_GATEWAY,
+} from "@/lib/chat/agent";
 import {
   createConversation,
   appendMessages,
@@ -90,7 +94,17 @@ function toUIMessage(row: PersistedMessage): Omit<UIMessage, "id"> | null {
 }
 
 export async function POST(request: Request) {
-  if (!process.env.OPENAI_API_KEY) {
+  // Credential guard depends on the configured model: the OpenAI path needs
+  // OPENAI_API_KEY; the Gateway path needs AI_GATEWAY_API_KEY (or a Vercel
+  // OIDC token, auto-injected in Vercel deployments).
+  if (CHAT_MODEL_USES_GATEWAY) {
+    if (!process.env.AI_GATEWAY_API_KEY && !process.env.VERCEL_OIDC_TOKEN) {
+      console.error(
+        "[chat] Missing AI Gateway credentials (AI_GATEWAY_API_KEY or VERCEL_OIDC_TOKEN)",
+      );
+      return jsonError("Configuración del servidor incompleta", 500);
+    }
+  } else if (!process.env.OPENAI_API_KEY) {
     console.error("[chat] Missing OPENAI_API_KEY");
     return jsonError("Configuración del servidor incompleta", 500);
   }

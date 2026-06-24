@@ -39,7 +39,16 @@ import {
  * CHAT_RESERVATIONS_ENABLED — off by default, so the public endpoint has no
  * booking side effect until Inc. 4 turns it on per brand.
  */
-export const CHAT_MODEL = "gpt-5";
+/**
+ * Chat model, overridable via the CHAT_MODEL env var for A/B testing without a
+ * code change. A bare id (e.g. "gpt-5") uses the OpenAI provider directly; a
+ * provider-prefixed slug (e.g. "anthropic/claude-haiku-4.5") routes through the
+ * Vercel AI Gateway. Default stays on GPT-5 so an unset env is a no-op.
+ */
+export const CHAT_MODEL = process.env.CHAT_MODEL ?? "gpt-5";
+
+/** True when CHAT_MODEL is a Gateway slug (`provider/model`) rather than a bare OpenAI id. */
+export const CHAT_MODEL_USES_GATEWAY = CHAT_MODEL.includes("/");
 
 /** Max tool-calling steps per turn (room for a quote/lookup/booking + the reply). */
 const MAX_STEPS = 6;
@@ -279,8 +288,10 @@ export function buildChatTools(
     info_sedes: tool({
       description:
         "Devuelve las sedes (puntos de recogida) de una ciudad: nombre, dirección, " +
-        "mapa y horario. Úsala para responder dónde recoger, a qué hora abren, o " +
-        "qué sedes hay. Si la ciudad no existe, trae la lista de ciudades válidas.",
+        "mapa y horario. LLÁMALA SIEMPRE antes de nombrar, listar u ofrecer cualquier " +
+        "sede de una ciudad — nunca nombres sedes de memoria. Úsala también para " +
+        "responder dónde recoger o a qué hora abren. Si la ciudad no existe, trae la " +
+        "lista de ciudades válidas.",
       inputSchema: z.object(infoSedesSchema),
       execute: async (args) => runInfoSedes(args),
     }),
@@ -473,7 +484,9 @@ export async function buildSystemPrompt(
     "",
     "REGLAS:",
     "- Si falta la ciudad o las fechas, pregúntalas. No asumas ni cotices con datos incompletos.",
-    "- SEDES (regla estricta): para nombrar una sede usa SOLO un nombre corto reconocible (ej. 'Aeropuerto Alfonso Bonilla Aragón', 'Cali Sur'). NUNCA escribas la dirección completa, NUNCA pongas mapas (URLs) ni menciones al proveedor (p. ej. 'Localiza') en el chat.",
+    "- CUÁNDO COTIZAR (no preguntes de más): en cuanto tengas ciudad + fechas, LLAMA `cotizar`. Si el cliente ya dio las horas, inclúyelas y NO se las vuelvas a preguntar. Para una ciudad con varias sedes, primero llama `info_sedes`; si el cliente aún no eligió sede, cotiza con una y ofrécele cambiarla. NUNCA des ni prometas un precio sin haber llamado `cotizar` en ese flujo.",
+    "- SEDES — OBLIGATORIO usar la herramienta: ANTES de nombrar, listar u ofrecer CUALQUIER sede de una ciudad, LLAMA `info_sedes` de ESA ciudad y usa SOLO los nombres que devuelva. NUNCA nombres una sede de memoria, de los ejemplos de estas instrucciones, ni de otra ciudad. Si aún no llamaste `info_sedes`, no nombres ninguna sede todavía.",
+    "- SEDES (regla estricta): para nombrar una sede usa SOLO el nombre corto reconocible TAL COMO LO DEVUELVE `info_sedes`. NUNCA escribas la dirección completa, NUNCA pongas mapas (URLs) ni menciones al proveedor (p. ej. 'Localiza') en el chat.",
     "- Direcciones, mapas e instrucciones detalladas de la sede se envían ÚNICAMENTE por correo o WhatsApp, NO por el chat.",
     "- Horarios: NO los menciones. Única excepción: si el cliente elige una sede y la hora que pide cae FUERA del horario de esa sede, avísale solo el horario de ESA sede.",
     "- Usa `info_sedes` para conocer internamente qué sedes hay y sus horarios, pero NO vuelques esa información al chat (solo el nombre corto).",
@@ -522,15 +535,19 @@ export async function buildStreamConfig(
   ctx?: ChatContext,
 ) {
   return {
-    model: openai(CHAT_MODEL),
+    // String → Vercel AI Gateway (provider/model slug); openai() → OpenAI direct.
+    model: CHAT_MODEL_USES_GATEWAY ? CHAT_MODEL : openai(CHAT_MODEL),
     system: await buildSystemPrompt(brand),
     messages,
     tools: buildChatTools(brand, latestQuotes, ctx),
     stopWhen: stepCountIs(MAX_STEPS),
-    // 'low' is the sweet spot: GPT-5 intelligence index is ~64 at low vs ~67 at
-    // medium (near-identical adherence) but ~3x faster (~10s vs ~29s/turn).
-    // 'minimal' (44) starved rule-following; 'medium' overpaid latency for ~no
-    // quality gain. maxDuration=90s still covers a booking turn that calls Localiza.
-    providerOptions: { openai: { reasoningEffort: "low" } },
+    // reasoningEffort is OpenAI-specific (Haiku 4.5 rejects `effort`), so it
+    // only applies on the OpenAI path. 'low' is the GPT-5 sweet spot: intelligence
+    // index ~64 at low vs ~67 at medium (near-identical adherence) but ~3x faster
+    // (~10s vs ~29s/turn). 'minimal' (44) starved rule-following; 'medium' overpaid
+    // latency for ~no quality gain. maxDuration=90s still covers a Localiza booking turn.
+    ...(CHAT_MODEL_USES_GATEWAY
+      ? {}
+      : { providerOptions: { openai: { reasoningEffort: "low" } } }),
   };
 }

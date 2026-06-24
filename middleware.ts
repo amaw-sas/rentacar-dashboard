@@ -1,6 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { updateSession } from "@/lib/supabase/middleware";
-import { createServerClient } from "@supabase/ssr";
 
 // Exported for the issue-#72 middleware-prefix test (SCEN-107). Next.js only
 // consumes the `middleware` and `config` exports — this named export is inert.
@@ -26,36 +25,12 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  const response = await updateSession(request);
-
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return request.cookies.getAll();
-        },
-        setAll() {},
-      },
-    },
-  );
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  const isLoginPage = request.nextUrl.pathname === "/login";
-
-  if (!user && !isLoginPage) {
-    return NextResponse.redirect(new URL("/login", request.url));
-  }
-
-  if (user && isLoginPage) {
-    return NextResponse.redirect(new URL("/", request.url));
-  }
-
-  return response;
+  // updateSession refreshes the session cookies AND enforces the login/redirect
+  // rules in a single getUser() round-trip — see lib/supabase/middleware.ts. The
+  // old second client + second getUser here doubled the auth load on every
+  // request (and every Next.js prefetch), which drove the MIDDLEWARE_INVOCATION
+  // _TIMEOUT 504s on the dashboard.
+  return updateSession(request);
 }
 
 export const config = {

@@ -181,6 +181,7 @@ export const columns: ColumnDef<ReservationRow, unknown>[] = [
       return (
         <Link
           href={`/reservations/${row.original.id}`}
+          prefetch={false}
           className="font-medium hover:underline"
           title={fullName}
         >
@@ -354,6 +355,7 @@ export const columns: ColumnDef<ReservationRow, unknown>[] = [
           <Button variant="ghost" size="icon-xs" asChild>
             <Link
               href={`/reservations/${row.original.id}/libro`}
+              prefetch={false}
               target="_blank"
               rel="noopener"
               aria-label="Libro"
@@ -365,6 +367,7 @@ export const columns: ColumnDef<ReservationRow, unknown>[] = [
         <Button variant="ghost" size="icon-xs" asChild>
           <ReturnLink
             href={`/reservations/${row.original.id}/edit`}
+            prefetch={false}
             aria-label="Editar"
           >
             <PencilIcon />

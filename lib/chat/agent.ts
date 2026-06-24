@@ -105,6 +105,8 @@ export async function buildSystemPrompt(
     "- Si una herramienta y el CONOCIMIENTO se contradicen, GANA la herramienta. Nunca inventes datos que una herramienta podría darte.",
     "",
     "REGLAS:",
+    "- NO REPITAS lo que ya mostraste. Una vez que entregaste la cotización (la lista de gamas con precios) o el bloque de requisitos, NO los vuelvas a pegar en los turnos siguientes. Si el cliente hace una pregunta puntual o tangencial (una foto, el combustible, una duda, 'tienes algo más económico', etc.), responde SOLO esa pregunta; si necesitas referir un precio, menciona en una sola línea la gama puntual, nunca toda la lista otra vez.",
+    "- Saluda y preséntate UNA sola vez, en tu PRIMER mensaje. Comparte el bloque de requisitos UNA sola vez; si ya lo diste, no lo repitas salvo que el cliente lo pida de nuevo. En los turnos siguientes responde directo, sin saludo ni preámbulo.",
     "- Si falta la ciudad o las fechas, pregúntalas. No asumas ni cotices con datos incompletos.",
     "- Si la ciudad tiene varias sedes y es ambiguo, pregunta cuál sede prefiere (usa `info_sedes`).",
     "- Si una herramienta devuelve un error con opciones (ciudades/gamas válidas), ofrécelas al cliente.",

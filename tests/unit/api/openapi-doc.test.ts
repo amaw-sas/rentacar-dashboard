@@ -87,6 +87,15 @@ describe("OpenAPI doc — location directory parity (SCEN-006)", () => {
     expect(spec.security).toEqual([{ ApiKeyAuth: [] }]);
   });
 
+  // Issue #195: the MCP endpoint is intentionally ANONYMOUS (no OAuth, no
+  // x-api-key — middleware.ts marks /api/mcp fully public; the route is
+  // explicitly anonymous). It must override the global ApiKeyAuth to [], or a
+  // client importing the spec (e.g. a Custom GPT) would demand a key for a tool
+  // that takes none. Inheriting the global would mis-declare it as gated.
+  it("documents the MCP endpoint as anonymous (security overridden to [])", () => {
+    expect(spec.paths["/api/mcp/{transport}"].post.security).toEqual([]);
+  });
+
   // SCEN-C: Custom GPT Actions uses operationId as the function name. Every
   // operation must carry a unique, stable operationId — missing ones make the
   // builder auto-generate poor names. Locks the exact set so a renamed/dropped op

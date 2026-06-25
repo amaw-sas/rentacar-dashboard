@@ -131,9 +131,10 @@ export default function ChatTestPage() {
           // page already renders, so reuse the FallbackLinks state.
           if (e.type === "data-buttons" && e.data) {
             const b = e.data as { web?: string; whatsapp?: string };
-            if (typeof b.web === "string") {
+            // Either button may come alone (e.g. hablar_asesor → whatsapp only).
+            if (typeof b.web === "string" || typeof b.whatsapp === "string") {
               links = {
-                web: b.web,
+                web: typeof b.web === "string" ? b.web : "",
                 whatsapp: typeof b.whatsapp === "string" ? b.whatsapp : "",
               };
             }
@@ -354,21 +355,23 @@ export default function ChatTestPage() {
             )}
             {m.links && (
               <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
-                <a
-                  href={m.links.web}
-                  target="_blank"
-                  rel="noreferrer"
-                  style={{
-                    background: "#2563eb",
-                    color: "#fff",
-                    padding: "8px 12px",
-                    borderRadius: 8,
-                    fontSize: 13,
-                    textDecoration: "none",
-                  }}
-                >
-                  Terminar mi reserva en la web
-                </a>
+                {m.links.web && (
+                  <a
+                    href={m.links.web}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{
+                      background: "#2563eb",
+                      color: "#fff",
+                      padding: "8px 12px",
+                      borderRadius: 8,
+                      fontSize: 13,
+                      textDecoration: "none",
+                    }}
+                  >
+                    Terminar mi reserva en la web
+                  </a>
+                )}
                 {m.links.whatsapp && (
                   <a
                     href={m.links.whatsapp}

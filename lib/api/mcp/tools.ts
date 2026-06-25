@@ -266,6 +266,8 @@ export const buscarDisponibilidadOutputSchema = {
       precio_total: z.number(),
       precio_a_pagar: z.number(),
       iva: z.number(),
+      horas_extra: z.number(),
+      precio_hora_extra: z.number(),
       quote: z.string(),
     }),
   ),
@@ -433,6 +435,11 @@ export async function buscarDisponibilidad(
         precio_total: pricing.total_price,
         precio_a_pagar: pricing.total_price_to_pay,
         iva: pricing.iva_fee,
+        // Surfaced so the bot/orchestrator can answer "how much is an extra hour"
+        // directly. Both are baked into precio_total already; these expose the
+        // line item. 0 when the return time is not later than the pickup time.
+        horas_extra: pricing.extra_hours,
+        precio_hora_extra: pricing.extra_hours_price,
         quote,
       });
     } catch {

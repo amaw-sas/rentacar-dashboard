@@ -221,6 +221,9 @@ describe("buscar_disponibilidad (SCEN-110..112)", () => {
     const cat = payload.categorias[0];
     expect(cat.categoria).toBe("C");
     expect(cat.descripcion).toBe("Gama C Económico Mecánico");
+    // Etapa 0: extra-hour line items surfaced so the bot can answer them directly.
+    expect(typeof cat.horas_extra).toBe("number");
+    expect(typeof cat.precio_hora_extra).toBe("number");
 
     // The opaque quote decodes to the derived pricing + computed selected_days.
     const ctx = decodeQuote(cat.quote);

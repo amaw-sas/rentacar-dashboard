@@ -7,7 +7,14 @@
 import { useRef, useState } from "react";
 
 type Part = { type: "text"; text: string };
-type Msg = { role: "user" | "assistant"; parts: Part[] };
+type FallbackLinks = { web: string; whatsapp: string };
+type Msg = {
+  role: "user" | "assistant";
+  parts: Part[];
+  // Booking-failure fallback (web deep-link + WhatsApp) the bot returns as a
+  // tool output. The production widget renders these as buttons; mirror it here.
+  links?: FallbackLinks;
+};
 
 const BRANDS = ["alquilatucarro", "alquilame", "alquicarros"];
 
@@ -53,6 +60,7 @@ export default function ChatTestPage() {
       const dec = new TextDecoder();
       let buf = "";
       let acc = "";
+      let links: FallbackLinks | undefined;
 
       for (;;) {
         const { done, value } = await reader.read();
@@ -64,17 +72,37 @@ export default function ChatTestPage() {
           if (!line.startsWith("data:")) continue;
           const p = line.slice(5).trim();
           if (!p || p === "[DONE]") continue;
-          let e: { type?: string; delta?: string; text?: string };
+          let e: {
+            type?: string;
+            delta?: string;
+            text?: string;
+            output?: Record<string, unknown>;
+          };
           try {
             e = JSON.parse(p);
           } catch {
             continue;
           }
+          // Booking-failure fallback links arrive as a tool output part.
+          const out = e.output;
+          if (out && typeof out.completar_en_web === "string") {
+            links = {
+              web: out.completar_en_web,
+              whatsapp:
+                typeof out.whatsapp_asesor === "string" ? out.whatsapp_asesor : "",
+            };
+          }
           if (e.type === "text-delta") {
             acc += e.delta ?? e.text ?? "";
+          }
+          if (e.type === "text-delta" || links) {
             setMessages((cur) => {
               const copy = [...cur];
-              copy[assistantIdx] = { role: "assistant", parts: [{ type: "text", text: acc }] };
+              copy[assistantIdx] = {
+                role: "assistant",
+                parts: [{ type: "text", text: acc }],
+                links,
+              };
               return copy;
             });
             scrollDown();
@@ -178,6 +206,42 @@ export default function ChatTestPage() {
             }}
           >
             {m.parts.map((p) => p.text).join("") || (m.role === "assistant" && busy ? "…" : "")}
+            {m.links && (
+              <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+                <a
+                  href={m.links.web}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{
+                    background: "#2563eb",
+                    color: "#fff",
+                    padding: "8px 12px",
+                    borderRadius: 8,
+                    fontSize: 13,
+                    textDecoration: "none",
+                  }}
+                >
+                  Terminar mi reserva en la web
+                </a>
+                {m.links.whatsapp && (
+                  <a
+                    href={m.links.whatsapp}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{
+                      background: "#16a34a",
+                      color: "#fff",
+                      padding: "8px 12px",
+                      borderRadius: 8,
+                      fontSize: 13,
+                      textDecoration: "none",
+                    }}
+                  >
+                    Escribir a un asesor
+                  </a>
+                )}
+              </div>
+            )}
           </div>
         ))}
       </div>

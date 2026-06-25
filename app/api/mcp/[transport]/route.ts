@@ -39,7 +39,8 @@ const handler = createMcpHandler(
         outputSchema: buscarDisponibilidadOutputSchema,
         annotations: buscarDisponibilidadAnnotations,
       },
-      buscarDisponibilidad,
+      // Wrap so the MCP `extra` arg isn't passed as buscarDisponibilidad's `now`.
+      (args) => buscarDisponibilidad(args),
     );
 
     server.registerTool(

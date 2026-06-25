@@ -8,13 +8,29 @@ import { useRef, useState } from "react";
 
 type Part = { type: "text"; text: string };
 type FallbackLinks = { web: string; whatsapp: string };
+type QuoteTablePart = {
+  sede: string;
+  dias: number;
+  filas: Array<{
+    categoria: string;
+    descripcion: string;
+    precioTotal: number;
+    horasExtra: number;
+    precioHoraExtra: number;
+  }>;
+};
 type Msg = {
   role: "user" | "assistant";
   parts: Part[];
   // Booking-failure fallback (web deep-link + WhatsApp) the bot returns as a
   // tool output. The production widget renders these as buttons; mirror it here.
   links?: FallbackLinks;
+  // Hybrid orchestrator (Etapa 2): the quote table is emitted as a `data-quoteTable`
+  // part by code (not the LLM), so the page renders the prices deterministically.
+  quoteTable?: QuoteTablePart;
 };
+
+const COP = new Intl.NumberFormat("es-CO");
 
 const BRANDS = ["alquilatucarro", "alquilame", "alquicarros"];
 
@@ -61,6 +77,7 @@ export default function ChatTestPage() {
       let buf = "";
       let acc = "";
       let links: FallbackLinks | undefined;
+      let quoteTable: QuoteTablePart | undefined;
 
       for (;;) {
         const { done, value } = await reader.read();
@@ -77,6 +94,7 @@ export default function ChatTestPage() {
             delta?: string;
             text?: string;
             output?: Record<string, unknown>;
+            data?: unknown;
           };
           try {
             e = JSON.parse(p);
@@ -92,16 +110,21 @@ export default function ChatTestPage() {
                 typeof out.whatsapp_asesor === "string" ? out.whatsapp_asesor : "",
             };
           }
+          // Orchestrator quote table (code-emitted data part).
+          if (e.type === "data-quoteTable" && e.data) {
+            quoteTable = e.data as QuoteTablePart;
+          }
           if (e.type === "text-delta") {
             acc += e.delta ?? e.text ?? "";
           }
-          if (e.type === "text-delta" || links) {
+          if (e.type === "text-delta" || links || quoteTable) {
             setMessages((cur) => {
               const copy = [...cur];
               copy[assistantIdx] = {
                 role: "assistant",
                 parts: [{ type: "text", text: acc }],
                 links,
+                quoteTable,
               };
               return copy;
             });
@@ -206,6 +229,34 @@ export default function ChatTestPage() {
             }}
           >
             {m.parts.map((p) => p.text).join("") || (m.role === "assistant" && busy ? "…" : "")}
+            {m.quoteTable && (
+              <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 4 }}>
+                {m.quoteTable.filas.map((f) => (
+                  <div
+                    key={f.categoria}
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      gap: 12,
+                      padding: "6px 10px",
+                      border: "1px solid #e2e2e2",
+                      borderRadius: 8,
+                      background: "#fff",
+                    }}
+                  >
+                    <span>
+                      Gama {f.categoria}{" "}
+                      <span style={{ color: "#666" }}>{f.descripcion}</span>
+                    </span>
+                    <strong>${COP.format(f.precioTotal)}</strong>
+                  </div>
+                ))}
+                <span style={{ fontSize: 12, color: "#666", marginTop: 2 }}>
+                  Total con IVA, tasas, seguro básico y km ilimitado · {m.quoteTable.dias}{" "}
+                  día(s).
+                </span>
+              </div>
+            )}
             {m.links && (
               <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
                 <a

@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import {
   convertToModelMessages,
   streamText,
+  createUIMessageStream,
+  createUIMessageStreamResponse,
   type UIMessage,
 } from "ai";
 import {
@@ -15,10 +17,13 @@ import {
   countRecentMessages,
   countConversationsByIp,
   loadMessages,
+  loadConversationState,
   type PersistedMessage,
 } from "@/lib/chat/persistence";
 import { hashClientIp } from "@/lib/chat/client-ip";
 import { runShadowExtraction } from "@/lib/chat/orchestrator/extract";
+import { runTurn } from "@/lib/chat/orchestrator";
+import { initialState } from "@/lib/chat/orchestrator/slots";
 import { bogotaTodayYMD } from "@/lib/date/bogota";
 
 // Public, anonymous chatbot endpoint (V1). Quoting + FAQ only — no reservation
@@ -256,32 +261,66 @@ export async function POST(request: Request) {
   // quote by gama code — the LLM corrupts the opaque blob when echoing it back.
   const latestQuotes = history ? extractLatestQuotes(history) : undefined;
 
-  const result = streamText(
-    await buildStreamConfig(brand, modelMessages, latestQuotes, {
-      conversationId,
-      ipHash,
-    }),
-  );
+  // Persist the assistant reply (shared by both the orchestrator and legacy paths).
+  const persistAssistant = (assistant: UIMessage | undefined) => {
+    if (!conversationId || !assistant || assistant.role !== "assistant") return;
+    const row: PersistedMessage = {
+      role: "assistant",
+      content: extractText(assistant),
+      parts: assistant.parts,
+    };
+    appendMessages(conversationId, [row]).catch((e) =>
+      console.error("[chat] persist assistant failed", e),
+    );
+  };
 
-  // Drain even if the client disconnects, so onFinish persists the reply.
-  result.consumeStream();
-
-  const response = result.toUIMessageStreamResponse({
-    originalMessages: messages,
-    onFinish: ({ messages: finalMessages }) => {
-      if (!conversationId) return;
-      const assistant = finalMessages[finalMessages.length - 1];
-      if (!assistant || assistant.role !== "assistant") return;
-      const row: PersistedMessage = {
-        role: "assistant",
-        content: extractText(assistant),
-        parts: assistant.parts,
-      };
-      appendMessages(conversationId, [row]).catch((e) =>
-        console.error("[chat] persist assistant failed", e),
+  let response: Response;
+  if (process.env.CHAT_ORCHESTRATOR === "on" && conversationId) {
+    // HYBRID ORCHESTRATOR (Etapa 2): code composes the turn; the LLM only extracts
+    // slots + phrases off-funnel replies. The fixed blocks (greeting, requisitos,
+    // quote table) are code-emitted once → repetition is structurally impossible.
+    // Legacy all-LLM path below stays as instant rollback (flag off).
+    const orchState =
+      (await loadConversationState(conversationId)) ?? initialState();
+    const recentContext = (history ?? [])
+      .slice(-6)
+      .map(
+        (m) => `${m.role}: ${typeof m.content === "string" ? m.content : ""}`,
       );
-    },
-  });
+    const stream = createUIMessageStream({
+      originalMessages: messages,
+      execute: async ({ writer }) => {
+        await runTurn(writer, {
+          brand,
+          conversationId,
+          state: orchState,
+          userMessage: extractText(lastUser),
+          recentContext,
+          now: new Date(),
+        });
+      },
+      onError: (e) => {
+        console.error("[chat] orchestrator stream error", e);
+        return "Tuvimos un problema procesando tu mensaje. Intenta de nuevo.";
+      },
+      onFinish: ({ responseMessage }) => persistAssistant(responseMessage),
+    });
+    response = createUIMessageStreamResponse({ stream });
+  } else {
+    const result = streamText(
+      await buildStreamConfig(brand, modelMessages, latestQuotes, {
+        conversationId,
+        ipHash,
+      }),
+    );
+    // Drain even if the client disconnects, so onFinish persists the reply.
+    result.consumeStream();
+    response = result.toUIMessageStreamResponse({
+      originalMessages: messages,
+      onFinish: ({ messages: finalMessages }) =>
+        persistAssistant(finalMessages[finalMessages.length - 1]),
+    });
+  }
 
   // Layer CORS + the conversation id onto the streamed response so the widget
   // (cross-origin) can keep using the same conversation across turns.

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { QuoteTable } from "./quote-service";
 
 /**
  * Conversation state model for the hybrid orchestrator (Rediseño híbrido · Etapa 1).
@@ -72,6 +73,9 @@ export interface ConversationState {
   phase: Phase;
   slots: Slots;
   flags: ConversationFlags;
+  /** Last quote table shown (incl. the opaque quote blobs) — the booking phase
+   * (Etapa 3) resolves the chosen gama's quote from here. Server-side only. */
+  lastQuote?: QuoteTable;
 }
 
 export function initialState(): ConversationState {

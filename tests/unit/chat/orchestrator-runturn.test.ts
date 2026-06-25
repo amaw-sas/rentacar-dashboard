@@ -363,8 +363,10 @@ describe("orchestrator runTurn — booking phase", () => {
     const booked = lastSaved();
     expect(booked.phase).toBe("booked");
 
-    // Turn 2: another "sí" while booked → the second sí is impossible.
+    // Turn 2: another "sí" while booked → the second sí is impossible AND the bot
+    // acknowledges deterministically (no free-form re-opening the funnel).
     extractSlots.mockResolvedValue({ intent: "confirma_reserva", updates: {} });
+    streamText.mockClear();
     const turn2 = fakeWriter();
     await runTurn(turn2.writer, {
       brand: "alquilatucarro",
@@ -374,7 +376,9 @@ describe("orchestrator runTurn — booking phase", () => {
       recentContext: [],
       now: NOW,
     });
-    expect(executeBooking).toHaveBeenCalledOnce(); // still once
+    expect(executeBooking).toHaveBeenCalledOnce(); // still once — no double-book
+    expect(streamText).not.toHaveBeenCalled(); // no free-form re-prompt
+    expect(textOf(turn2.chunks)).toContain("ya quedó confirmada");
   });
 
   it("(d) a failed booking with links emits the data-buttons part", async () => {

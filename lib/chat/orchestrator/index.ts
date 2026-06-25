@@ -307,7 +307,16 @@ async function advanceBooking(
     }
 
     case "booked": {
-      // Already booked — NEVER book again. Just answer anything else.
+      // Already booked — NEVER book again. A repeated "sí"/confirm must NOT re-open
+      // the funnel (the free-form LLM, blind to the booking, would ask for a sede "to
+      // emit it" and contradict the confirmation). Acknowledge deterministically; only
+      // hand a genuine new question to the free-form reply.
+      if (intent === "confirma_reserva" || isAffirmative(userMessage)) {
+        writeText(
+          "Tu reserva ya quedó confirmada; te llegaron los detalles al correo y WhatsApp. ¿Te ayudo con algo más?",
+        );
+        return state;
+      }
       await freeForm();
       return state;
     }

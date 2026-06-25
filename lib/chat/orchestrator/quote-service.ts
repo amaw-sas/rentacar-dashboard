@@ -49,6 +49,8 @@ interface RawCategoria {
 }
 
 const num = (v: unknown): number => (typeof v === "number" ? v : 0);
+/** Prices display in whole COP — the provider sends sub-peso decimals we round off. */
+const pesos = (v: unknown): number => Math.round(num(v));
 
 /**
  * Quote a city/dates/sede and return a flat table. Relays the same human ES error
@@ -81,8 +83,8 @@ export async function getQuoteTable(
           ? c.descripcion
           : (c.categoria as string),
       dias: num(c.dias),
-      precioTotal: num(c.precio_a_pagar ?? c.precio_total),
-      precioHoraExtra: num(c.precio_hora_extra),
+      precioTotal: pesos(c.precio_a_pagar ?? c.precio_total),
+      precioHoraExtra: pesos(c.precio_hora_extra),
       horasExtra: num(c.horas_extra),
       quote: c.quote as string,
     }));

@@ -198,9 +198,8 @@ export function bookingSummaryBlock(state: ConversationState): string {
       ? findGama(state.lastQuote, s.gama_elegida)
       : undefined;
 
-  const gama = row
-    ? `Gama ${row.categoria} ${row.descripcion.toLowerCase()}`
-    : "la gama elegida";
+  // `descripcion` already starts with "Gama X" — use it verbatim (no "Gama CX gama cx…").
+  const gama = row ? row.descripcion : "la gama elegida";
   const dias = row?.dias ?? state.lastQuote?.dias;
   const periodo = periodoCorto(s);
 

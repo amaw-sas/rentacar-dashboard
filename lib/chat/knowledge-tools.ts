@@ -123,12 +123,14 @@ export async function runInfoSedes(args: {
     };
   }
 
+  // Deliberately omits `pickup_address` and `pickup_map`: the chat must NOT
+  // reveal the exact address or a map. We earn commission on reservations made
+  // through the chat — handing the address sends the customer straight to the
+  // branch and loses the booking. The sede `name` is the only reference shared.
   return {
     sedes: matches.map((l) => ({
       nombre: l.name,
       ciudad: l.city,
-      direccion: l.pickup_address,
-      mapa: l.pickup_map,
       horario: scheduleToText(l.schedule),
     })),
   };

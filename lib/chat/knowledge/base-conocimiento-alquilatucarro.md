@@ -67,7 +67,7 @@ Ciudades con servicio: Bogotá, Medellín, Cali, Barranquilla, Cartagena, Monter
 | **Titular de la TC** | No necesita licencia ni conducir; solo estar presente en sede. Sin comisión por pagar con TC. |
 | **Depósito** | NO se solicita. Solo se cobra el valor del alquiler. |
 | **Pago** | En sede, el día de recogida, junto con la firma del contrato. NO se reciben pagos anticipados. |
-| **Filtro crediticio** | ⚠️ La empresa valida **historial crediticio EN SEDE** al recoger. Una reserva "aprobada" por WhatsApp puede ser rechazada presencialmente. |
+| **Filtro crediticio** | La empresa valida historial crediticio EN SEDE al recoger. ⚠️ Dato interno: NO se menciona en el chat (es una pared para el cliente); el aviso se envía DESPUÉS de crear la reserva, por este medio y por correo. |
 | **Reserva** | Sin costo. Se aparta solo con: nombre completo, documento, teléfono, correo. NO se piden datos de la tarjeta. Mínimo 1 hora hábil de anticipación. Intransferible. |
 | **Cancelación** | Sin costo, el mismo día, por código de reserva. |
 | **Modificar reserva** | Re-cotiza al descuento del día actual (puede subir el precio). |
@@ -78,6 +78,7 @@ Ciudades con servicio: Bogotá, Medellín, Cali, Barranquilla, Cartagena, Monter
 | **Cobro por tiempo** | Cada 24 h exactas (mismo valor sin importar a qué hora del día se entregue). Horas extra 1–3 h se cobran como horas; a partir de 4 h, día completo. Regla 48h: si la sede cierra antes, se puede devolver al día siguiente dentro de las 48h sin cobro extra. |
 | **Extender alquiler** | 1 día extra: sin gestión, se cobra al entregar (mismo valor/día). Más de 1 día: trámite en agencia. Se puede hacer ya teniendo el carro. |
 | **Gasolina** | Se entrega con tanque lleno; se retorna lleno. |
+| **Híbridos** | SÍ hay gamas híbridas (FL, LU), pero NO en todas las sedes. No hay diésel ni eléctricos. Si ya hay ciudad y fechas, verifica disponibilidad real con `cotizar` antes de confirmar; usa `info_gamas` para atributos. |
 | **Kilometraje** | Ilimitado **solo en alquiler por días**. Por mes es LIMITADO (1000 o 2000 km). |
 | **Lavada** | NO incluida. Opcional: $20.000 al recoger / $30.000 al retornar (o lavarlo por su cuenta). Mascotas: lavada completa obligatoria $150.000–$225.000. |
 | **Silla para bebé** | $12.000/día. |
@@ -89,7 +90,7 @@ Ciudades con servicio: Bogotá, Medellín, Cali, Barranquilla, Cartagena, Monter
 | **Modelo específico** | NO se garantiza. Se alquila **por gamas, no por modelos**. Modelo, año y color se asignan en sede según disponibilidad y terminación de placa. Gama alta: 2023 en adelante. |
 | **Pico y placa** | Vehículos de placas amarillas particulares; se entregan sin pico y placa pero NO exentos. En sede un asesor ayuda a escoger la terminación de placa según el trayecto. En Bogotá se cambia el vehículo para rentas diarias (no mensuales). |
 | **Tipo de cliente** | Solo **persona natural** (no empresas/B2B). No se alquila para trabajar en apps (Uber/Didi). No se reciben vehículos de terceros para rentar. |
-| **NO manejan** | Toyota; vans, minivans, buses, busetas, motos, pickups/platón, camionetas con estacas, blindados, híbridos, eléctricos, deportivos, convertibles, antiguos, de carga. |
+| **NO manejan** | Toyota; vans, minivans, buses, busetas, motos, pickups/platón, camionetas con estacas, blindados, eléctricos, deportivos, convertibles, antiguos, de carga. |
 
 ### 2.5 Catálogo por gamas
 | Gama | Tipo | Modelos | Tarifa base/día* |
@@ -240,7 +241,7 @@ Tarifas mensuales de referencia: Gama C $4.149.000 (1000km)/$4.635.000 (2000km);
 7. **"La dirección se libera al confirmar la reserva"** → gancho de cierre ("en 2 minutos la tienes con la dirección en mano").
 8. **Cierre con bullets de valor + recomendación personal:** "gratis y cancelable / bloqueas el precio / el descuento solo se garantiza con reserva. Mi recomendación: resérvalo hoy."
 9. **Usar el descuento dinámico para empujar la gama que conviene** ("hoy la media está más económica").
-10. **Recuperación ante objeción de tarjeta:** ofrecer titular familiar/amigo o **derivar a asesores bancarios para una TC virtual el mismo día** (táctica estrella, ver §7).
+10. **Recuperación ante objeción de tarjeta:** ofrecer titular familiar/amigo, o invitar al cliente a gestionar **por sus propios medios** una tarjeta de crédito (incluida una TC virtual). NO dar contactos ni teléfonos de asesores (táctica estrella, ver §7).
 11. **Recuperación ante vehículo no disponible:** ofrecer catálogo y gama alterna.
 12. **Cotizar dos gamas (mecánico + automático)** para dar opción y subir ticket.
 13. **Drop-off como upsell** (recargo por devolución en otra sede).
@@ -255,7 +256,7 @@ Tarifas mensuales de referencia: Gama C $4.149.000 (1000km)/$4.635.000 (2000km);
 
 | Objeción | Frecuencia | Manejo recomendado |
 |---|---|---|
-| **No tengo tarjeta de crédito** (efectivo/débito/Nequi/prepagada/débito internacional) | Altísima (la #1) | "El único medio es tarjeta de crédito, pero puede ser la de un familiar/amigo presente al recoger." Si no, ofrecer derivación a asesor bancario para TC virtual el mismo día (§7). No insistir +2 veces. |
+| **No tengo tarjeta de crédito** (efectivo/débito/Nequi/prepagada/débito internacional) | Altísima (la #1) | "El único medio es tarjeta de crédito, pero puede ser la de un familiar/amigo presente al recoger." Si no, sugerir que el cliente gestione por sus propios medios una tarjeta de crédito (incluida una TC virtual el mismo día). NO dar contactos ni teléfonos de asesores (§7). No insistir +2 veces. |
 | **"No me gustan las tarjetas de crédito"** (rechazo por preferencia) | Media | Igual que arriba; enfatizar la opción del titular acompañante o la TC virtual rápida. |
 | **"El precio en la web es más barato"** (la más recurrente del cohorte 2) | Alta | "El de la web no incluye impuestos y algunos precios son por mes. El total real con descuento te queda en $[Y]." No discutir; reconducir al valor con descuento. |
 | **Cupo insuficiente** | Media | Recortar días para ajustar al cupo disponible. |
@@ -267,7 +268,7 @@ Tarifas mensuales de referencia: Gama C $4.149.000 (1000km)/$4.635.000 (2000km);
 | **Pico y placa (Bogotá)** | Media | Respuesta canónica (abajo). |
 | **Vehículo no disponible** (Toyota, van, 7 puestos fuera de cobertura) | Media | Ofrecer alternativa + catálogo; si imposible, despedir cordial. |
 | **Empresa / B2B** | Baja | Hoy se rechaza; capturar el lead para canal corporativo futuro en vez de cerrar la puerta. |
-| **Filtro crediticio en sede** | Baja pero crítica | Fijar expectativa: en sede se valida historial crediticio; advertir para evitar rechazo presencial. |
+| **Filtro crediticio en sede** | Baja pero crítica | NO mencionarlo en el chat: es una pared para el cliente. El aviso (validación de historial en sede) se envía DESPUÉS de crear la reserva, por este medio y por correo. |
 | **Fuera de cobertura** | Baja | Indicar sede más cercana; si no hay, despedir cordial. |
 | **Manda audio** | Media | "Disculpa, no contamos con audio, pero con gusto te asesoro por escrito 😊." (⚠️ ver §8.) |
 
@@ -279,10 +280,10 @@ Tarifas mensuales de referencia: Gama C $4.149.000 (1000km)/$4.635.000 (2000km);
 ## 7. Táctica estrella: recuperar el lead sin tarjeta
 
 Ante "no tengo tarjeta de crédito" (la objeción #1), la mejor jugada observada NO es despedirse:
-1. Ofrecer **titular familiar/amigo** presente al recoger, o
-2. **Derivar a asesores bancarios para sacar una TC virtual el mismo día.** *(Chat c2-50: la asesora pasó contactos de Davivienda 313-809-2697 y Banco de Bogotá 312-805-3872; el cliente sacó una Nu virtual y reservó.)*
+1. Ofrecer **titular familiar/amigo** presente al recoger (vía recomendada), o
+2. **Invitar al cliente a gestionar por sus propios medios una tarjeta de crédito** (incluida una TC virtual el mismo día, 100% online). ⚠️ El chat NO entrega contactos, teléfonos ni nombres de asesores bancarios: esa averiguación la hace el cliente por su cuenta.
 
-> Guion sugerido: "El único medio es tarjeta de crédito, pero hay dos caminos: (a) usar la de un familiar/amigo que te acompañe a recoger, o (b) si quieres, te paso un asesor bancario que te ayuda a sacar una tarjeta de crédito virtual el mismo día, 100% online. ¿Cuál te sirve?"
+> Guion sugerido: "El único medio es tarjeta de crédito, pero hay dos caminos: (a) usar la de un familiar o amigo que te acompañe a recoger, o (b) si prefieres, puedes sacar tú mismo una tarjeta de crédito —incluso una virtual el mismo día, 100% online— por tus propios medios. ¿Cuál te sirve?"
 
 ---
 
@@ -291,7 +292,7 @@ Ante "no tengo tarjeta de crédito" (la objeción #1), la mejor jugada observada
 Ordenadas por impacto:
 
 1. **Latencia de respuesta (12–23h, día y noche).** Mensajes nocturnos o de fin de semana contestados al día/lunes siguiente; el lead ya cotizó en otro lado. → **Bot 24/7 instantáneo = mejora #1.**
-2. **Filtro crediticio en sede sin aviso previo.** Cliente reserva, viaja y lo rechazan. → El bot debe fijar expectativas antes.
+2. **Filtro crediticio en sede.** La validación de historial ocurre en sede. → El bot NO lo menciona durante la conversación (evita la pared); el aviso se envía tras crear la reserva, por este medio y por correo.
 3. **Reserva confirmada sin dirección clara.** El cliente llega y no encuentra "AlquilaTuCarro" (el local es Localiza). → Entregar nombre del local, dirección y mapa en la confirmación.
 4. **Audios no atendidos.** Varios leads con prisa se pierden. → Transcripción de audio o respuesta inmediata que reencauce.
 5. **Filtro de tarjeta tardío.** → Mencionar la alternativa (titular familiar/amigo o TC virtual) en el primer contacto sobre pago.

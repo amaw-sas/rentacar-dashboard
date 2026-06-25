@@ -100,14 +100,29 @@ export async function runTurn(
   };
 
   // A short, tool-enabled free-form reply for off-funnel messages (the only
-  // generative text). Reused by every phase that needs to answer a side question.
-  const freeForm = async () => {
+  // generative text). Two flavors share one config:
+  //  - freeForm(): streams straight to the writer. Use STANDALONE (no code line after).
+  //  - freeFormText(): awaits the full text so the caller can writeText() it BEFORE a
+  //    deterministic follow-up (nudge / next question), keeping the bubble order
+  //    "answer → follow-up". Streaming + a synchronous follow-up race the wrong way
+  //    (the follow-up lands first), which is the out-of-order nudge bug.
+  const freeFormResult = async () => {
     const cfg = await freeFormConfig(brand);
     const prompt = `Datos conocidos del cliente: ${JSON.stringify(
       state.slots,
     )}\nMensaje actual: "${userMessage}"`;
-    const result = streamText({ ...cfg, prompt });
-    writer.merge(result.toUIMessageStream());
+    return streamText({ ...cfg, prompt });
+  };
+  const freeForm = async () => {
+    writer.merge((await freeFormResult()).toUIMessageStream());
+  };
+  const freeFormText = async (): Promise<string> => {
+    try {
+      return await (await freeFormResult()).text;
+    } catch (e) {
+      console.error("[orchestrator] freeFormText failed", e);
+      return "";
+    }
   };
 
   // 1. The one narrow LLM read: extract intent + slot updates. Degrade to a
@@ -124,6 +139,18 @@ export async function runTurn(
     intent = ext.intent;
   } catch (e) {
     console.error("[orchestrator] extract failed", e);
+  }
+
+  // Guard the gama choice: the extractor sometimes reads a "choice" from a preference
+  // in the initial REQUEST ("quiero un económico") before any quote exists, or
+  // hallucinates an invalid code (e.g. "E" from "económico"). A real choice needs a
+  // shown quote AND must resolve to a quoted gama — otherwise drop it so the funnel
+  // never skips to data collection on a phantom pick.
+  if (
+    state.slots.gama_elegida &&
+    !(state.lastQuote && findGama(state.lastQuote, state.slots.gama_elegida))
+  ) {
+    state = { ...state, slots: { ...state.slots, gama_elegida: undefined } };
   }
 
   // 2. Greeting — code, once.
@@ -207,7 +234,7 @@ export async function runTurn(
     state = await advanceBooking({
       writer,
       writeText,
-      freeForm,
+      freeFormText,
       state,
       intent,
       userMessage,
@@ -471,7 +498,8 @@ function phaseReprompt(state: ConversationState): string | null {
 interface BookingStepInput {
   writer: UIMessageStreamWriter;
   writeText: (text: string) => void;
-  freeForm: () => Promise<void>;
+  /** Awaited free-form text so side answers land BEFORE the deterministic follow-up. */
+  freeFormText: () => Promise<string>;
   state: ConversationState;
   intent: Intent;
   userMessage: string;
@@ -489,7 +517,7 @@ interface BookingStepInput {
 async function advanceBooking(
   input: BookingStepInput,
 ): Promise<ConversationState> {
-  const { writeText, freeForm, intent, userMessage } = input;
+  const { writeText, freeFormText, intent, userMessage } = input;
   const state = input.state;
   const lastQuote = state.lastQuote;
   if (!lastQuote) return state; // unreachable (guarded by hasQuote)
@@ -501,7 +529,13 @@ async function advanceBooking(
         ? findGama(lastQuote, state.slots.gama_elegida)
         : undefined;
       if (chosen) {
-        // Gama picked → move to collecting customer data and ask the first gap.
+        // Gama picked → move to collecting customer data. If the SAME message also
+        // carried a question ("la C, ¿hay sede cerca?"), answer it first so we don't
+        // tunnel straight to "¿tu nombre?" and drop what they asked.
+        if (userMessage.includes("?")) {
+          const ans = await freeFormText();
+          if (ans) writeText(ans);
+        }
         return progressCustomer(
           { ...state, phase: "collecting_customer" },
           writeText,
@@ -515,7 +549,8 @@ async function advanceBooking(
       // Off-funnel question while still choosing → answer, then a SHORT nudge. We must
       // NOT re-paste the whole gama list every turn (the repetition the user reported);
       // the quote table already shows them.
-      await freeForm();
+      const ans = await freeFormText();
+      if (ans) writeText(ans);
       writeText(gamaNudgeLine());
       return { ...state, phase: "choosing_gama" };
     }
@@ -523,7 +558,8 @@ async function advanceBooking(
     case "collecting_customer": {
       if (OFF_FUNNEL.has(intent)) {
         // Side question mid-collection → answer, then re-ask the current gap.
-        await freeForm();
+        const ans = await freeFormText();
+        if (ans) writeText(ans);
         const q = nextCustomerQuestion(state.slots.cliente);
         if (q) writeText(q);
         return state;
@@ -555,7 +591,10 @@ async function advanceBooking(
 
       // Not a confirmation. Answer any side question, then re-prompt (NOT the full
       // summary again — it was already shown when we entered `confirming`).
-      if (OFF_FUNNEL.has(intent)) await freeForm();
+      if (OFF_FUNNEL.has(intent)) {
+        const ans = await freeFormText();
+        if (ans) writeText(ans);
+      }
       if (!state.flags.summary_shown) {
         const next: ConversationState = {
           ...state,
@@ -579,14 +618,17 @@ async function advanceBooking(
         );
         return state;
       }
-      await freeForm();
+      const ans = await freeFormText();
+      if (ans) writeText(ans);
       return state;
     }
 
-    default:
+    default: {
       // greeting/collecting/fallback shouldn't reach here once a quote exists.
-      await freeForm();
+      const ans = await freeFormText();
+      if (ans) writeText(ans);
       return state;
+    }
   }
 }
 

@@ -29,7 +29,11 @@ const { saveConversationState } = vi.hoisted(() => ({
 vi.mock("@/lib/chat/persistence", () => ({ saveConversationState }));
 
 const { streamText } = vi.hoisted(() => ({
-  streamText: vi.fn(() => ({ toUIMessageStream: () => new ReadableStream() })),
+  streamText: vi.fn(() => ({
+    // freeForm() streams via toUIMessageStream; freeFormText() awaits .text.
+    toUIMessageStream: () => new ReadableStream(),
+    text: Promise.resolve(""),
+  })),
 }));
 vi.mock("ai", () => ({ streamText }));
 
@@ -601,6 +605,57 @@ describe("orchestrator runTurn — on-demand (Etapa 4)", () => {
     expect(streamText).toHaveBeenCalledOnce();
     expect(textOf(chunks)).not.toContain("hora extra cuesta");
     expect(textOf(chunks)).toContain("¿Con cuál gama te quedas?");
+  });
+
+  it("(k) drops an invalid/phantom gama_elegida so the funnel does NOT skip to data collection", async () => {
+    // The extractor hallucinated "E" (from "económico") — not a real quoted gama.
+    extractSlots.mockResolvedValue({
+      intent: "tangencial",
+      updates: { gama_elegida: "E" },
+    });
+    const { chunks, writer } = fakeWriter();
+    await runTurn(writer, {
+      brand: "alquilatucarro",
+      conversationId: "c1",
+      state: quotedState(),
+      userMessage: "y eso incluye seguro",
+      recentContext: [],
+      now: NOW,
+    });
+
+    const text = textOf(chunks);
+    expect(text.toLowerCase()).not.toContain("nombre completo"); // did NOT skip the funnel
+    expect(text).toContain("¿Con cuál gama te quedas?"); // stayed in the choice
+    // The phantom pick is scrubbed from persisted state.
+    expect(lastSaved().slots.gama_elegida).toBeUndefined();
+    expect(lastSaved().phase).toBe("choosing_gama");
+  });
+
+  it("(l) when a gama pick also carries a question, answers it BEFORE asking for data", async () => {
+    extractSlots.mockResolvedValue({
+      intent: "elige_gama",
+      updates: { gama_elegida: "C" },
+    });
+    streamText.mockReturnValueOnce({
+      toUIMessageStream: () => new ReadableStream(),
+      text: Promise.resolve("Sí, hay una sede cerca del aeropuerto."),
+    });
+    const { chunks, writer } = fakeWriter();
+    await runTurn(writer, {
+      brand: "alquilatucarro",
+      conversationId: "c1",
+      state: quotedState(),
+      userMessage: "me quedo con la C, ¿hay sede cerca del aeropuerto?",
+      recentContext: [],
+      now: NOW,
+    });
+
+    const text = textOf(chunks);
+    expect(text).toContain("hay una sede cerca del aeropuerto"); // answered the side question
+    expect(text.toLowerCase()).toContain("nombre completo"); // and progressed
+    // Order: answer first, then the data question.
+    expect(text.indexOf("sede cerca")).toBeLessThan(text.toLowerCase().indexOf("nombre completo"));
+    expect(lastSaved().phase).toBe("collecting_customer");
   });
 
   it("(g) hablar_asesor without a quote emits a neutral advisor wa.me", async () => {

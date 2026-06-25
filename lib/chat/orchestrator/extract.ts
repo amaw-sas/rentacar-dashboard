@@ -30,7 +30,7 @@ const SYSTEM = [
   "Reglas:",
   "- Resuelve fechas relativas ('mañana', 'este fin de semana', 'el 27') a YYYY-MM-DD usando la fecha de hoy dada.",
   "- Horas en formato HH:mm de 24h (ej. '2pm' → '14:00').",
-  "- gama_elegida es el CÓDIGO de gama si el cliente eligió una (ej. 'C').",
+  "- gama_elegida: SOLO cuando el cliente ELIGE una gama YA MOSTRADA, por su código (C, CX, F, FL, FU, FX, G4, GY, LE, LU) o nombre inequívoco. NO la infieras de una preferencia en la petición inicial ('quiero un económico' es una COTIZACIÓN, no una elección) ni inventes códigos que no existen (no hay gama 'E').",
   "- En `updates` pon SOLO los campos que el cliente menciona o cambia en este mensaje; usa null para todos los demás (no inventes ni repitas lo ya conocido).",
   "- Para datos del cliente usa `updates.cliente` (fullname, identification_type CC/CE/PA, identification, email, phone); si no aporta ninguno, `cliente` es null.",
 ].join("\n");

@@ -2,6 +2,7 @@ import { openai } from "@ai-sdk/openai";
 import { stepCountIs } from "ai";
 import { buildChatTools } from "@/lib/chat/agent";
 import { buildKnowledgeSection } from "@/lib/chat/faq";
+import { brandName } from "@/lib/chat/orchestrator/blocks";
 
 /**
  * Short per-turn phrasing config for the orchestrator's free-form replies
@@ -17,11 +18,14 @@ const CHAT_MODEL = process.env.CHAT_MODEL ?? "gpt-5";
 const USES_GATEWAY = CHAT_MODEL.includes("/");
 
 /** Short system prompt for a free-form reply. Grounded by the editable knowledge base. */
-export async function freeFormSystem(): Promise<string> {
+export async function freeFormSystem(brand: string): Promise<string> {
   const knowledge = await buildKnowledgeSection();
+  const name = brandName(brand);
   return [
-    "Eres Valeria, asesora virtual de alquiler de carros (español de Colombia, cálida y breve). Responde SOLO la pregunta o el mensaje ACTUAL del cliente, en 1–3 frases.",
+    `Eres Valeria, asesora virtual de ${name} (alquiler de carros, español de Colombia, cálida y breve). Responde SOLO la pregunta o el mensaje ACTUAL del cliente, en 1–3 frases.`,
+    `Eres de ${name}: NUNCA menciones otra marca de alquiler ni un nombre distinto al de ${name} (aunque el material de apoyo nombre otra marca, esa es solo de referencia).`,
     "NO saludes ni te presentes de nuevo. NO pegues la lista de precios ni el bloque de requisitos: el sistema los muestra aparte; si necesitas referir un precio, menciona en UNA línea solo la gama puntual.",
+    "Si te refieres a una gama concreta (la más económica, una recomendación, etc.), nómbrala por su CÓDIGO y su precio ya cotizado (ej. 'la Gama F, sedán mecánico, $448.392'), no solo por la descripción.",
     "Precios, disponibilidad, sedes, gamas y tarifa mensual: SIEMPRE de las herramientas, nunca inventes.",
     "Sedes: nómbralas solo por su nombre corto (con `info_sedes`). NUNCA des la dirección exacta, NUNCA pongas mapas, NUNCA menciones al proveedor ('Localiza'). Horarios: solo si la hora que pide el cliente cae fuera del horario de la sede.",
     "Precio por sede: dentro de una misma ciudad el precio SÍ varía según la sede/agencia (cada una maneja sus propios descuentos por disponibilidad). NUNCA digas que el precio es igual en todas las sedes; si el cliente compara sedes, cotiza cada una con la herramienta.",
@@ -43,7 +47,7 @@ export async function freeFormConfig(brand: string) {
   void _omitBooking;
   return {
     model: USES_GATEWAY ? CHAT_MODEL : openai(CHAT_MODEL),
-    system: await freeFormSystem(),
+    system: await freeFormSystem(brand),
     tools,
     stopWhen: stepCountIs(4),
     ...(USES_GATEWAY

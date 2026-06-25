@@ -16,6 +16,11 @@ const BRAND_NAMES: Record<string, string> = {
 };
 const ADVISOR = "Valeria";
 
+/** Display name of a brand (for greetings and the free-form prompt). */
+export function brandName(brand: string): string {
+  return BRAND_NAMES[brand] ?? "nuestra marca";
+}
+
 function bogotaHour(now: Date): number {
   const hh = new Intl.DateTimeFormat("en-GB", {
     timeZone: "America/Bogota",

@@ -20,8 +20,10 @@ import {
   bookingConfirmedLine,
   bookingSummaryBlock,
   canQuote,
+  gamaNudgeLine,
   gamaOptionsLine,
   greetingBlock,
+  horaExtraLine,
   nextCustomerQuestion,
   nextQuoteQuestion,
   quoteClosingLine,
@@ -300,6 +302,13 @@ async function handleOnDemand(input: OnDemandInput): Promise<boolean> {
   const { writer, writeText, state, intent, userMessage, brand } = input;
   const lastQuote = state.lastQuote;
 
+  // 0. Extra-hour price: Localiza only returns the charge when the quote spans extra
+  // hours, so we re-quote with a one-hour-later return and read precio_hora_extra for
+  // the relevant gama. On any failure, fall through to free-form (it gives the policy).
+  if (intent === "pregunta_horas_extra" && lastQuote) {
+    if (await answerHoraExtra(input)) return true;
+  }
+
   // 1. Show vehicle cards (photos/models) for a gama.
   const wantsVehicles =
     intent === "pregunta_gama" || VEHICLE_RE.test(userMessage);
@@ -314,12 +323,10 @@ async function handleOnDemand(input: OnDemandInput): Promise<boolean> {
       );
       return true;
     }
-    // Couldn't pin a gama: ask which one if we have a quote, else let free-form
-    // handle it (ask ciudad/fechas first).
-    if (lastQuote) {
-      writeText(gamaOptionsLine(lastQuote));
-      return true;
-    }
+    // Couldn't pin a gama (no gama named, or the extractor labeled an unrelated
+    // question like "¿gasolina o diésel?" as pregunta_gama). Do NOT re-paste the whole
+    // gama list — let free-form answer the real question; the off-funnel branch then
+    // adds a short nudge. The quote table already lists the gamas.
     return false;
   }
 
@@ -385,6 +392,64 @@ async function onDemandLinksFor(
 }
 
 /**
+ * Probe offset for the extra-hour re-quote. Localiza bills extra hours only in a narrow
+ * band: a ~1h grace returns 0, hours 2–4 are billed proportionally (linear per-hour
+ * rate), and >4 flips to a full extra day (0 extra hours again). So we re-quote at
+ * pickup + 3h — squarely in the billable band — and divide to get the per-hour rate.
+ */
+const EXTRA_HOUR_PROBE_OFFSET = 3;
+
+/** "10:00" → "13:00" (pickup + EXTRA_HOUR_PROBE_OFFSET). null when it would cross midnight. */
+function extraHourDropoff(hhmm: string): string | null {
+  const [h, m] = hhmm.split(":").map(Number);
+  if (!Number.isInteger(h) || h < 0 || h + EXTRA_HOUR_PROBE_OFFSET > 23) return null;
+  const mm = Number.isInteger(m) ? m : 0;
+  return `${String(h + EXTRA_HOUR_PROBE_OFFSET).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
+}
+
+/**
+ * Answer "¿cuánto vale la hora extra?" with a REAL figure. The quoted total bakes extra
+ * hours in (0 when return ≤ pickup), so a plain quote can't price one hour. We re-quote
+ * the same city/dates/sede with the return bumped into Localiza's billable band (pickup +
+ * EXTRA_HOUR_PROBE_OFFSET), read precio_hora_extra for the resolved gama, and divide by
+ * horasExtra to get the per-hour rate. Returns false when it can't price it (incomplete
+ * slots, re-quote failed, or 0) so the caller falls back to the free-form policy answer.
+ * Read-only: never touches phase/flags, never books.
+ */
+async function answerHoraExtra(input: OnDemandInput): Promise<boolean> {
+  const { writeText, state, userMessage } = input;
+  const s = state.slots;
+  if (!s.ciudad || !s.fecha_recogida || !s.fecha_devolucion) return false;
+  const pickup = s.hora_recogida ?? "10:00";
+  const dropoff = extraHourDropoff(pickup);
+  if (!dropoff) return false;
+
+  const qr = await getQuoteTable({
+    ciudad: s.ciudad,
+    fecha_recogida: s.fecha_recogida,
+    fecha_devolucion: s.fecha_devolucion,
+    hora_recogida: pickup,
+    hora_devolucion: dropoff,
+    sede: s.sede,
+  });
+  if (!qr.ok) return false;
+
+  // The gama the client means: chosen slot, or one named in the message, else the first
+  // (cheapest) row as a representative. Resolve against the re-quote's rows.
+  const row =
+    resolveOnDemandGama({ ...state, lastQuote: qr.table }, userMessage) ??
+    qr.table.filas[0];
+  if (!row || row.precioHoraExtra <= 0) return false;
+
+  const unit =
+    row.horasExtra > 0
+      ? Math.round(row.precioHoraExtra / row.horasExtra)
+      : row.precioHoraExtra;
+  writeText(horaExtraLine(row.categoria, s.ciudad, unit));
+  return true;
+}
+
+/**
  * After handling an on-demand request mid-funnel, re-emit the current phase's
  * question so the customer knows what we still need. null for phases with no pending
  * question (greeting/quoted/booked/...).
@@ -392,7 +457,8 @@ async function onDemandLinksFor(
 function phaseReprompt(state: ConversationState): string | null {
   switch (state.phase) {
     case "choosing_gama":
-      return state.lastQuote ? gamaOptionsLine(state.lastQuote) : null;
+      // Short nudge, not the full gama list (the table already shows it).
+      return state.lastQuote ? gamaNudgeLine() : null;
     case "collecting_customer":
       return nextCustomerQuestion(state.slots.cliente);
     case "confirming":
@@ -446,9 +512,11 @@ async function advanceBooking(
         writeText(gamaOptionsLine(lastQuote));
         return { ...state, phase: "choosing_gama" };
       }
-      // Off-funnel question while still choosing → answer, then nudge the choice.
+      // Off-funnel question while still choosing → answer, then a SHORT nudge. We must
+      // NOT re-paste the whole gama list every turn (the repetition the user reported);
+      // the quote table already shows them.
       await freeForm();
-      writeText(gamaOptionsLine(lastQuote));
+      writeText(gamaNudgeLine());
       return { ...state, phase: "choosing_gama" };
     }
 

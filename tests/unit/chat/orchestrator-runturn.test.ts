@@ -507,6 +507,102 @@ describe("orchestrator runTurn — on-demand (Etapa 4)", () => {
     expect(lastSaved().phase).toBe("collecting_customer");
   });
 
+  it("(h) a tangential question while choosing a gama nudges SHORT, never re-pasting the gama list", async () => {
+    extractSlots.mockResolvedValue({ intent: "tangencial", updates: {} });
+    const { chunks, writer } = fakeWriter();
+    await runTurn(writer, {
+      brand: "alquilatucarro",
+      conversationId: "c1",
+      state: quotedState(),
+      userMessage: "¿incluye seguro?",
+      recentContext: [],
+      now: NOW,
+    });
+
+    const text = textOf(chunks);
+    expect(streamText).toHaveBeenCalledOnce(); // free-form answered the side question
+    expect(text).toContain("¿Con cuál gama te quedas?"); // short nudge
+    expect(text).not.toContain("Tenemos:"); // NOT the 10-gama re-paste (the repetition bug)
+    expect(text).not.toContain("Gama F"); // no gama codes re-listed in prose
+    expect(getQuoteTable).not.toHaveBeenCalled();
+    expect(lastSaved().phase).toBe("choosing_gama");
+  });
+
+  it("(i) pregunta_horas_extra re-quotes +1h and answers a REAL per-gama figure (no re-list)", async () => {
+    extractSlots.mockResolvedValue({ intent: "pregunta_horas_extra", updates: {} });
+    // Localiza bills extra hours proportionally in the 2–4h band; the re-quote at
+    // pickup+3h returns horasExtra=3 with the total, from which we derive the per-hour.
+    getQuoteTable.mockResolvedValue({
+      ok: true,
+      table: {
+        sede: "AABOG01",
+        dias: 3,
+        filas: [
+          {
+            categoria: "C",
+            descripcion: "Económico",
+            dias: 3,
+            precioTotal: 312000,
+            horasExtra: 3,
+            precioHoraExtra: 12000,
+            quote: "blob-c",
+          },
+        ],
+      },
+    });
+
+    const { chunks, writer } = fakeWriter();
+    await runTurn(writer, {
+      brand: "alquilatucarro",
+      conversationId: "c1",
+      state: quotedState(),
+      userMessage: "¿cuánto vale la hora extra?",
+      recentContext: [],
+      now: NOW,
+    });
+
+    // Re-quoted the SAME city/dates with the return bumped into the billable band
+    // (pickup 10:00 + 3h = 13:00) so Localiza returns a non-zero precio_hora_extra.
+    expect(getQuoteTable).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ciudad: "bogota",
+        fecha_recogida: "2026-07-01",
+        fecha_devolucion: "2026-07-04",
+        hora_recogida: "10:00",
+        hora_devolucion: "13:00",
+      }),
+    );
+    const text = textOf(chunks);
+    expect(text).toContain("Gama C");
+    expect(text).toContain("$4.000"); // per-hour = 12000 / 3 extra hours, whole COP
+    expect(text).not.toContain("Tenemos:"); // no re-paste
+    // It is a read: no quote table re-emitted, no booking, phase untouched.
+    expect(dataParts(chunks, "data-quoteTable")).toHaveLength(0);
+    expect(executeBooking).not.toHaveBeenCalled();
+    expect(lastSaved().phase).toBe("quoted");
+  });
+
+  it("(j) pregunta_horas_extra falls back to free-form policy when the re-quote can't price it", async () => {
+    extractSlots.mockResolvedValue({ intent: "pregunta_horas_extra", updates: {} });
+    getQuoteTable.mockResolvedValue({ ok: false, message: "sin disponibilidad" });
+
+    const { chunks, writer } = fakeWriter();
+    await runTurn(writer, {
+      brand: "alquilatucarro",
+      conversationId: "c1",
+      state: quotedState(),
+      userMessage: "¿cuánto vale la hora extra?",
+      recentContext: [],
+      now: NOW,
+    });
+
+    expect(getQuoteTable).toHaveBeenCalledOnce();
+    // No invented figure; the free-form reply (policy) handles it, plus a short nudge.
+    expect(streamText).toHaveBeenCalledOnce();
+    expect(textOf(chunks)).not.toContain("hora extra cuesta");
+    expect(textOf(chunks)).toContain("¿Con cuál gama te quedas?");
+  });
+
   it("(g) hablar_asesor without a quote emits a neutral advisor wa.me", async () => {
     extractSlots.mockResolvedValue({ intent: "hablar_asesor", updates: {} });
 

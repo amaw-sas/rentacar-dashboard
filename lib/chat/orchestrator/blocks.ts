@@ -185,10 +185,38 @@ export function nextCustomerQuestion(cliente: ClienteSlots): string | null {
   return null;
 }
 
-/** Short list of the quoted gamas — used when the client must pick a valid one. */
+/** Short list of the quoted gamas — used ONLY when the client must pick a valid one
+ * (named an invalid gama, or asked "which one?"). It is NOT a per-turn nudge: re-listing
+ * the whole table every off-funnel turn is the repetition bug — use {@link gamaNudgeLine}. */
 export function gamaOptionsLine(table: QuoteTable): string {
   const list = table.filas.map((f) => `Gama ${f.categoria}`).join(", ");
   return `¿Con cuál gama seguimos? Tenemos: ${list}.`;
+}
+
+/**
+ * Listless nudge back to the gama choice, for AFTER an off-funnel answer while a quote
+ * is on the table. The quote table already lists every gama, so re-pasting all the codes
+ * each turn is pure noise (the repetition the user reported). One short question instead.
+ */
+export function gamaNudgeLine(): string {
+  return "¿Con cuál gama te quedas?";
+}
+
+/**
+ * Concrete extra-hour answer for ONE gama, fed by a re-quote's per-hour `precio_hora_extra`
+ * (Localiza only returns the charge when the quote actually spans extra hours, so the
+ * orchestrator re-quotes with a later return to read it). Whole COP.
+ */
+export function horaExtraLine(
+  gamaCode: string,
+  ciudad: string | undefined,
+  precioHoraExtra: number,
+): string {
+  const donde = ciudad ? ` en ${capitalize(ciudad)}` : "";
+  return (
+    `Para la Gama ${gamaCode}${donde}, cada hora extra cuesta **$${COP.format(precioHoraExtra)}** ` +
+    `(aplica si devuelves después de la hora pactada; desde la 4.ª hora ya se cobra un día completo).`
+  );
 }
 
 /**

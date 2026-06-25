@@ -32,6 +32,7 @@
 | Confusión de horarios de noche | ✅ |
 | Frase de espera "dame un momento" | ✅ |
 | Botones web/WhatsApp en la página de prueba | ✅ |
+| Botón WhatsApp del asesor cuando llega solo (hablar_asesor) | ✅ verificado en vivo (alquicarros → wa.me/573146826821) |
 
 ## Temas ABIERTOS (los 4 frentes)
 
@@ -42,7 +43,19 @@
 
 ## Mejora puntual pendiente
 
-- **Horas extra:** el sistema SÍ calcula el cargo, pero lo deja **escondido dentro del precio total**; no se lo entrega al bot como un número que pueda leer. Por eso el bot no supo responder "¿cuánto vale una hora extra?". Solución: exponerle ese renglón (y/o que recotice y muestre la diferencia).
+- ~~**Horas extra:**~~ ✅ RESUELTO — ver "Replay en vivo" abajo. La solución NO fue "exponer un renglón escondido": Localiza solo entrega el cargo cuando se cotiza CON horas extra, así que el orquestador re-cotiza con la devolución en la banda facturable (+3 h) y reporta la cifra real por gama.
+
+## Replay en vivo (2026-06-25, post-Etapa 4, alquicarros)
+
+Batería contra el orquestador (`CHAT_ORCHESTRATOR=on`) en `/chat-test`:
+
+- **Mensual ✅:** "carro por un mes en Bogotá" → pide fecha + tier km (1000/2000), aclara km LIMITADO, cotiza Gama C $4.252.000/30d/2000km (agosto). Verificado: el número sale de `category_pricing` (fila vigente para el MES del alquiler, no hoy); si no hay fila, **devuelve error** ("un asesor te ayuda"), no inventa. Agosto está seeded (migración 026). Ruta arquitectónicamente sólida.
+- **Conductor adicional ✅ (despeja duda abierta):** "$12.000/día por seguro del conductor" es REAL — está en la KB (migración 070, varias entradas). El bot NO lo inventó.
+- **✅ Hora extra — RESUELTO (verificado en vivo local):** ante "¿cuánto vale la hora extra?" el orquestador re-cotiza la misma ciudad/fechas/sede con la devolución en la banda facturable de Localiza (recogida + 3 h) y responde la cifra REAL por gama: "Para la Gama C en Bogotá, cada hora extra cuesta **$23.107**…". **Patrón de Localiza descubierto:** gracia de 1 h (devolución +1h da 0), banda facturable 2–4 h (precio lineal, $23.107/h en este caso), y >4 h pasa a día completo (0 horas extra). Por eso el bump es +3 h y se divide `precio/horas`. Si la re-cotización falla → cae a la política (freeForm). Código: `answerHoraExtra` + `extraHourDropoff` en `orchestrator/index.ts`, `horaExtraLine` en `blocks.ts`.
+- **✅ Re-pegado (Frente A) — RESUELTO (verificado en vivo local):** dos fuentes de re-pegado eliminadas: (1) la rama off-funnel de `advanceBooking` y el `phaseReprompt` de `choosing_gama` ahora usan `gamaNudgeLine` ("¿Con cuál gama te quedas?") en vez de re-listar las 10 gamas; (2) la rama `wantsVehicles` sin gama de `handleOnDemand` ahora devuelve `false` (deja que freeForm responda la pregunta real) en vez de re-pegar la lista. Verificado: 2 tangenciales seguidas → conteo de "Tenemos:" en toda la conversación = **0**, y el bot SÍ responde la pregunta. NO era prompt (3 intentos fallidos) — era estado del orquestador, como se predijo. La lista completa se conserva SOLO para gama inválida (uso legítimo).
+- **🟡 Visión de túnel al cerrar (abierto, menor):** al elegir gama + preguntar "¿hay sede cerca del aeropuerto?", el bot saltó directo a "¿Me compartes tu nombre completo?" e IGNORÓ la pregunta de sede. Menor, pero molesta.
+- **🟡 Extractor mapea "económico" → `gama_elegida:"E"` (abierto, menor):** código de gama inválido (las gamas son C, CX, F…); además a veces fija gama_elegida espuriamente y salta el funnel a recolección. Pre-existente al extractor, no bloquea. Mitigado: `findGama` no resuelve "E" → no rompe; `answerHoraExtra` cae a la gama representativa.
+- **🟡 Orden de burbujas (cosmético):** el nudge corto se emite ANTES de la respuesta de freeForm (writeText síncrono vs stream async). Funcional pero el orden ideal sería respuesta→nudge; arreglo requiere esperar el fin del stream. Diferido.
 
 ## Hallazgos clave
 

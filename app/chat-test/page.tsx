@@ -114,6 +114,17 @@ export default function ChatTestPage() {
           if (e.type === "data-quoteTable" && e.data) {
             quoteTable = e.data as QuoteTablePart;
           }
+          // Orchestrator fallback buttons (code-emitted data part). Same shape the
+          // page already renders, so reuse the FallbackLinks state.
+          if (e.type === "data-buttons" && e.data) {
+            const b = e.data as { web?: string; whatsapp?: string };
+            if (typeof b.web === "string") {
+              links = {
+                web: b.web,
+                whatsapp: typeof b.whatsapp === "string" ? b.whatsapp : "",
+              };
+            }
+          }
           if (e.type === "text-delta") {
             acc += e.delta ?? e.text ?? "";
           }

@@ -297,6 +297,7 @@ export async function POST(request: Request) {
           userMessage: extractText(lastUser),
           recentContext,
           now: new Date(),
+          ipHash: ipHash ?? undefined,
         });
       },
       onError: (e) => {

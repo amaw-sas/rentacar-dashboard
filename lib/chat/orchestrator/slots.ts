@@ -67,6 +67,8 @@ export interface ConversationFlags {
   quote_shown: boolean;
   /** Hash of (ciudad,sede,fechas,horas) of the last quote shown — detects when a re-cotizar is needed. */
   last_quote_signature?: string;
+  /** Booking summary emitted once (Etapa 3) — guards re-emitting it in `confirming`. */
+  summary_shown?: boolean;
 }
 
 export interface ConversationState {

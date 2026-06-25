@@ -13,20 +13,14 @@ import {
   infoGamasSchema,
   runInfoGamas,
 } from "@/lib/chat/knowledge-tools";
-import {
-  crearReservaSchema,
-  runCrearReserva,
-  type CrearReservaArgs,
-} from "@/lib/chat/reserva-tool";
-import { buildFallbackLinks } from "@/lib/chat/reserva-link";
-import { getLocationDirectory } from "@/lib/api/location-directory";
+import { crearReservaSchema } from "@/lib/chat/reserva-tool";
 import type { PersistedMessage } from "@/lib/chat/persistence";
-import { validateCustomerData } from "@/lib/chat/customer-validation";
+import { recordToolEvent } from "@/lib/chat/tool-events";
 import {
-  recordToolEvent,
-  countSuccessfulBookingsForConversation,
-  countSuccessfulBookingsForIp,
-} from "@/lib/chat/tool-events";
+  executeBooking,
+  reservationsEnabled,
+  toErrorCode,
+} from "@/lib/chat/booking-core";
 
 /**
  * Chatbot agent. OpenAI gpt-5-mini. The model id is the only line to change to
@@ -65,12 +59,6 @@ function quoteMaxAgeMs(): number {
   return (Number.isFinite(hours) && hours > 0 ? hours : 1) * 60 * 60 * 1000;
 }
 
-/** Positive integer env with a fallback (shared by the booking rate caps). */
-function envInt(name: string, fallback: number): number {
-  const n = Number(process.env[name]);
-  return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
-}
-
 /**
  * Per-request context the route threads in so the booking tool can enforce its
  * rate caps and tag telemetry. Absent in unit tests (caps then skip).
@@ -78,11 +66,6 @@ function envInt(name: string, fallback: number): number {
 export interface ChatContext {
   conversationId?: string | null;
   ipHash?: string | null;
-}
-
-/** Trim an error message into the short `error_code` column (telemetry only). */
-function toErrorCode(message: string): string {
-  return message.slice(0, 200);
 }
 
 /** One quoted gama from the latest `cotizar` result, kept server-side. */
@@ -198,58 +181,6 @@ export function resolveBookingQuote(
 }
 
 /**
- * Build the pre-filled fallback links (finish-on-web + advisor WhatsApp) for a
- * booking that couldn't be created in chat — provider failure OR a rate cap. So
- * the lead is never lost. Best-effort: any failure resolving them returns null.
- */
-async function buildBookingFallback(
-  brand: string,
-  quote: string,
-  args: CrearReservaArgs,
-  latestQuotes?: LatestQuotes,
-): Promise<{ webUrl: string; whatsappUrl: string } | null> {
-  try {
-    const directory = await getLocationDirectory();
-    return buildFallbackLinks(
-      {
-        brand,
-        quote,
-        gamaDescripcion: latestQuotes?.entries.find(
-          (e) =>
-            e.categoria.trim().toLowerCase() ===
-            args.categoria.trim().toLowerCase(),
-        )?.descripcion,
-        customer: {
-          fullname: args.fullname,
-          identification_type: args.identification_type,
-          identification: args.identification,
-          email: args.email,
-          phone: args.phone,
-        },
-      },
-      directory,
-    );
-  } catch (e) {
-    console.error("[chat] buildFallbackLinks failed", e);
-    return null;
-  }
-}
-
-/** Shape an error reply, attaching the fallback links as button data when present. */
-function errorWithFallback(
-  message: string,
-  links: { webUrl: string; whatsappUrl: string } | null,
-) {
-  return links
-    ? {
-        error: message,
-        completar_en_web: links.webUrl,
-        whatsapp_asesor: links.whatsappUrl,
-      }
-    : { error: message };
-}
-
-/**
  * Build the tools exposed to the agent for a given brand. A function (not a
  * static object) so `crear_reserva` can inject `franchise = brand` AND the
  * resolved `quote` server-side — the LLM never supplies either.
@@ -320,25 +251,19 @@ export function buildChatTools(
         "una confirmación EXPLÍCITA del cliente. Devuelve el número de solicitud.",
       inputSchema: crearReservaSchema,
       execute: async (args) => {
-        // Gated: off by default so the public endpoint never books until Inc. 4
-        // enables it per brand. Degrades to today's behavior (push to the site).
-        if (process.env.CHAT_RESERVATIONS_ENABLED !== "true") {
-          const website = getFranchiseBranding(brand).website;
+        // Gate FIRST (off by default): degrade to "finish on the site" before any
+        // resolution work, so a disabled endpoint never relays a "re-cotiza" error.
+        // executeBooking re-checks the gate authoritatively for the other caller.
+        if (!reservationsEnabled()) {
           return {
-            error: `Por ahora la reserva se completa en el sitio: ${website}`,
+            error: `Por ahora la reserva se completa en el sitio: ${getFranchiseBranding(brand).website}`,
           };
         }
 
-        // Light verification BEFORE booking: hard-validate the customer data
-        // format so a public endpoint can't be fed junk to create fake bookings.
-        // The bot relays the (friendly, ES) message and re-asks — not a provider
-        // failure, so no tool event is recorded.
-        const valid = validateCustomerData(args);
-        if (!valid.ok) return { error: valid.error };
-
         // Resolve the quote server-side (the LLM only named the gama) and reject a
-        // stale price. Done BEFORE the caps so a cap block can still hand over the
-        // pre-filled fallback links. Either error is relayed verbatim → re-cotiza.
+        // stale price. This is THIS path's resolution rule (history + staleness);
+        // booking-core then enforces the gate/validation/caps/telemetry shared with
+        // the orchestrator. Either resolution error is relayed verbatim → re-cotiza.
         const resolved = resolveBookingQuote(
           latestQuotes,
           args.categoria,
@@ -346,76 +271,45 @@ export function buildChatTools(
         );
         if (!resolved.ok) return { error: resolved.error };
 
-        // Anti-abuse rate caps (only when the route threaded context). Counts
-        // PRIOR successful bookings; both fail open so a DB hiccup never blocks a
-        // genuine booking. On a cap hit, hand over the web/WhatsApp fallback so the
-        // lead isn't lost (and the bot has buttons to show, not an empty promise).
-        if (ctx?.conversationId) {
-          const n = await countSuccessfulBookingsForConversation(
-            ctx.conversationId,
-          );
-          if (n >= envInt("CHAT_MAX_BOOKINGS_PER_CONVERSATION", 3)) {
-            const links = await buildBookingFallback(
-              brand,
-              resolved.quote,
-              args,
-              latestQuotes,
-            );
-            return errorWithFallback(
-              "Ya registré varias reservas en esta conversación; abajo te dejo las opciones para terminar.",
-              links,
-            );
-          }
-        }
-        if (ctx?.ipHash) {
-          const sinceISO = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-          const n = await countSuccessfulBookingsForIp(ctx.ipHash, sinceISO);
-          if (n >= envInt("CHAT_MAX_BOOKINGS_PER_IP_PER_DAY", 5)) {
-            const links = await buildBookingFallback(
-              brand,
-              resolved.quote,
-              args,
-              latestQuotes,
-            );
-            return errorWithFallback(
-              "Por hoy alcanzaste el máximo de reservas; abajo te dejo las opciones para terminar.",
-              links,
-            );
-          }
-        }
-
-        const start = Date.now();
-        const result = await runCrearReserva({
+        const outcome = await executeBooking({
+          brand,
           quote: resolved.quote,
-          fullname: args.fullname,
-          identification_type: args.identification_type,
-          identification: args.identification,
-          email: args.email,
-          phone: args.phone,
-          franchise: brand,
+          customer: {
+            fullname: args.fullname,
+            identification_type: args.identification_type,
+            identification: args.identification,
+            email: args.email,
+            phone: args.phone,
+          },
+          gamaDescripcion: latestQuotes?.entries.find(
+            (e) =>
+              e.categoria.trim().toLowerCase() ===
+              args.categoria.trim().toLowerCase(),
+          )?.descripcion,
+          ctx,
         });
-        // Telemetry for the real provider attempt (drives the dashboard health
-        // alert AND the booking caps above). Fire-and-forget.
-        void recordToolEvent({
-          tool: "crear_reserva",
-          ok: result.ok,
-          errorCode: result.ok ? null : toErrorCode(result.message),
-          brand,
-          conversationId: ctx?.conversationId ?? null,
-          ipHash: ctx?.ipHash ?? null,
-          latencyMs: Date.now() - start,
-        });
-        if (result.ok) return result.data;
 
-        // Booking failed for real (provider down / no availability). Don't loop —
-        // hand the customer the pre-filled fallback links so the lead isn't lost.
-        const links = await buildBookingFallback(
-          brand,
-          resolved.quote,
-          args,
-          latestQuotes,
-        );
-        return errorWithFallback(result.message, links);
+        // Map the outcome to the EXACT return shapes the tool produced before, so
+        // the streamed contract (and the page's link rendering) is unchanged.
+        switch (outcome.kind) {
+          case "ok":
+            return outcome.data;
+          case "disabled":
+            return {
+              error: `Por ahora la reserva se completa en el sitio: ${outcome.website}`,
+            };
+          case "invalid":
+            return { error: outcome.message };
+          case "blocked":
+          case "failed":
+            return outcome.links
+              ? {
+                  error: outcome.message,
+                  completar_en_web: outcome.links.webUrl,
+                  whatsapp_asesor: outcome.links.whatsappUrl,
+                }
+              : { error: outcome.message };
+        }
       },
     }),
   };

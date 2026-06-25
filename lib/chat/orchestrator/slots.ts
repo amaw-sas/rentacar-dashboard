@@ -90,38 +90,58 @@ export function initialState(): ConversationState {
 // LLM extraction schema — the ONLY place the model reads the conversation.
 // ---------------------------------------------------------------------------
 
+// NOTE: every field is `.nullable()` (required key, value-or-null) rather than
+// `.optional()`. OpenAI strict structured outputs (the default for generateObject
+// with an openai model) rejects schemas whose objects don't list EVERY property in
+// `required` — `.optional()` makes the call throw at runtime (`Invalid schema for
+// response_format … 'required' … Missing 'fullname'`), silently killing extraction.
+// The model returns null for fields the user didn't mention; `defined()` filters
+// those out on merge, so an absent value never clobbers a known slot.
 const clienteUpdate = z
   .object({
-    fullname: z.string().optional(),
-    identification_type: z.string().optional(),
-    identification: z.string().optional(),
-    email: z.string().optional(),
-    phone: z.string().optional(),
+    fullname: z.string().nullable(),
+    identification_type: z.string().nullable(),
+    identification: z.string().nullable(),
+    email: z.string().nullable(),
+    phone: z.string().nullable(),
   })
-  .optional();
+  .nullable();
 
 export const extractionSchema = z.object({
   /** What the latest user message is doing. */
   intent: z.enum(INTENTS),
-  /** Slot values present/updated in THIS message. Omit fields not mentioned. */
+  /** Slot values present/updated in THIS message. Use null for fields not mentioned. */
   updates: z.object({
-    ciudad: z.string().optional(),
-    sede: z.string().optional(),
-    fecha_recogida: z.string().optional(),
-    fecha_devolucion: z.string().optional(),
-    hora_recogida: z.string().optional(),
-    hora_devolucion: z.string().optional(),
-    gama_elegida: z.string().optional(),
+    ciudad: z.string().nullable(),
+    sede: z.string().nullable(),
+    fecha_recogida: z.string().nullable(),
+    fecha_devolucion: z.string().nullable(),
+    hora_recogida: z.string().nullable(),
+    hora_devolucion: z.string().nullable(),
+    gama_elegida: z.string().nullable(),
     cliente: clienteUpdate,
   }),
 });
 export type Extraction = z.infer<typeof extractionSchema>;
 
-/** Drop undefined keys so an absent extraction field never clobbers a known slot. */
-function defined<T extends Record<string, unknown>>(obj: T): Partial<T> {
-  const out: Partial<T> = {};
+/**
+ * Loose update shape the merge accepts: any subset of slot fields (each value or
+ * null). A full {@link Extraction} satisfies it, and so do the partial literals used
+ * in tests — the merge only ever reads the keys that are present.
+ */
+export type SlotUpdates = {
+  [K in keyof Omit<Slots, "cliente">]?: string | null;
+} & { cliente?: Partial<Record<keyof ClienteSlots, string | null>> | null };
+
+/** Drop undefined/null/empty keys so an absent extraction field never clobbers a known slot. */
+function defined<T extends Record<string, unknown>>(
+  obj: T,
+): Partial<{ [K in keyof T]: NonNullable<T[K]> }> {
+  const out: Partial<{ [K in keyof T]: NonNullable<T[K]> }> = {};
   for (const [k, v] of Object.entries(obj)) {
-    if (v !== undefined && v !== null && v !== "") out[k as keyof T] = v as T[keyof T];
+    if (v !== undefined && v !== null && v !== "") {
+      out[k as keyof T] = v as NonNullable<T[keyof T]>;
+    }
   }
   return out;
 }
@@ -133,7 +153,7 @@ function defined<T extends Record<string, unknown>>(obj: T): Partial<T> {
  */
 export function applyExtraction(
   state: ConversationState,
-  ext: Extraction,
+  ext: { intent: Intent; updates?: SlotUpdates },
 ): ConversationState {
   const u = ext.updates ?? {};
   const { cliente, ...rest } = u;

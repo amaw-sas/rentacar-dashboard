@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createAdminClient } from "@/lib/supabase/admin";
+import type { ConversationState } from "@/lib/chat/orchestrator/slots";
 
 /**
  * Chatbot persistence (V1). Writes anonymous web-chat conversations to Supabase
@@ -99,6 +100,43 @@ export async function loadMessages(
 
   if (error) throw error;
   return (data ?? []) as PersistedMessage[];
+}
+
+/**
+ * Load the hybrid orchestrator's conversation state (Rediseño híbrido · Etapa 1).
+ * Returns null when unset (legacy conversations / orchestrator off) so the caller
+ * falls back to `initialState()`. Reads the `state` jsonb column (migration 073).
+ */
+export async function loadConversationState(
+  conversationId: string,
+  client: SupabaseClient = createAdminClient(),
+): Promise<ConversationState | null> {
+  const { data, error } = await client
+    .from("chat_conversations")
+    .select("state")
+    .eq("id", conversationId)
+    .single();
+
+  if (error || !data?.state) return null;
+  return data.state as ConversationState;
+}
+
+/**
+ * Persist the orchestrator state. Mirrors `phase` to its own column for dashboard
+ * filtering. Best-effort by contract: the caller wraps it (shadow mode must never
+ * break the reply if the columns/migration aren't present yet).
+ */
+export async function saveConversationState(
+  conversationId: string,
+  state: ConversationState,
+  client: SupabaseClient = createAdminClient(),
+): Promise<void> {
+  const { error } = await client
+    .from("chat_conversations")
+    .update({ state, phase: state.phase })
+    .eq("id", conversationId);
+
+  if (error) throw error;
 }
 
 /**

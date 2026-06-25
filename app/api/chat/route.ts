@@ -18,6 +18,8 @@ import {
   type PersistedMessage,
 } from "@/lib/chat/persistence";
 import { hashClientIp } from "@/lib/chat/client-ip";
+import { runShadowExtraction } from "@/lib/chat/orchestrator/extract";
+import { bogotaTodayYMD } from "@/lib/date/bogota";
 
 // Public, anonymous chatbot endpoint (V1). Quoting + FAQ only — no reservation
 // side effects — so it follows the public-read pattern of /api/locations: no
@@ -212,6 +214,26 @@ export async function POST(request: Request) {
     appendMessages(conversationId, [
       { role: "user", content: extractText(lastUser), parts: lastUser.parts },
     ]).catch((e) => console.error("[chat] persist user failed", e));
+  }
+
+  // Hybrid orchestrator (Etapa 1) in SHADOW: build the deterministic conversation
+  // state alongside the live (still all-LLM) reply, WITHOUT affecting it. Off unless
+  // CHAT_ORCHESTRATOR=shadow. Fire-and-forget and fully guarded — never breaks the
+  // response, even if migration 073 isn't applied yet.
+  if (
+    conversationId &&
+    lastUser?.role === "user" &&
+    process.env.CHAT_ORCHESTRATOR === "shadow"
+  ) {
+    const recentContext = (history ?? [])
+      .slice(-6)
+      .map((m) => `${m.role}: ${typeof m.content === "string" ? m.content : ""}`);
+    runShadowExtraction({
+      conversationId,
+      todayYMD: bogotaTodayYMD(),
+      recentContext,
+      userMessage: extractText(lastUser),
+    }).catch((e) => console.error("[chat] shadow extraction failed", e));
   }
 
   // Model context = reloaded history + the current incoming user message. New

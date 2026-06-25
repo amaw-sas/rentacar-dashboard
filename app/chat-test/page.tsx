@@ -19,6 +19,11 @@ type QuoteTablePart = {
     precioHoraExtra: number;
   }>;
 };
+type GamaCardsPart = {
+  gama: string;
+  descripcion?: string;
+  modelos: Array<{ nombre: string; imagen: string }>;
+};
 type Msg = {
   role: "user" | "assistant";
   parts: Part[];
@@ -28,6 +33,9 @@ type Msg = {
   // Hybrid orchestrator (Etapa 2): the quote table is emitted as a `data-quoteTable`
   // part by code (not the LLM), so the page renders the prices deterministically.
   quoteTable?: QuoteTablePart;
+  // Hybrid orchestrator (Etapa 4): vehicle model cards (photo + name) by gama,
+  // emitted as a `data-gamaCards` part by code.
+  gamaCards?: GamaCardsPart;
 };
 
 const COP = new Intl.NumberFormat("es-CO");
@@ -78,6 +86,7 @@ export default function ChatTestPage() {
       let acc = "";
       let links: FallbackLinks | undefined;
       let quoteTable: QuoteTablePart | undefined;
+      let gamaCards: GamaCardsPart | undefined;
 
       for (;;) {
         const { done, value } = await reader.read();
@@ -114,6 +123,10 @@ export default function ChatTestPage() {
           if (e.type === "data-quoteTable" && e.data) {
             quoteTable = e.data as QuoteTablePart;
           }
+          // Orchestrator vehicle cards (code-emitted data part).
+          if (e.type === "data-gamaCards" && e.data) {
+            gamaCards = e.data as GamaCardsPart;
+          }
           // Orchestrator fallback buttons (code-emitted data part). Same shape the
           // page already renders, so reuse the FallbackLinks state.
           if (e.type === "data-buttons" && e.data) {
@@ -128,7 +141,7 @@ export default function ChatTestPage() {
           if (e.type === "text-delta") {
             acc += e.delta ?? e.text ?? "";
           }
-          if (e.type === "text-delta" || links || quoteTable) {
+          if (e.type === "text-delta" || links || quoteTable || gamaCards) {
             setMessages((cur) => {
               const copy = [...cur];
               copy[assistantIdx] = {
@@ -136,6 +149,7 @@ export default function ChatTestPage() {
                 parts: [{ type: "text", text: acc }],
                 links,
                 quoteTable,
+                gamaCards,
               };
               return copy;
             });
@@ -266,6 +280,76 @@ export default function ChatTestPage() {
                   Total con IVA, tasas, seguro básico y km ilimitado · {m.quoteTable.dias}{" "}
                   día(s).
                 </span>
+              </div>
+            )}
+            {m.gamaCards && (
+              <div style={{ marginTop: 10 }}>
+                <span style={{ fontSize: 13, fontWeight: 600 }}>
+                  Modelos de la Gama {m.gamaCards.gama}
+                  {m.gamaCards.descripcion ? ` · ${m.gamaCards.descripcion}` : ""}
+                </span>
+                <div
+                  style={{
+                    display: "flex",
+                    flexWrap: "wrap",
+                    gap: 10,
+                    marginTop: 8,
+                  }}
+                >
+                  {m.gamaCards.modelos.map((mod, mi) => (
+                    <div
+                      key={mi}
+                      style={{
+                        width: 120,
+                        display: "flex",
+                        flexDirection: "column",
+                        alignItems: "center",
+                        gap: 4,
+                        padding: 8,
+                        border: "1px solid #e2e2e2",
+                        borderRadius: 8,
+                        background: "#fff",
+                      }}
+                    >
+                      {mod.imagen ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={mod.imagen}
+                          alt={mod.nombre}
+                          loading="lazy"
+                          style={{
+                            width: "100%",
+                            height: 80,
+                            objectFit: "contain",
+                          }}
+                        />
+                      ) : (
+                        <div
+                          style={{
+                            width: "100%",
+                            height: 80,
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            color: "#bbb",
+                            fontSize: 12,
+                          }}
+                        >
+                          (sin foto)
+                        </div>
+                      )}
+                      <span
+                        style={{
+                          fontSize: 12,
+                          textAlign: "center",
+                          lineHeight: 1.3,
+                        }}
+                      >
+                        {mod.nombre}
+                      </span>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
             {m.links && (

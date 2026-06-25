@@ -39,10 +39,25 @@ function splitDateTime(dt: string): { date: string; hour: string } {
   return { date, hour: timeRaw.slice(0, 5) };
 }
 
-export function buildFallbackLinks(
+/**
+ * The shared part of every reservation link: decode the quote, resolve pickup/return
+ * sedes from the directory, and build the website deep-link + the human-readable
+ * gama/sede/period fields. Returns null when the quote can't be decoded or the pickup
+ * sede isn't in the directory — both builders below short-circuit on that. The webUrl
+ * is IDENTICAL across builders (only the WhatsApp message text differs).
+ */
+interface LinkContext {
+  webUrl: string;
+  whatsapp: string;
+  gama: string;
+  sedeName: string;
+  periodo: string;
+}
+
+function buildLinkContext(
   input: FallbackLinkInput,
   directory: LocationDirectoryItem[],
-): FallbackLinks | null {
+): LinkContext | null {
   let ctx;
   try {
     ctx = decodeQuote(input.quote);
@@ -69,18 +84,66 @@ export function buildFallbackLinks(
   const gama = input.gamaDescripcion
     ? `${ctx.categoryCode} (${input.gamaDescripcion})`
     : ctx.categoryCode;
+
+  return {
+    webUrl,
+    whatsapp: branding.whatsapp,
+    gama,
+    sedeName: pickup.name,
+    periodo: `${p.date} ${p.hour} → ${r.date} ${r.hour}`,
+  };
+}
+
+export function buildFallbackLinks(
+  input: FallbackLinkInput,
+  directory: LocationDirectoryItem[],
+): FallbackLinks | null {
+  const link = buildLinkContext(input, directory);
+  if (!link) return null;
+
   const msg = [
     "Hola, intenté reservar por el chat y no se pudo. Quiero completar mi reserva:",
-    `• Gama: ${gama}`,
-    `• Sede: ${pickup.name}`,
-    `• Fechas: ${p.date} ${p.hour} → ${r.date} ${r.hour}`,
+    `• Gama: ${link.gama}`,
+    `• Sede: ${link.sedeName}`,
+    `• Fechas: ${link.periodo}`,
     `• Nombre: ${input.customer.fullname}`,
     `• Documento: ${input.customer.identification_type} ${input.customer.identification}`,
     `• Correo: ${input.customer.email}`,
     `• Teléfono: ${input.customer.phone}`,
   ].join("\n");
 
-  const whatsappUrl = `https://wa.me/${branding.whatsapp}?text=${encodeURIComponent(msg)}`;
+  const whatsappUrl = `https://wa.me/${link.whatsapp}?text=${encodeURIComponent(msg)}`;
+  return { webUrl: link.webUrl, whatsappUrl };
+}
 
-  return { webUrl, whatsappUrl };
+/**
+ * On-demand reservation links (Rediseño híbrido · Etapa 4). Same webUrl as the
+ * fallback, but a NEUTRAL WhatsApp message ("quiero reservar / recibir información")
+ * for when the customer asks for the link/advisor mid-flow — NOT after a failure.
+ * Customer lines that are still empty are omitted (no "undefined" in the text).
+ * Returns null on the same conditions as the fallback (undecodable quote / unknown sede).
+ */
+export function buildOnDemandLinks(
+  input: FallbackLinkInput,
+  directory: LocationDirectoryItem[],
+): FallbackLinks | null {
+  const link = buildLinkContext(input, directory);
+  if (!link) return null;
+
+  const c = input.customer;
+  const lines = [
+    "Hola, quiero reservar / recibir información:",
+    `• Gama: ${link.gama}`,
+    `• Sede: ${link.sedeName}`,
+    `• Fechas: ${link.periodo}`,
+  ];
+  if (c.fullname) lines.push(`• Nombre: ${c.fullname}`);
+  const doc = [c.identification_type, c.identification].filter(Boolean).join(" ");
+  if (doc) lines.push(`• Documento: ${doc}`);
+  if (c.email) lines.push(`• Correo: ${c.email}`);
+  if (c.phone) lines.push(`• Teléfono: ${c.phone}`);
+
+  const msg = lines.join("\n");
+  const whatsappUrl = `https://wa.me/${link.whatsapp}?text=${encodeURIComponent(msg)}`;
+  return { webUrl: link.webUrl, whatsappUrl };
 }

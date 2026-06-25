@@ -33,6 +33,19 @@ const { streamText } = vi.hoisted(() => ({
 }));
 vi.mock("ai", () => ({ streamText }));
 
+// Etapa 4 on-demand collaborators: mock the DB-bearing card lookup and the link
+// builder so the orchestrator's on-demand control flow is tested in isolation.
+const { getGamaCards } = vi.hoisted(() => ({ getGamaCards: vi.fn() }));
+vi.mock("@/lib/chat/orchestrator/gama-cards", () => ({ getGamaCards }));
+
+const { buildOnDemandLinks } = vi.hoisted(() => ({ buildOnDemandLinks: vi.fn() }));
+vi.mock("@/lib/chat/reserva-link", () => ({ buildOnDemandLinks }));
+
+const { getLocationDirectory } = vi.hoisted(() => ({
+  getLocationDirectory: vi.fn(async () => []),
+}));
+vi.mock("@/lib/api/location-directory", () => ({ getLocationDirectory }));
+
 import { runTurn } from "@/lib/chat/orchestrator";
 import { initialState, type ConversationState } from "@/lib/chat/orchestrator/slots";
 
@@ -69,6 +82,9 @@ beforeEach(() => {
   executeBooking.mockReset();
   freeFormConfig.mockClear();
   streamText.mockClear();
+  getGamaCards.mockReset();
+  buildOnDemandLinks.mockReset();
+  getLocationDirectory.mockClear();
 });
 
 const NOW = new Date("2026-06-25T20:00:00Z");
@@ -417,5 +433,102 @@ describe("orchestrator runTurn — booking phase", () => {
     const buttons = dataParts(chunks, "data-buttons");
     expect(buttons).toHaveLength(1);
     expect((buttons[0].data as { web?: string }).web).toBe("https://web/finish");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// On-demand handling (Etapa 4): vehicle cards, reservation link, advisor WhatsApp.
+// Code-owned; getGamaCards/buildOnDemandLinks/getLocationDirectory are mocked.
+// ---------------------------------------------------------------------------
+
+describe("orchestrator runTurn — on-demand (Etapa 4)", () => {
+  it("(e) 'muéstrame los modelos de la gama F' with a quote emits data-gamaCards and does NOT re-quote/book", async () => {
+    getGamaCards.mockResolvedValue({
+      gama: "F",
+      descripcion: "SUV",
+      modelos: [{ nombre: "Renault Duster", imagen: "https://img/duster.png" }],
+    });
+    extractSlots.mockResolvedValue({ intent: "pregunta_gama", updates: {} });
+
+    const { chunks, writer } = fakeWriter();
+    await runTurn(writer, {
+      brand: "alquilatucarro",
+      conversationId: "c1",
+      // gama named in the message, not yet chosen as a slot.
+      state: quotedState(),
+      userMessage: "muéstrame los modelos de la gama F",
+      recentContext: [],
+      now: NOW,
+    });
+
+    expect(getGamaCards).toHaveBeenCalledWith("F", "SUV");
+    expect(dataParts(chunks, "data-gamaCards")).toHaveLength(1);
+    // No re-quote, no booking.
+    expect(getQuoteTable).not.toHaveBeenCalled();
+    expect(dataParts(chunks, "data-quoteTable")).toHaveLength(0);
+    expect(executeBooking).not.toHaveBeenCalled();
+    // Phase untouched (still quoted).
+    expect(lastSaved().phase).toBe("quoted");
+  });
+
+  it("(f) pedir_enlace with a chosen gama emits data-buttons with the web link only", async () => {
+    buildOnDemandLinks.mockReturnValue({
+      webUrl: "https://web/reserva",
+      whatsappUrl: "https://wa.me/57x?text=hola",
+    });
+    extractSlots.mockResolvedValue({ intent: "pedir_enlace", updates: {} });
+
+    const { chunks, writer } = fakeWriter();
+    await runTurn(writer, {
+      brand: "alquilatucarro",
+      conversationId: "c1",
+      state: quotedState({
+        phase: "collecting_customer",
+        slots: {
+          ciudad: "bogota",
+          fecha_recogida: "2026-07-01",
+          fecha_devolucion: "2026-07-04",
+          gama_elegida: "C",
+          cliente: { fullname: "Diego Melo" },
+        },
+      }),
+      userMessage: "¿me pasas el link para reservar yo mismo?",
+      recentContext: [],
+      now: NOW,
+    });
+
+    expect(buildOnDemandLinks).toHaveBeenCalledOnce();
+    const buttons = dataParts(chunks, "data-buttons");
+    expect(buttons).toHaveLength(1);
+    expect((buttons[0].data as { web?: string }).web).toBe("https://web/reserva");
+    expect((buttons[0].data as { whatsapp?: string }).whatsapp).toBeUndefined();
+    // No re-book; mid-funnel re-prompt re-asks the pending customer field.
+    expect(executeBooking).not.toHaveBeenCalled();
+    expect(lastSaved().phase).toBe("collecting_customer");
+  });
+
+  it("(g) hablar_asesor without a quote emits a neutral advisor wa.me", async () => {
+    extractSlots.mockResolvedValue({ intent: "hablar_asesor", updates: {} });
+
+    const greeted: ConversationState = {
+      ...initialState(),
+      flags: { greeted: true, requisitos_shown: false, quote_shown: false },
+    };
+    const { chunks, writer } = fakeWriter();
+    await runTurn(writer, {
+      brand: "alquilatucarro",
+      conversationId: "c1",
+      state: greeted,
+      userMessage: "quiero hablar con un asesor",
+      recentContext: [],
+      now: NOW,
+    });
+
+    expect(buildOnDemandLinks).not.toHaveBeenCalled();
+    const buttons = dataParts(chunks, "data-buttons");
+    expect(buttons).toHaveLength(1);
+    const wa = (buttons[0].data as { whatsapp?: string }).whatsapp ?? "";
+    expect(wa.startsWith("https://wa.me/573016729250?text=")).toBe(true);
+    expect((buttons[0].data as { web?: string }).web).toBeUndefined();
   });
 });

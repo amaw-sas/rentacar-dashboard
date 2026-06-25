@@ -3,6 +3,9 @@ import { bogotaTodayYMD } from "@/lib/date/bogota";
 import { saveConversationState } from "@/lib/chat/persistence";
 import { validateCustomerData } from "@/lib/chat/customer-validation";
 import { executeBooking } from "@/lib/chat/booking-core";
+import { buildOnDemandLinks } from "@/lib/chat/reserva-link";
+import { getLocationDirectory } from "@/lib/api/location-directory";
+import { getFranchiseBranding } from "@/lib/constants/franchises";
 import { extractSlots } from "./extract";
 import {
   applyExtraction,
@@ -10,7 +13,8 @@ import {
   type Intent,
   type Phase,
 } from "./slots";
-import { findGama, getQuoteTable } from "./quote-service";
+import { findGama, getQuoteTable, type QuoteRow } from "./quote-service";
+import { getGamaCards } from "./gama-cards";
 import { freeFormConfig } from "./prompts";
 import {
   bookingConfirmedLine,
@@ -136,14 +140,34 @@ export async function runTurn(
   const quoteIsStale =
     !state.flags.quote_shown || state.flags.last_quote_signature !== sig;
   const hasQuote = Boolean(state.lastQuote && state.flags.quote_shown);
+  const freshQuotePending = Boolean(
+    wantsQuote && ciudad && fecha_recogida && fecha_devolucion && quoteIsStale,
+  );
 
-  if (
-    wantsQuote &&
-    ciudad &&
-    fecha_recogida &&
-    fecha_devolucion &&
-    quoteIsStale
-  ) {
+  // On-demand intercept (Etapa 4): show vehicle cards, the self-serve reservation
+  // link, or the advisor WhatsApp. Has priority over the free-form reply but NEVER
+  // over a pending fresh quote, and it neither re-quotes nor re-books — it only emits
+  // parts and (when mid-funnel) re-prompts the current phase question, leaving
+  // phase/flags untouched so the cotización and reserva funnels stay intact.
+  let onDemandHandled = false;
+  if (!freshQuotePending) {
+    onDemandHandled = await handleOnDemand({
+      writer,
+      writeText,
+      state,
+      intent,
+      userMessage,
+      brand,
+    });
+    if (onDemandHandled) {
+      const rp = phaseReprompt(state);
+      if (rp) writeText(rp);
+    }
+  }
+
+  if (onDemandHandled) {
+    // On-demand already emitted its part(s) + any phase re-prompt; nothing else.
+  } else if (wantsQuote && ciudad && fecha_recogida && fecha_devolucion && quoteIsStale) {
     // First quote → requisitos once, then the table (both code-emitted). A re-quote
     // (changed ciudad/fechas/sede) resets the booking phase back to `quoted`.
     if (!state.flags.requisitos_shown) {
@@ -205,6 +229,176 @@ export async function runTurn(
     } catch (e) {
       console.error("[orchestrator] saveConversationState failed", e);
     }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// On-demand handling (Etapa 4): vehicle cards, reservation link, advisor WhatsApp.
+// All code-owned; the LLM is never asked to format these. Each helper emits its
+// data part(s) + ONE short code line and returns whether it handled the message.
+// ---------------------------------------------------------------------------
+
+/** Customer asks to see the vehicles/photos/models of a gama. */
+const VEHICLE_RE =
+  /foto|imagen|im[aá]gen|modelos?|qu[eé]\s+(carros|veh[ií]culos|autos)|cu[aá]les?\s+(carros|veh[ií]culos)|ver\s+(los\s+)?(carros|veh[ií]culos|modelos)/i;
+
+interface OnDemandInput {
+  writer: UIMessageStreamWriter;
+  writeText: (text: string) => void;
+  state: ConversationState;
+  intent: Intent;
+  userMessage: string;
+  brand: string;
+}
+
+/** Customer slots → the booking customer shape (empty strings for unknown fields). */
+function customerFromSlots(state: ConversationState) {
+  const c = state.slots.cliente;
+  return {
+    fullname: c.fullname ?? "",
+    identification_type: c.identification_type ?? "",
+    identification: c.identification ?? "",
+    email: c.email ?? "",
+    phone: c.phone ?? "",
+  };
+}
+
+/**
+ * Resolve which quoted gama the customer means: the chosen slot first, else a gama
+ * code named in the message that exists in the last quote. Single-letter codes only
+ * match when prefixed by "gama" (so "favor" never resolves to gama F).
+ */
+function resolveOnDemandGama(
+  state: ConversationState,
+  userMessage: string,
+): QuoteRow | undefined {
+  const lastQuote = state.lastQuote;
+  if (!lastQuote) return undefined;
+  if (state.slots.gama_elegida) {
+    const r = findGama(lastQuote, state.slots.gama_elegida);
+    if (r) return r;
+  }
+  const msg = userMessage.toLowerCase();
+  for (const f of lastQuote.filas) {
+    const code = f.categoria.toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (!code) continue;
+    const re =
+      code.length === 1
+        ? new RegExp(`\\bgama\\s+${code}\\b`, "i")
+        : new RegExp(`\\b(?:gama\\s+)?${code}\\b`, "i");
+    if (re.test(msg)) return f;
+  }
+  return undefined;
+}
+
+/**
+ * Emit the on-demand response for the message, or return false when it's not an
+ * on-demand request the code can satisfy (caller falls back to the normal flow /
+ * free-form reply). Never mutates phase/flags and never re-quotes/re-books.
+ */
+async function handleOnDemand(input: OnDemandInput): Promise<boolean> {
+  const { writer, writeText, state, intent, userMessage, brand } = input;
+  const lastQuote = state.lastQuote;
+
+  // 1. Show vehicle cards (photos/models) for a gama.
+  const wantsVehicles =
+    intent === "pregunta_gama" || VEHICLE_RE.test(userMessage);
+  if (wantsVehicles) {
+    const row = resolveOnDemandGama(state, userMessage);
+    if (row) {
+      const part = await getGamaCards(row.categoria, row.descripcion);
+      if (!part) return false; // no real cards → don't promise photos; free-form.
+      writer.write({ type: "data-gamaCards", data: part });
+      writeText(
+        `Estos son los modelos que suelen venir en la Gama ${row.categoria}; el modelo exacto se asigna en sede.`,
+      );
+      return true;
+    }
+    // Couldn't pin a gama: ask which one if we have a quote, else let free-form
+    // handle it (ask ciudad/fechas first).
+    if (lastQuote) {
+      writeText(gamaOptionsLine(lastQuote));
+      return true;
+    }
+    return false;
+  }
+
+  // 2. Self-serve reservation link.
+  if (intent === "pedir_enlace") {
+    const row = resolveOnDemandGama(state, userMessage);
+    if (row) {
+      const links = await onDemandLinksFor(row, state, brand);
+      if (links) {
+        writer.write({ type: "data-buttons", data: { web: links.webUrl } });
+        writeText("Te dejo el enlace para reservar tú mismo abajo.");
+        return true;
+      }
+    }
+    return false; // no gama/quote (or link build failed) → free-form.
+  }
+
+  // 3. Advisor WhatsApp.
+  if (intent === "hablar_asesor") {
+    const row = resolveOnDemandGama(state, userMessage);
+    if (row) {
+      const links = await onDemandLinksFor(row, state, brand);
+      if (links) {
+        writer.write({ type: "data-buttons", data: { whatsapp: links.whatsappUrl } });
+        writeText("Te dejo el contacto de un asesor abajo.");
+        return true;
+      }
+    }
+    // No quote (or build failed): a neutral advisor wa.me for the brand.
+    const number = getFranchiseBranding(brand).whatsapp;
+    const whatsapp = `https://wa.me/${number}?text=${encodeURIComponent(
+      "Hola, quiero información sobre alquiler de carros.",
+    )}`;
+    writer.write({ type: "data-buttons", data: { whatsapp } });
+    writeText("Te dejo el contacto de un asesor abajo.");
+    return true;
+  }
+
+  return false;
+}
+
+/** Build the on-demand links for a chosen gama row; null on any failure. */
+async function onDemandLinksFor(
+  row: QuoteRow,
+  state: ConversationState,
+  brand: string,
+) {
+  try {
+    const directory = await getLocationDirectory();
+    return buildOnDemandLinks(
+      {
+        brand,
+        quote: row.quote,
+        gamaDescripcion: row.descripcion,
+        customer: customerFromSlots(state),
+      },
+      directory,
+    );
+  } catch (e) {
+    console.error("[orchestrator] onDemandLinksFor failed", e);
+    return null;
+  }
+}
+
+/**
+ * After handling an on-demand request mid-funnel, re-emit the current phase's
+ * question so the customer knows what we still need. null for phases with no pending
+ * question (greeting/quoted/booked/...).
+ */
+function phaseReprompt(state: ConversationState): string | null {
+  switch (state.phase) {
+    case "choosing_gama":
+      return state.lastQuote ? gamaOptionsLine(state.lastQuote) : null;
+    case "collecting_customer":
+      return nextCustomerQuestion(state.slots.cliente);
+    case "confirming":
+      return "Cuando quieras te confirmo la reserva, ¿la confirmo?";
+    default:
+      return null;
   }
 }
 

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { encodeQuote } from "@/lib/api/mcp/quote";
-import { buildFallbackLinks } from "@/lib/chat/reserva-link";
+import { buildFallbackLinks, buildOnDemandLinks } from "@/lib/chat/reserva-link";
 import type { LocationDirectoryItem } from "@/lib/api/location-directory";
 
 // The fallback links must match the website's deep-link contract EXACTLY (the
@@ -104,6 +104,55 @@ describe("buildFallbackLinks", () => {
   it("returns null when the quote cannot be decoded", () => {
     expect(
       buildFallbackLinks({ brand: "alquilatucarro", quote: "not-a-quote", customer }, directory),
+    ).toBeNull();
+  });
+});
+
+describe("buildOnDemandLinks", () => {
+  it("reuses the SAME webUrl as the fallback but a neutral WhatsApp message", () => {
+    const fallback = buildFallbackLinks(
+      { brand: "alquilatucarro", quote, gamaDescripcion: "económico", customer },
+      directory,
+    );
+    const onDemand = buildOnDemandLinks(
+      { brand: "alquilatucarro", quote, gamaDescripcion: "económico", customer },
+      directory,
+    );
+    expect(onDemand?.webUrl).toBe(fallback?.webUrl);
+
+    const text = decodeURIComponent(onDemand!.whatsappUrl.split("?text=")[1]);
+    expect(text).not.toContain("no se pudo");
+    expect(text).toContain("quiero reservar");
+    // Reservation fields still present.
+    expect(text).toContain("FX (económico)");
+    expect(text).toContain("Armenia Aeropuerto");
+    expect(text).toContain("Diego Melo");
+  });
+
+  it("omits customer lines that are still empty (no 'undefined')", () => {
+    const onDemand = buildOnDemandLinks(
+      {
+        brand: "alquilatucarro",
+        quote,
+        gamaDescripcion: "económico",
+        customer: { fullname: "", identification_type: "", identification: "", email: "", phone: "" },
+      },
+      directory,
+    );
+    const text = decodeURIComponent(onDemand!.whatsappUrl.split("?text=")[1]);
+    expect(text).not.toContain("undefined");
+    expect(text).not.toContain("Nombre:");
+    expect(text).not.toContain("Documento:");
+    expect(text).not.toContain("Correo:");
+    expect(text).not.toContain("Teléfono:");
+    // The gama/sede/fechas header lines stay.
+    expect(text).toContain("Gama: FX (económico)");
+    expect(text).toContain("Sede: Armenia Aeropuerto");
+  });
+
+  it("returns null when the quote cannot be decoded", () => {
+    expect(
+      buildOnDemandLinks({ brand: "alquilatucarro", quote: "nope", customer }, directory),
     ).toBeNull();
   });
 });

@@ -118,12 +118,18 @@ export function computeSelectedDays(
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Diacritic-insensitive, case-insensitive normalization for place matching. */
+/**
+ * Diacritic-, case-, and separator-insensitive normalization for place matching. The
+ * directory stores `city` as a SLUG ("santa-marta"), so collapsing spaces/underscores/
+ * hyphens to a single space lets a typed "Santa Marta" match it (otherwise a served city
+ * is wrongly rejected as "no encuentro una sede").
+ */
 function norm(s: string): string {
   return s
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
+    .replace(/[\s_-]+/g, " ")
     .trim();
 }
 

@@ -138,6 +138,12 @@ describe("resolveLocationCode", () => {
     expect(resolveLocationCode(d, "bogota")).toBe("AABOG01");
     expect(resolveLocationCode(d, "BOGOTÁ")).toBe("AABOG01");
   });
+  it("matches a slug city against a spaced/typed name (Santa Marta → santa-marta)", () => {
+    // The directory stores `city` as the slug; a customer types it with a space.
+    const d = dir([{ city: "santa-marta", code: "AASMR01" }]);
+    expect(resolveLocationCode(d, "Santa Marta")).toBe("AASMR01");
+    expect(resolveLocationCode(d, "santa marta")).toBe("AASMR01");
+  });
   it("narrows by sede when several branches share a city", () => {
     const d = dir([
       { city: "Bogotá", code: "AABOG01", name: "Aeropuerto", slug: "bog-aero" },

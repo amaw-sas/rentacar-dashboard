@@ -195,8 +195,14 @@ export async function runTurn(
     canQuote(state.slots);
   const sig = quoteSignature(state.slots);
   const coreSig = quoteCoreSignature(state.slots);
-  const quoteIsStale =
-    !state.flags.quote_shown || state.flags.last_quote_signature !== sig;
+  // "Stale" = we have NOT yet tried this exact quote signature. Counts a prior failed
+  // attempt (last_attempt_signature) so we never re-fire the same failing quote turn after
+  // turn (the stuck-error loop); the success path (quote_shown + matching last_quote_signature)
+  // also counts, for backward-compatible state that predates last_attempt_signature.
+  const quoteIsStale = !(
+    state.flags.last_attempt_signature === sig ||
+    (state.flags.quote_shown && state.flags.last_quote_signature === sig)
+  );
   const hasQuote = Boolean(state.lastQuote && state.flags.quote_shown);
   // A booked reservation is TERMINAL: never re-quote/re-open it. A booked customer who
   // mentions a new date/sede ("¿y si la devuelvo el 5?") must reach advanceBooking's
@@ -281,6 +287,7 @@ export async function runTurn(
           ...state.flags,
           last_quote_signature: sig,
           last_quote_core_signature: coreSig,
+          last_attempt_signature: sig,
         },
       };
       state = await continueBooking();
@@ -299,13 +306,18 @@ export async function runTurn(
           quote_shown: true,
           last_quote_signature: sig,
           last_quote_core_signature: coreSig,
+          last_attempt_signature: sig,
           summary_shown: false,
         },
       };
     } else {
-      // Re-quote for the new sede FAILED. Surface the error (don't advance the funnel on a
-      // stale, old-sede quote — that risked booking the wrong pickup location silently).
+      // Re-quote for the new sede FAILED. Surface the error once and record the attempt so
+      // we don't repeat it every turn; don't advance on a stale, old-sede quote.
       writeText(qr.message);
+      state = {
+        ...state,
+        flags: { ...state.flags, last_attempt_signature: sig },
+      };
     }
   } else if (freshQuotePending) {
     // First quote OR a real price-driver change (ciudad/fechas/horas). Emit requisitos +
@@ -327,12 +339,20 @@ export async function runTurn(
           quote_shown: true,
           last_quote_signature: sig,
           last_quote_core_signature: coreSig,
+          last_attempt_signature: sig,
           // A fresh quote invalidates any prior summary.
           summary_shown: false,
         },
       };
     } else {
+      // Quote FAILED (no availability / out of hours / past date / city not found). Surface
+      // the error ONCE and record the attempt, so the next turn isn't another identical retry
+      // — the free-form then answers the customer instead of repeating the error forever.
       writeText(qr.message);
+      state = {
+        ...state,
+        flags: { ...state.flags, last_attempt_signature: sig },
+      };
     }
   } else if (hasQuote) {
     // BOOKING PHASE MACHINE (Etapa 3): a quote exists and we're not re-quoting.

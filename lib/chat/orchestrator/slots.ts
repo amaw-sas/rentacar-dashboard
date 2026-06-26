@@ -70,6 +70,10 @@ export interface ConversationFlags {
   quote_shown: boolean;
   /** Hash of (ciudad,sede,fechas,horas) of the last quote shown — detects when a re-cotizar is needed. */
   last_quote_signature?: string;
+  /** Hash of the last quote ATTEMPT — set on success AND failure. Stops the bot from
+   * re-firing the same failing quote every turn (the "stuck error" loop); a failed quote
+   * with unchanged params is no longer stale, so the next message reaches the free-form. */
+  last_attempt_signature?: string;
   /** Hash of (ciudad,fechas,horas) WITHOUT sede — detects a sede-only change so the
    * quote can refresh silently instead of re-pasting the whole table (the repetition bug). */
   last_quote_core_signature?: string;

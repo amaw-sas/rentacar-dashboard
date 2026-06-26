@@ -991,6 +991,59 @@ describe("orchestrator runTurn — on-demand (Etapa 4)", () => {
     expect(textOf(chunks)).not.toContain("más eligen nuestros clientes");
   });
 
+  it("(t) a FAILED quote is not retried every turn — the next message reaches free-form", async () => {
+    // Turn 1: a complete request whose quote fails (no availability).
+    extractSlots.mockResolvedValue({
+      intent: "cotizar",
+      updates: {
+        ciudad: "bogota",
+        fecha_recogida: "2026-07-01",
+        fecha_devolucion: "2026-07-04",
+      },
+    });
+    getQuoteTable.mockResolvedValue({
+      ok: false,
+      message: "Lo sentimos, No se encontraron vehículos disponibles.",
+    });
+    const greeted: ConversationState = {
+      ...initialState(),
+      flags: { greeted: true, requisitos_shown: true, quote_shown: false },
+    };
+    const turn1 = fakeWriter();
+    await runTurn(turn1.writer, {
+      brand: "alquilatucarro",
+      conversationId: "c1",
+      state: greeted,
+      userMessage: "bogota del 1 al 4",
+      recentContext: [],
+      now: NOW,
+    });
+    expect(getQuoteTable).toHaveBeenCalledTimes(1);
+    expect(textOf(turn1.chunks)).toContain("No se encontraron");
+    const after = lastSaved();
+    expect(after.flags.last_attempt_signature).toBeTruthy();
+
+    // Turn 2: the customer sends another message (same params, e.g. their email). The bot
+    // must NOT re-fire the same failing quote — the free-form answers instead.
+    extractSlots.mockResolvedValue({
+      intent: "da_datos",
+      updates: { cliente: { email: "x@y.com" } },
+    });
+    streamText.mockClear();
+    const turn2 = fakeWriter();
+    await runTurn(turn2.writer, {
+      brand: "alquilatucarro",
+      conversationId: "c1",
+      state: after,
+      userMessage: "x@y.com",
+      recentContext: [],
+      now: NOW,
+    });
+    expect(getQuoteTable).toHaveBeenCalledTimes(1); // NOT retried
+    expect(streamText).toHaveBeenCalledOnce(); // free-form handled the follow-up
+    expect(textOf(turn2.chunks)).not.toContain("No se encontraron");
+  });
+
   it("(g) hablar_asesor without a quote emits a neutral advisor wa.me", async () => {
     extractSlots.mockResolvedValue({ intent: "hablar_asesor", updates: {} });
 

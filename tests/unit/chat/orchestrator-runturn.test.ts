@@ -1075,6 +1075,43 @@ describe("orchestrator runTurn — on-demand (Etapa 4)", () => {
     expect(text.indexOf("incluye IVA")).toBeLessThan(text.indexOf("Para qué fecha"));
   });
 
+  it("(w) a repeated unanswered slot question is VARIED, not asked verbatim again", async () => {
+    const greeted: ConversationState = {
+      phase: "collecting",
+      slots: { cliente: {} },
+      flags: { greeted: true, requisitos_shown: false, quote_shown: false },
+    };
+    // Turn 1: no city yet → the normal question, and we record we asked for "ciudad".
+    extractSlots.mockResolvedValue({ intent: "saludo", updates: {} });
+    const turn1 = fakeWriter();
+    await runTurn(turn1.writer, {
+      brand: "alquilatucarro",
+      conversationId: "c1",
+      state: greeted,
+      userMessage: "hola",
+      recentContext: [],
+      now: NOW,
+    });
+    expect(textOf(turn1.chunks)).toContain("¿En qué ciudad necesitas el carro?");
+    const after = lastSaved();
+    expect(after.flags.last_slot_asked).toBe("ciudad");
+
+    // Turn 2: customer still doesn't give a city ("oye") → VARIED phrasing, not verbatim.
+    extractSlots.mockResolvedValue({ intent: "saludo", updates: {} });
+    const turn2 = fakeWriter();
+    await runTurn(turn2.writer, {
+      brand: "alquilatucarro",
+      conversationId: "c1",
+      state: after,
+      userMessage: "oye",
+      recentContext: [],
+      now: NOW,
+    });
+    const text = textOf(turn2.chunks);
+    expect(text).toContain("por ejemplo Bogotá"); // warmer, example-rich variant
+    expect(text).not.toContain("¿En qué ciudad necesitas el carro?"); // not the verbatim repeat
+  });
+
   it("(g) hablar_asesor without a quote emits a neutral advisor wa.me", async () => {
     extractSlots.mockResolvedValue({ intent: "hablar_asesor", updates: {} });
 

@@ -137,6 +137,38 @@ export function nextQuoteQuestion(s: Slots): string | null {
   return null;
 }
 
+/** Which quote slot is missing next (drives the funnel question). null when complete. */
+export type QuoteSlot = "ciudad" | "fecha_recogida" | "fecha_devolucion";
+export function nextQuoteSlot(s: Slots): QuoteSlot | null {
+  if (!s.ciudad) return "ciudad";
+  if (!s.fecha_recogida) return "fecha_recogida";
+  if (!s.fecha_devolucion) return "fecha_devolucion";
+  return null;
+}
+
+/**
+ * Question for a missing quote slot. `repeated` = we already asked for THIS slot last turn
+ * and the customer still hasn't given it (sent a greeting, a name, an off-topic line). Then
+ * we VARY the phrasing — warmer, with an example — instead of repeating the identical
+ * question verbatim (the robotic "¿en qué ciudad?" ×3 the cohort replay surfaced).
+ */
+export function quoteSlotQuestion(slot: QuoteSlot, repeated: boolean): string {
+  switch (slot) {
+    case "ciudad":
+      return repeated
+        ? "Para cotizarte solo me falta la ciudad — por ejemplo Bogotá, Medellín o Cali. ¿En cuál la necesitas?"
+        : "¿En qué ciudad necesitas el carro?";
+    case "fecha_recogida":
+      return repeated
+        ? "¿Qué día lo recogerías? Puede ser algo como “5 de julio” o “este sábado”."
+        : "¿Para qué fecha lo necesitas (recogida)?";
+    case "fecha_devolucion":
+      return repeated
+        ? "¿Y qué día lo devolverías? Con eso te paso el precio de una."
+        : "¿Y qué día lo devolverías?";
+  }
+}
+
 /**
  * Closing line after a quote. Carries a light, HONEST nudge to decide: reserving secures
  * the shown price + the spot, and Localiza availability genuinely moves day to day (the same

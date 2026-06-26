@@ -81,6 +81,9 @@ export interface ConversationFlags {
   summary_shown?: boolean;
   /** The "I book one vehicle per reservation" notice emitted once — guards repeating it. */
   multi_vehicle_notice_shown?: boolean;
+  /** The quote slot we asked for last turn ("ciudad"/"fecha_recogida"/"fecha_devolucion").
+   * Lets the funnel VARY a repeated question instead of asking it verbatim again. */
+  last_slot_asked?: string;
 }
 
 export interface ConversationState {

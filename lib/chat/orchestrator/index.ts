@@ -27,8 +27,9 @@ import {
   horaExtraLine,
   multiVehicleNoticeLine,
   nextCustomerQuestion,
-  nextQuoteQuestion,
+  nextQuoteSlot,
   postBookingChangeLine,
+  quoteSlotQuestion,
   quoteClosingLine,
   quoteCoreSignature,
   quoteSignature,
@@ -358,15 +359,21 @@ export async function runTurn(
     // BOOKING PHASE MACHINE (Etapa 3): a quote exists and we're not re-quoting.
     state = await continueBooking();
   } else if (wantsQuote && !canQuote(state.slots)) {
-    // Funnel: ask the next missing slot deterministically. BUT if the customer also asked a
+    // Funnel: ask the next missing slot deterministically. If the customer also asked a
     // question before giving the slot (e.g. "¿cuánto con IVA?" — the extractor often tags
     // these as `cotizar`), answer it FIRST so we don't steamroll it with "¿qué fecha?".
     if (userMessage.includes("?")) {
       const ans = await freeFormText();
       if (ans) writeText(ans);
     }
-    const q = nextQuoteQuestion(state.slots);
-    if (q) writeText(q);
+    const slot = nextQuoteSlot(state.slots);
+    if (slot) {
+      // If we asked for this same slot last turn and still don't have it (the customer sent
+      // a greeting / name / off-topic line), VARY the phrasing instead of repeating it.
+      const repeated = state.flags.last_slot_asked === slot;
+      writeText(quoteSlotQuestion(slot, repeated));
+      state = { ...state, flags: { ...state.flags, last_slot_asked: slot } };
+    }
   } else {
     // Off-funnel before any quote: short free-form reply.
     await freeForm();

@@ -146,6 +146,26 @@ export function quoteClosingLine(): string {
   return "Reservar hoy te asegura este precio y el cupo —la disponibilidad cambia a diario. ¿Con cuál gama te gustaría seguir?";
 }
 
+/** Camioneta/SUV gamas (vs cars), told apart by the words Localiza puts in the descripción. */
+function isCamioneta(descripcion: string): boolean {
+  return /camioneta|suv|4\s?x\s?4|campero|todoterreno/i.test(descripcion);
+}
+
+/**
+ * Social-proof + default recommendation under the quote: names the gama customers pick most
+ * — the cheapest CAR (the económico), per the owner's real sales experience. This is true
+ * social proof (never an invented percentage) AND a default that cuts the choice paralysis
+ * of 5–10 gamas. Returns null when the table is empty. (Camioneta-seekers get the cheapest
+ * camioneta steered in the conversational layer, not here.)
+ */
+export function gamaRecommendationLine(table: QuoteTable): string | null {
+  const autos = table.filas.filter((f) => !isCamioneta(f.descripcion));
+  const pool = autos.length ? autos : table.filas;
+  if (!pool.length) return null;
+  const top = pool.reduce((a, b) => (b.precioTotal < a.precioTotal ? b : a));
+  return `La que más eligen nuestros clientes es la **Gama ${top.categoria}** por su relación precio-valor.`;
+}
+
 /**
  * One-time notice when the customer asks for MORE THAN ONE vehicle. The chat books a
  * single vehicle per reservation across the whole stack (quote → Localiza → reserva),

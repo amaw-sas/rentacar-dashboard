@@ -22,6 +22,7 @@ import {
   canQuote,
   gamaNudgeLine,
   gamaOptionsLine,
+  gamaRecommendationLine,
   greetingBlock,
   horaExtraLine,
   multiVehicleNoticeLine,
@@ -239,6 +240,9 @@ export async function runTurn(
     });
   const emitQuoteTable = (table: NonNullable<ConversationState["lastQuote"]>) => {
     writer.write({ type: "data-quoteTable", data: quoteTableData(table) });
+    // Social-proof + default recommendation (the most-chosen gama), then the decision CTA.
+    const rec = gamaRecommendationLine(table);
+    if (rec) writeText(rec);
     writeText(quoteClosingLine());
   };
 

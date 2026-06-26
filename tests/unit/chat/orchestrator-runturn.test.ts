@@ -160,6 +160,9 @@ describe("orchestrator runTurn", () => {
 
     expect(textOf(chunks)).toContain("NUESTROS REQUISITOS");
     expect(dataParts(chunks, "data-quoteTable")).toHaveLength(1);
+    // Social-proof recommendation: the cheapest car (Gama C) is named as the most-chosen.
+    expect(textOf(chunks)).toContain("más eligen nuestros clientes");
+    expect(textOf(chunks)).toContain("Gama C");
     // Honest decision nudge on the close (real availability volatility, no fake scarcity).
     expect(textOf(chunks)).toContain("te asegura este precio y el cupo");
     // No greeting re-emitted (already greeted).

@@ -358,7 +358,13 @@ export async function runTurn(
     // BOOKING PHASE MACHINE (Etapa 3): a quote exists and we're not re-quoting.
     state = await continueBooking();
   } else if (wantsQuote && !canQuote(state.slots)) {
-    // Funnel: ask the next missing slot deterministically (no LLM).
+    // Funnel: ask the next missing slot deterministically. BUT if the customer also asked a
+    // question before giving the slot (e.g. "¿cuánto con IVA?" — the extractor often tags
+    // these as `cotizar`), answer it FIRST so we don't steamroll it with "¿qué fecha?".
+    if (userMessage.includes("?")) {
+      const ans = await freeFormText();
+      if (ans) writeText(ans);
+    }
     const q = nextQuoteQuestion(state.slots);
     if (q) writeText(q);
   } else {

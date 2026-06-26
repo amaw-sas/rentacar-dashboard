@@ -1044,6 +1044,37 @@ describe("orchestrator runTurn — on-demand (Etapa 4)", () => {
     expect(textOf(turn2.chunks)).not.toContain("No se encontraron");
   });
 
+  it("(u) a question BEFORE a quote is answered first, then the next slot is asked", async () => {
+    // City known, no dates yet. The extractor tags the price question as `cotizar`, so the
+    // funnel would normally steamroll it with "¿qué fecha?" — now it answers first.
+    extractSlots.mockResolvedValue({ intent: "cotizar", updates: {} });
+    streamText.mockReturnValueOnce({
+      toUIMessageStream: () => new ReadableStream(),
+      text: Promise.resolve("Sí, el total ya incluye IVA, seguro básico y km ilimitado."),
+    });
+    const greeted: ConversationState = {
+      phase: "collecting",
+      slots: { ciudad: "bogota", cliente: {} },
+      flags: { greeted: true, requisitos_shown: false, quote_shown: false },
+    };
+    const { chunks, writer } = fakeWriter();
+    await runTurn(writer, {
+      brand: "alquilatucarro",
+      conversationId: "c1",
+      state: greeted,
+      userMessage: "¿el precio ya incluye IVA?",
+      recentContext: [],
+      now: NOW,
+    });
+
+    const text = textOf(chunks);
+    expect(streamText).toHaveBeenCalledOnce(); // answered the question
+    expect(text).toContain("ya incluye IVA");
+    expect(text).toContain("Para qué fecha"); // and then asked the missing slot
+    // Order: answer first, slot question after.
+    expect(text.indexOf("incluye IVA")).toBeLessThan(text.indexOf("Para qué fecha"));
+  });
+
   it("(g) hablar_asesor without a quote emits a neutral advisor wa.me", async () => {
     extractSlots.mockResolvedValue({ intent: "hablar_asesor", updates: {} });
 

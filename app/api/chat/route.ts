@@ -48,7 +48,12 @@ const CORS_HEADERS = {
 
 // Soft anti-abuse: per conversation, cap messages within a rolling window.
 const RATE_WINDOW_MS = 60 * 60 * 1000; // 1 hour
-const RATE_MAX_MESSAGES = 40;
+// Default 40 messages/hour (~20 turns, since each turn persists a user + assistant row).
+// Overridable per environment (raise it on a preview to replay long real chats end-to-end).
+function maxMessagesPerConversation(): number {
+  const n = Number(process.env.CHAT_MAX_MESSAGES_PER_CONVERSATION_PER_HOUR);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 40;
+}
 
 // Per-IP cap on NEW conversations within the window. Closes the bypass where an
 // abuser dodges the per-conversation cap by opening a fresh conversation each time
@@ -161,7 +166,7 @@ export async function POST(request: Request) {
         conversationId,
         new Date(Date.now() - RATE_WINDOW_MS).toISOString(),
       );
-      if (recent >= RATE_MAX_MESSAGES) {
+      if (recent >= maxMessagesPerConversation()) {
         return jsonError(
           "Has alcanzado el límite de mensajes por ahora. Intenta más tarde o escríbenos por WhatsApp.",
           429,

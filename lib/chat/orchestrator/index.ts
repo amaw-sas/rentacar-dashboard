@@ -24,10 +24,14 @@ import {
   gamaOptionsLine,
   greetingBlock,
   horaExtraLine,
+  multiVehicleNoticeLine,
   nextCustomerQuestion,
   nextQuoteQuestion,
+  postBookingChangeLine,
   quoteClosingLine,
+  quoteCoreSignature,
   quoteSignature,
+  quotesPriceEqual,
   quoteTableData,
   requisitosBlock,
 } from "./blocks";
@@ -71,6 +75,18 @@ const OFF_FUNNEL: ReadonlySet<Intent> = new Set<Intent>([
   "fuera_de_tema",
 ]);
 
+/**
+ * Guidance appended to the free-form prompt once the reservation is `booked`. Without
+ * it, the tool-enabled free-form (which still has the quote tools) re-cotizes and offers
+ * to "apartar" again when a booked customer sends, say, a new email — the post-confirmation
+ * re-quote bug. The reservation is terminal; the model must only answer, never re-open it.
+ */
+const BOOKED_DONE_GUIDANCE =
+  "IMPORTANTE: la reserva del cliente YA está confirmada y enviada a su correo/WhatsApp. " +
+  "NO vuelvas a cotizar, NO ofrezcas 'apartar' ni reservar de nuevo. NO prometas reenviar tú " +
+  "el correo ni modificar la reserva (no puedes hacerlo desde el chat); si lo pide, ofrécele " +
+  "pasarlo con un asesor. Solo responde su consulta.";
+
 /** A clear affirmative that authorizes the booking ("sí", "confirmo", "dale", ...). */
 function isAffirmative(message: string): boolean {
   const m = message
@@ -106,19 +122,19 @@ export async function runTurn(
   //    deterministic follow-up (nudge / next question), keeping the bubble order
   //    "answer → follow-up". Streaming + a synchronous follow-up race the wrong way
   //    (the follow-up lands first), which is the out-of-order nudge bug.
-  const freeFormResult = async () => {
+  const freeFormResult = async (guidance?: string) => {
     const cfg = await freeFormConfig(brand);
     const prompt = `Datos conocidos del cliente: ${JSON.stringify(
       state.slots,
-    )}\nMensaje actual: "${userMessage}"`;
+    )}\nMensaje actual: "${userMessage}"${guidance ? `\n\n${guidance}` : ""}`;
     return streamText({ ...cfg, prompt });
   };
-  const freeForm = async () => {
-    writer.merge((await freeFormResult()).toUIMessageStream());
+  const freeForm = async (guidance?: string) => {
+    writer.merge((await freeFormResult(guidance)).toUIMessageStream());
   };
-  const freeFormText = async (): Promise<string> => {
+  const freeFormText = async (guidance?: string): Promise<string> => {
     try {
-      return await (await freeFormResult()).text;
+      return await (await freeFormResult(guidance)).text;
     } catch (e) {
       console.error("[orchestrator] freeFormText failed", e);
       return "";
@@ -159,6 +175,17 @@ export async function runTurn(
     state = { ...state, flags: { ...state.flags, greeted: true } };
   }
 
+  // Multi-vehicle: the chat books ONE vehicle per reservation across the whole stack.
+  // Surface the limit ONCE when the customer asks for more than one, then keep cotizando
+  // a single vehicle (the quote/booking that follow are unaffected).
+  if ((state.slots.cantidad ?? 0) >= 2 && !state.flags.multi_vehicle_notice_shown) {
+    writeText(multiVehicleNoticeLine());
+    state = {
+      ...state,
+      flags: { ...state.flags, multi_vehicle_notice_shown: true },
+    };
+  }
+
   const { ciudad, fecha_recogida, fecha_devolucion } = state.slots;
   const wantsQuote =
     intent === "saludo" ||
@@ -166,20 +193,61 @@ export async function runTurn(
     intent === "elige_gama" ||
     canQuote(state.slots);
   const sig = quoteSignature(state.slots);
+  const coreSig = quoteCoreSignature(state.slots);
   const quoteIsStale =
     !state.flags.quote_shown || state.flags.last_quote_signature !== sig;
   const hasQuote = Boolean(state.lastQuote && state.flags.quote_shown);
+  // A booked reservation is TERMINAL: never re-quote/re-open it. A booked customer who
+  // mentions a new date/sede ("¿y si la devuelvo el 5?") must reach advanceBooking's
+  // booked case, not a re-quote that resets phase to `quoted`.
   const freshQuotePending = Boolean(
-    wantsQuote && ciudad && fecha_recogida && fecha_devolucion && quoteIsStale,
+    state.phase !== "booked" &&
+      wantsQuote &&
+      ciudad &&
+      fecha_recogida &&
+      fecha_devolucion &&
+      quoteIsStale,
   );
+  // A sede-only change (ciudad/fechas/horas unchanged) since the last quote. The price
+  // CAN vary per sede, so we still refresh — but silently: re-pasting the whole table and
+  // resetting the funnel on every sede pick is the repetition the user reported.
+  const sedeOnlyChange =
+    freshQuotePending &&
+    hasQuote &&
+    state.flags.last_quote_core_signature === coreSig;
 
-  // On-demand intercept (Etapa 4): show vehicle cards, the self-serve reservation
-  // link, or the advisor WhatsApp. Has priority over the free-form reply but NEVER
-  // over a pending fresh quote, and it neither re-quotes nor re-books — it only emits
-  // parts and (when mid-funnel) re-prompts the current phase question, leaving
-  // phase/flags untouched so the cotización and reserva funnels stay intact.
+  // freshQuotePending guarantees ciudad + both dates are present.
+  const quoteArgs = () => ({
+    ciudad: ciudad!,
+    fecha_recogida: fecha_recogida!,
+    fecha_devolucion: fecha_devolucion!,
+    hora_recogida: state.slots.hora_recogida,
+    hora_devolucion: state.slots.hora_devolucion,
+    sede: state.slots.sede,
+  });
+  const continueBooking = () =>
+    advanceBooking({
+      writer,
+      writeText,
+      freeFormText,
+      state,
+      intent,
+      userMessage,
+      brand,
+      conversationId,
+      ipHash,
+    });
+  const emitQuoteTable = (table: NonNullable<ConversationState["lastQuote"]>) => {
+    writer.write({ type: "data-quoteTable", data: quoteTableData(table) });
+    writeText(quoteClosingLine());
+  };
+
+  // On-demand intercept (Etapa 4): vehicle cards, the self-serve reservation link, or the
+  // advisor WhatsApp. Runs unless a REAL fresh quote is pending — but a sede-only change is
+  // not a real re-quote, so an explicit on-demand request that also names a sede ("el enlace
+  // en el aeropuerto") is still honored instead of being swallowed by the silent refresh.
   let onDemandHandled = false;
-  if (!freshQuotePending) {
+  if (!freshQuotePending || sedeOnlyChange) {
     onDemandHandled = await handleOnDemand({
       writer,
       writeText,
@@ -196,24 +264,55 @@ export async function runTurn(
 
   if (onDemandHandled) {
     // On-demand already emitted its part(s) + any phase re-prompt; nothing else.
-  } else if (wantsQuote && ciudad && fecha_recogida && fecha_devolucion && quoteIsStale) {
-    // First quote → requisitos once, then the table (both code-emitted). A re-quote
-    // (changed ciudad/fechas/sede) resets the booking phase back to `quoted`.
+  } else if (sedeOnlyChange) {
+    const prevQuote = state.lastQuote;
+    const qr = await getQuoteTable(quoteArgs());
+    if (qr.ok && prevQuote && quotesPriceEqual(prevQuote, qr.table)) {
+      // Same prices for this sede → DON'T re-paste the table; refresh the blobs and keep
+      // the booking funnel moving (advanceBooking re-asks the current phase's question).
+      state = {
+        ...state,
+        lastQuote: qr.table,
+        flags: {
+          ...state.flags,
+          last_quote_signature: sig,
+          last_quote_core_signature: coreSig,
+        },
+      };
+      state = await continueBooking();
+    } else if (qr.ok) {
+      // Prices genuinely differ by sede → show the updated table (it's new info), reset to
+      // `quoted`, and CLEAR the prior gama pick so the customer re-confirms against the new
+      // prices instead of being silently locked into the old one at a new total.
+      emitQuoteTable(qr.table);
+      state = {
+        ...state,
+        phase: "quoted",
+        slots: { ...state.slots, gama_elegida: undefined },
+        lastQuote: qr.table,
+        flags: {
+          ...state.flags,
+          quote_shown: true,
+          last_quote_signature: sig,
+          last_quote_core_signature: coreSig,
+          summary_shown: false,
+        },
+      };
+    } else {
+      // Re-quote for the new sede FAILED. Surface the error (don't advance the funnel on a
+      // stale, old-sede quote — that risked booking the wrong pickup location silently).
+      writeText(qr.message);
+    }
+  } else if (freshQuotePending) {
+    // First quote OR a real price-driver change (ciudad/fechas/horas) → requisitos once,
+    // then the full table (both code-emitted), resetting the booking phase to `quoted`.
     if (!state.flags.requisitos_shown) {
       writeText(requisitosBlock());
       state = { ...state, flags: { ...state.flags, requisitos_shown: true } };
     }
-    const qr = await getQuoteTable({
-      ciudad,
-      fecha_recogida,
-      fecha_devolucion,
-      hora_recogida: state.slots.hora_recogida,
-      hora_devolucion: state.slots.hora_devolucion,
-      sede: state.slots.sede,
-    });
+    const qr = await getQuoteTable(quoteArgs());
     if (qr.ok) {
-      writer.write({ type: "data-quoteTable", data: quoteTableData(qr.table) });
-      writeText(quoteClosingLine());
+      emitQuoteTable(qr.table);
       state = {
         ...state,
         phase: "quoted",
@@ -222,6 +321,7 @@ export async function runTurn(
           ...state.flags,
           quote_shown: true,
           last_quote_signature: sig,
+          last_quote_core_signature: coreSig,
           // A fresh quote invalidates any prior summary.
           summary_shown: false,
         },
@@ -231,17 +331,7 @@ export async function runTurn(
     }
   } else if (hasQuote) {
     // BOOKING PHASE MACHINE (Etapa 3): a quote exists and we're not re-quoting.
-    state = await advanceBooking({
-      writer,
-      writeText,
-      freeFormText,
-      state,
-      intent,
-      userMessage,
-      brand,
-      conversationId,
-      ipHash,
-    });
+    state = await continueBooking();
   } else if (wantsQuote && !canQuote(state.slots)) {
     // Funnel: ask the next missing slot deterministically (no LLM).
     const q = nextQuoteQuestion(state.slots);
@@ -498,8 +588,9 @@ function phaseReprompt(state: ConversationState): string | null {
 interface BookingStepInput {
   writer: UIMessageStreamWriter;
   writeText: (text: string) => void;
-  /** Awaited free-form text so side answers land BEFORE the deterministic follow-up. */
-  freeFormText: () => Promise<string>;
+  /** Awaited free-form text so side answers land BEFORE the deterministic follow-up.
+   * `guidance` appends a per-call instruction (e.g. the booked-done note). */
+  freeFormText: (guidance?: string) => Promise<string>;
   state: ConversationState;
   intent: Intent;
   userMessage: string;
@@ -618,7 +709,21 @@ async function advanceBooking(
         );
         return state;
       }
-      const ans = await freeFormText();
+      // Post-booking data/correction ("no me llegó, mándalo a otro correo" / "mi cédula está
+      // mal"). The chat CANNOT modify a confirmed reservation nor resend the email itself —
+      // so route to a real advisor honestly instead of promising a reenvío no code performs.
+      if (intent === "da_datos") {
+        writeText(postBookingChangeLine());
+        const number = getFranchiseBranding(input.brand).whatsapp;
+        const whatsapp = `https://wa.me/${number}?text=${encodeURIComponent(
+          "Hola, ya tengo una reserva confirmada y necesito ayuda con mis datos/confirmación.",
+        )}`;
+        input.writer.write({ type: "data-buttons", data: { whatsapp } });
+        return state;
+      }
+      // Genuine new question → free-form, but TELL it the booking is done so it can't
+      // re-quote, offer to apartar, or promise a reenvío.
+      const ans = await freeFormText(BOOKED_DONE_GUIDANCE);
       if (ans) writeText(ans);
       return state;
     }

@@ -160,6 +160,8 @@ describe("orchestrator runTurn", () => {
 
     expect(textOf(chunks)).toContain("NUESTROS REQUISITOS");
     expect(dataParts(chunks, "data-quoteTable")).toHaveLength(1);
+    // Honest decision nudge on the close (real availability volatility, no fake scarcity).
+    expect(textOf(chunks)).toContain("te asegura este precio y el cupo");
     // No greeting re-emitted (already greeted).
     expect(textOf(chunks)).not.toContain("Soy Valeria");
     const saved = saveConversationState.mock.calls[0][1] as ConversationState;
@@ -291,6 +293,8 @@ describe("orchestrator runTurn — booking phase", () => {
     expect(getQuoteTable).not.toHaveBeenCalled();
     expect(dataParts(chunks, "data-quoteTable")).toHaveLength(0);
     expect(textOf(chunks).toLowerCase()).toContain("nombre completo");
+    // Low-friction + endowment framing on the first data question.
+    expect(textOf(chunks)).toContain("aseguramos tu reserva");
     expect(lastSaved().phase).toBe("collecting_customer");
   });
 
@@ -323,6 +327,10 @@ describe("orchestrator runTurn — booking phase", () => {
       now: NOW,
     });
     expect(textOf(turn1.chunks)).toContain("Para cerrar");
+    // Persuasion close: per-day reframe (300.000 / 3 = 100.000), loss-aversion, endowment CTA.
+    expect(textOf(turn1.chunks)).toContain("$100.000/día");
+    expect(textOf(turn1.chunks)).toContain("aseguras este valor y el cupo");
+    expect(textOf(turn1.chunks)).toContain("¿Confirmo tu reserva?");
     const afterSummary = lastSaved();
     expect(afterSummary.phase).toBe("confirming");
     expect(afterSummary.flags.summary_shown).toBe(true);
@@ -656,6 +664,287 @@ describe("orchestrator runTurn — on-demand (Etapa 4)", () => {
     // Order: answer first, then the data question.
     expect(text.indexOf("sede cerca")).toBeLessThan(text.toLowerCase().indexOf("nombre completo"));
     expect(lastSaved().phase).toBe("collecting_customer");
+  });
+
+  it("(m) a sede-only change with SAME prices refreshes silently and keeps the funnel — no table re-paste", async () => {
+    // Customer already chose gama C; now they pick a sede. Picking a sede changes the
+    // quote signature, but ciudad/fechas are the same and the prices come back identical,
+    // so the table must NOT be re-pasted — the funnel just advances to customer data.
+    extractSlots.mockResolvedValue({
+      intent: "cotizar",
+      updates: { sede: "aeropuerto" },
+    });
+    getQuoteTable.mockResolvedValue({ ok: true, table: QUOTE_TABLE });
+
+    const { chunks, writer } = fakeWriter();
+    await runTurn(writer, {
+      brand: "alquilatucarro",
+      conversationId: "c1",
+      state: quotedState({
+        phase: "choosing_gama",
+        slots: {
+          ciudad: "bogota",
+          fecha_recogida: "2026-07-01",
+          fecha_devolucion: "2026-07-04",
+          gama_elegida: "C",
+          cliente: {},
+        },
+        flags: {
+          greeted: true,
+          requisitos_shown: true,
+          quote_shown: true,
+          last_quote_signature: "bogota||2026-07-01|2026-07-04||",
+          last_quote_core_signature: "bogota|2026-07-01|2026-07-04||",
+          summary_shown: false,
+        },
+      }),
+      userMessage: "aeropuerto",
+      recentContext: [],
+      now: NOW,
+    });
+
+    // Refreshed silently (one re-quote), but the table is NOT re-emitted.
+    expect(getQuoteTable).toHaveBeenCalledOnce();
+    expect(dataParts(chunks, "data-quoteTable")).toHaveLength(0);
+    // The funnel advanced to collecting customer data with the chosen gama intact.
+    expect(textOf(chunks).toLowerCase()).toContain("nombre completo");
+    const saved = lastSaved();
+    expect(saved.phase).toBe("collecting_customer");
+    expect(saved.slots.sede).toBe("aeropuerto");
+  });
+
+  it("(n) a sede-only change with DIFFERENT prices re-shows the table (it is new info)", async () => {
+    extractSlots.mockResolvedValue({
+      intent: "cotizar",
+      updates: { sede: "centro" },
+    });
+    // Same gamas, different totals for this sede → genuinely new info.
+    getQuoteTable.mockResolvedValue({
+      ok: true,
+      table: {
+        sede: "AABOG02",
+        dias: 3,
+        filas: [
+          { categoria: "C", descripcion: "Económico", dias: 3, precioTotal: 320000, horasExtra: 0, precioHoraExtra: 0, quote: "blob-c2" },
+          { categoria: "F", descripcion: "SUV", dias: 3, precioTotal: 500000, horasExtra: 0, precioHoraExtra: 0, quote: "blob-f2" },
+        ],
+      },
+    });
+
+    const { chunks, writer } = fakeWriter();
+    await runTurn(writer, {
+      brand: "alquilatucarro",
+      conversationId: "c1",
+      state: quotedState({
+        phase: "choosing_gama",
+        slots: {
+          ciudad: "bogota",
+          fecha_recogida: "2026-07-01",
+          fecha_devolucion: "2026-07-04",
+          gama_elegida: "C",
+          cliente: {},
+        },
+        flags: {
+          greeted: true,
+          requisitos_shown: true,
+          quote_shown: true,
+          last_quote_signature: "bogota||2026-07-01|2026-07-04||",
+          last_quote_core_signature: "bogota|2026-07-01|2026-07-04||",
+          summary_shown: false,
+        },
+      }),
+      userMessage: "centro",
+      recentContext: [],
+      now: NOW,
+    });
+
+    expect(getQuoteTable).toHaveBeenCalledOnce();
+    expect(dataParts(chunks, "data-quoteTable")).toHaveLength(1);
+    const saved = lastSaved();
+    expect(saved.phase).toBe("quoted");
+    // The prior gama pick is cleared so the customer re-confirms against the NEW prices
+    // instead of being silently locked into C at the higher total.
+    expect(saved.slots.gama_elegida).toBeUndefined();
+  });
+
+  it("(o) after BOOKED, new contact data does NOT re-quote — it routes to a real advisor", async () => {
+    extractSlots.mockResolvedValue({
+      intent: "da_datos",
+      updates: { cliente: { email: "nuevo@correo.com" } },
+    });
+
+    const { chunks, writer } = fakeWriter();
+    await runTurn(writer, {
+      brand: "alquilatucarro",
+      conversationId: "c1",
+      state: quotedState({
+        phase: "booked",
+        slots: {
+          ciudad: "bogota",
+          fecha_recogida: "2026-07-01",
+          fecha_devolucion: "2026-07-04",
+          gama_elegida: "C",
+          cliente: FULL_CLIENTE,
+        },
+        flags: {
+          greeted: true,
+          requisitos_shown: true,
+          quote_shown: true,
+          last_quote_signature: "bogota||2026-07-01|2026-07-04||",
+          summary_shown: true,
+        },
+      }),
+      userMessage: "delavegadiego91@gmail.com",
+      recentContext: [],
+      now: NOW,
+    });
+
+    // No re-quote, no re-book. Honest copy (no false "te reenvío") + a real advisor button.
+    expect(getQuoteTable).not.toHaveBeenCalled();
+    expect(dataParts(chunks, "data-quoteTable")).toHaveLength(0);
+    expect(executeBooking).not.toHaveBeenCalled();
+    const text = textOf(chunks);
+    expect(text).toContain("ya quedó confirmada");
+    expect(text).not.toContain("Te reenvío"); // never promises a resend the code can't do
+    const buttons = dataParts(chunks, "data-buttons");
+    expect(buttons).toHaveLength(1);
+    const wa = (buttons[0].data as { whatsapp?: string }).whatsapp ?? "";
+    expect(wa.startsWith("https://wa.me/")).toBe(true);
+    expect(lastSaved().phase).toBe("booked");
+  });
+
+  it("(p) a BOOKED customer who changes a price-driver is NOT re-quoted (terminal phase)", async () => {
+    // The post-confirmation re-quote bug: a booked customer asks 'y si la devuelvo el 5?'.
+    // canQuote is still true, so without the booked guard this would re-quote and reset the
+    // funnel. It must stay booked and hand the question to the guided free-form instead.
+    extractSlots.mockResolvedValue({
+      intent: "cotizar",
+      updates: { fecha_devolucion: "2026-07-05" },
+    });
+
+    const { chunks, writer } = fakeWriter();
+    await runTurn(writer, {
+      brand: "alquilatucarro",
+      conversationId: "c1",
+      state: quotedState({
+        phase: "booked",
+        slots: {
+          ciudad: "bogota",
+          fecha_recogida: "2026-07-01",
+          fecha_devolucion: "2026-07-04",
+          gama_elegida: "C",
+          cliente: FULL_CLIENTE,
+        },
+        flags: {
+          greeted: true,
+          requisitos_shown: true,
+          quote_shown: true,
+          last_quote_signature: "bogota||2026-07-01|2026-07-04||",
+          last_quote_core_signature: "bogota|2026-07-01|2026-07-04||",
+          summary_shown: true,
+        },
+      }),
+      userMessage: "¿y si la devuelvo el 5?",
+      recentContext: [],
+      now: NOW,
+    });
+
+    // No re-quote, no table re-paste, no re-book — the reservation stays terminal.
+    expect(getQuoteTable).not.toHaveBeenCalled();
+    expect(dataParts(chunks, "data-quoteTable")).toHaveLength(0);
+    expect(lastSaved().phase).toBe("booked");
+  });
+
+  it("(q) asking for MORE THAN ONE vehicle shows the one-per-reservation notice ONCE", async () => {
+    extractSlots.mockResolvedValue({
+      intent: "cotizar",
+      updates: {
+        ciudad: "bogota",
+        fecha_recogida: "2026-07-01",
+        fecha_devolucion: "2026-07-04",
+        cantidad: 2,
+      },
+    });
+    getQuoteTable.mockResolvedValue({ ok: true, table: QUOTE_TABLE });
+
+    const greeted: ConversationState = {
+      ...initialState(),
+      flags: { greeted: true, requisitos_shown: false, quote_shown: false },
+    };
+    const turn1 = fakeWriter();
+    await runTurn(turn1.writer, {
+      brand: "alquilatucarro",
+      conversationId: "c1",
+      state: greeted,
+      userMessage: "necesito 2 carros en bogota del 1 al 4 de julio",
+      recentContext: [],
+      now: NOW,
+    });
+
+    expect(textOf(turn1.chunks)).toContain("un vehículo"); // the limit notice
+    expect(dataParts(turn1.chunks, "data-quoteTable")).toHaveLength(1); // still quotes one
+    const saved1 = lastSaved();
+    expect(saved1.flags.multi_vehicle_notice_shown).toBe(true);
+    expect(saved1.slots.cantidad).toBe(2);
+
+    // Turn 2: the notice is NOT repeated (flag guards it).
+    extractSlots.mockResolvedValue({ intent: "tangencial", updates: {} });
+    const turn2 = fakeWriter();
+    await runTurn(turn2.writer, {
+      brand: "alquilatucarro",
+      conversationId: "c1",
+      state: saved1,
+      userMessage: "¿incluye seguro?",
+      recentContext: [],
+      now: NOW,
+    });
+    expect(textOf(turn2.chunks)).not.toContain("un vehículo");
+  });
+
+  it("(r) pedir_enlace that ALSO names a sede still sends the link (not swallowed by the sede refresh)", async () => {
+    buildOnDemandLinks.mockReturnValue({
+      webUrl: "https://web/reserva",
+      whatsappUrl: "https://wa.me/57x?text=hola",
+    });
+    // Same message carries the link request AND a sede change.
+    extractSlots.mockResolvedValue({
+      intent: "pedir_enlace",
+      updates: { sede: "aeropuerto" },
+    });
+
+    const { chunks, writer } = fakeWriter();
+    await runTurn(writer, {
+      brand: "alquilatucarro",
+      conversationId: "c1",
+      state: quotedState({
+        phase: "collecting_customer",
+        slots: {
+          ciudad: "bogota",
+          fecha_recogida: "2026-07-01",
+          fecha_devolucion: "2026-07-04",
+          gama_elegida: "C",
+          cliente: { fullname: "Diego Melo" },
+        },
+        flags: {
+          greeted: true,
+          requisitos_shown: true,
+          quote_shown: true,
+          last_quote_signature: "bogota||2026-07-01|2026-07-04||",
+          last_quote_core_signature: "bogota|2026-07-01|2026-07-04||",
+          summary_shown: false,
+        },
+      }),
+      userMessage: "mándame el enlace para reservar en el aeropuerto",
+      recentContext: [],
+      now: NOW,
+    });
+
+    // The explicit link request is honored; the sede change does not pre-empt it.
+    const buttons = dataParts(chunks, "data-buttons");
+    expect(buttons).toHaveLength(1);
+    expect((buttons[0].data as { web?: string }).web).toBe("https://web/reserva");
+    expect(getQuoteTable).not.toHaveBeenCalled();
+    expect(dataParts(chunks, "data-quoteTable")).toHaveLength(0);
   });
 
   it("(g) hablar_asesor without a quote emits a neutral advisor wa.me", async () => {

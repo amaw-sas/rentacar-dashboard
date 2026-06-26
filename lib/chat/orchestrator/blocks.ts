@@ -93,6 +93,37 @@ export function quoteSignature(s: Slots): string {
     .join("|");
 }
 
+/**
+ * Signature WITHOUT sede (ciudad + fechas + horas). Compared against the stored core
+ * signature to tell a sede-only change apart from a real price-driver change (ciudad /
+ * fechas / horas). A sede-only change refreshes the quote silently — it must NOT re-paste
+ * the whole table or reset the funnel (the repetition the user reported).
+ */
+export function quoteCoreSignature(s: Slots): string {
+  return [
+    s.ciudad,
+    s.fecha_recogida,
+    s.fecha_devolucion,
+    s.hora_recogida,
+    s.hora_devolucion,
+  ]
+    .map((x) => (x ?? "").toLowerCase())
+    .join("|");
+}
+
+/**
+ * True when two quote tables price every gama identically — same gamas, same totals AND
+ * same extra-hour rate. (The hora-extra figure is shown on the same card, so a sede that
+ * changes only it must still re-show the table, not be treated as "price-equal".)
+ */
+export function quotesPriceEqual(a: QuoteTable, b: QuoteTable): boolean {
+  if (a.filas.length !== b.filas.length) return false;
+  const key = (f: QuoteTable["filas"][number]) =>
+    `${f.precioTotal}|${f.precioHoraExtra}`;
+  const priced = new Map(a.filas.map((f) => [f.categoria, key(f)]));
+  return b.filas.every((f) => priced.get(f.categoria) === key(f));
+}
+
 /** Whether ciudad + both dates are known (enough to cotizar). */
 export function canQuote(s: Slots): boolean {
   return Boolean(s.ciudad && s.fecha_recogida && s.fecha_devolucion);
@@ -106,9 +137,25 @@ export function nextQuoteQuestion(s: Slots): string | null {
   return null;
 }
 
-/** Deterministic closing line after a quote (no "apartar" promise until booking is wired). */
+/**
+ * Closing line after a quote. Carries a light, HONEST nudge to decide: reserving secures
+ * the shown price + the spot, and Localiza availability genuinely moves day to day (the same
+ * reason the KB recommends booking ~7 days ahead). No fake scarcity, no countdowns.
+ */
 export function quoteClosingLine(): string {
-  return "¿Con cuál gama te gustaría seguir?";
+  return "Reservar hoy te asegura este precio y el cupo —la disponibilidad cambia a diario. ¿Con cuál gama te gustaría seguir?";
+}
+
+/**
+ * One-time notice when the customer asks for MORE THAN ONE vehicle. The chat books a
+ * single vehicle per reservation across the whole stack (quote → Localiza → reserva),
+ * so we surface the limit once and keep cotizando one; the rest is handed to an advisor.
+ */
+export function multiVehicleNoticeLine(): string {
+  return (
+    `Una nota: por este medio gestiono la reserva de **un vehículo** a la vez. ` +
+    `Sigo cotizándote uno; si necesitas más de uno, dime y te comparto el contacto de un asesor para coordinar el resto.`
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -176,12 +223,16 @@ function capitalize(x: string): string {
  * phone); null when every field is present. One warm question at a time on re-ask.
  */
 export function nextCustomerQuestion(cliente: ClienteSlots): string | null {
-  if (!cliente.fullname) return "Perfecto. ¿Me compartes tu nombre completo?";
+  // Light persuasion woven into the funnel: low-friction framing ("datos rápidos"),
+  // endowment ("tu reserva"), and end-of-task momentum ("¡Ya casi!") to carry the
+  // customer over the last step. Kept to one short question at a time.
+  if (!cliente.fullname)
+    return "Perfecto, son solo unos datos rápidos y aseguramos tu reserva. ¿Tu nombre completo?";
   if (!cliente.identification_type || !cliente.identification) {
     return "¿Cuál es tu tipo y número de documento? (CC, CE o PA)";
   }
   if (!cliente.email) return "¿A qué correo te envío la confirmación?";
-  if (!cliente.phone) return "Por último, ¿cuál es tu número de teléfono?";
+  if (!cliente.phone) return "¡Ya casi! Por último, ¿cuál es tu número de teléfono?";
   return null;
 }
 
@@ -232,7 +283,8 @@ export function bookingSummaryBlock(state: ConversationState): string {
       : undefined;
 
   // `descripcion` already starts with "Gama X" — use it verbatim (no "Gama CX gama cx…").
-  const gama = row ? row.descripcion : "la gama elegida";
+  // "tu" frames it as already theirs (endowment effect) before they confirm.
+  const gama = row ? `tu ${row.descripcion}` : "la gama elegida";
   const dias = row?.dias ?? state.lastQuote?.dias;
   const periodo = periodoCorto(s);
 
@@ -242,9 +294,19 @@ export function bookingSummaryBlock(state: ConversationState): string {
   if (dias) parts.push(`${dias} día${dias === 1 ? "" : "s"}`);
 
   let line = `${parts.join(", ")}.`;
-  if (row) line += ` Total **$${COP.format(row.precioTotal)}**.`;
+  if (row) {
+    // Per-day reframing (true math: total ÷ días) makes the all-in total feel smaller.
+    const perDay =
+      dias && dias > 0
+        ? ` (≈$${COP.format(Math.round(row.precioTotal / dias))}/día, todo incluido)`
+        : "";
+    line += ` Total **$${COP.format(row.precioTotal)}**${perDay}.`;
+  }
   if (s.cliente.fullname) line += ` A nombre de ${s.cliente.fullname}.`;
-  line += " ¿Confirmo la reserva?";
+  // Loss-aversion + present-bias close: confirming secures the price/spot, and nothing is
+  // charged now (payment is at the sede). All TRUE — no upfront charge to reserve.
+  line +=
+    " Al confirmar aseguras este valor y el cupo; no se te cobra nada ahora —pagas en la sede al recoger. ¿Confirmo tu reserva?";
   return line;
 }
 
@@ -264,4 +326,16 @@ export function bookingConfirmedLine(data: unknown): string {
     ? `¡Listo! Tu reserva quedó confirmada con el número **${code}**.`
     : "¡Listo! Tu reserva quedó confirmada.";
   return `${head} Te envié todos los detalles a tu correo y WhatsApp. Cualquier cosa, aquí estoy.`;
+}
+
+/**
+ * Reply when an ALREADY-booked customer asks to change data or reports the email never
+ * arrived. The chat CANNOT modify a confirmed reservation nor resend the email itself, so
+ * it never promises to — it routes to a real advisor (the caller emits the WhatsApp button).
+ */
+export function postBookingChangeLine(): string {
+  return (
+    `Tu reserva ya quedó confirmada. Desde aquí no puedo cambiar los datos ni reenviarte el ` +
+    `correo, pero un asesor sí puede ayudarte 👇 (revisa también spam/promociones).`
+  );
 }

@@ -58,6 +58,9 @@ export interface Slots {
   hora_recogida?: string; // HH:mm
   hora_devolucion?: string; // HH:mm
   gama_elegida?: string; // gama code, e.g. "C"
+  /** How many vehicles the customer asked for. The chat books ONE per reservation;
+   * >1 only triggers a one-time clarification (multi_vehicle_notice_shown). */
+  cantidad?: number;
   cliente: ClienteSlots;
 }
 
@@ -67,8 +70,13 @@ export interface ConversationFlags {
   quote_shown: boolean;
   /** Hash of (ciudad,sede,fechas,horas) of the last quote shown — detects when a re-cotizar is needed. */
   last_quote_signature?: string;
+  /** Hash of (ciudad,fechas,horas) WITHOUT sede — detects a sede-only change so the
+   * quote can refresh silently instead of re-pasting the whole table (the repetition bug). */
+  last_quote_core_signature?: string;
   /** Booking summary emitted once (Etapa 3) — guards re-emitting it in `confirming`. */
   summary_shown?: boolean;
+  /** The "I book one vehicle per reservation" notice emitted once — guards repeating it. */
+  multi_vehicle_notice_shown?: boolean;
 }
 
 export interface ConversationState {
@@ -121,6 +129,7 @@ export const extractionSchema = z.object({
     hora_recogida: z.string().nullable(),
     hora_devolucion: z.string().nullable(),
     gama_elegida: z.string().nullable(),
+    cantidad: z.number().nullable(),
     cliente: clienteUpdate,
   }),
 });
@@ -132,7 +141,7 @@ export type Extraction = z.infer<typeof extractionSchema>;
  * in tests — the merge only ever reads the keys that are present.
  */
 export type SlotUpdates = {
-  [K in keyof Omit<Slots, "cliente">]?: string | null;
+  [K in keyof Omit<Slots, "cliente">]?: Slots[K] | null;
 } & { cliente?: Partial<Record<keyof ClienteSlots, string | null>> | null };
 
 /** Drop undefined/null/empty keys so an absent extraction field never clobbers a known slot. */

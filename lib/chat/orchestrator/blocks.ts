@@ -159,10 +159,12 @@ function isCamioneta(descripcion: string): boolean {
  * camioneta steered in the conversational layer, not here.)
  */
 export function gamaRecommendationLine(table: QuoteTable): string | null {
+  // The "most-chosen" claim is TRUE only for the económico (cheapest CAR). When the sede
+  // has NO cars — only camionetas/SUVs, e.g. an airport — we must NOT fall back to calling
+  // the cheapest 4x4 "the most-chosen": that is false social proof. Skip the line instead.
   const autos = table.filas.filter((f) => !isCamioneta(f.descripcion));
-  const pool = autos.length ? autos : table.filas;
-  if (!pool.length) return null;
-  const top = pool.reduce((a, b) => (b.precioTotal < a.precioTotal ? b : a));
+  if (!autos.length) return null;
+  const top = autos.reduce((a, b) => (b.precioTotal < a.precioTotal ? b : a));
   return `La que más eligen nuestros clientes es la **Gama ${top.categoria}** por su relación precio-valor.`;
 }
 

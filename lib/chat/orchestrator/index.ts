@@ -308,14 +308,15 @@ export async function runTurn(
       writeText(qr.message);
     }
   } else if (freshQuotePending) {
-    // First quote OR a real price-driver change (ciudad/fechas/horas) → requisitos once,
-    // then the full table (both code-emitted), resetting the booking phase to `quoted`.
-    if (!state.flags.requisitos_shown) {
-      writeText(requisitosBlock());
-      state = { ...state, flags: { ...state.flags, requisitos_shown: true } };
-    }
+    // First quote OR a real price-driver change (ciudad/fechas/horas). Emit requisitos +
+    // table (both code-owned), resetting the booking phase to `quoted`. Requisitos only when
+    // the quote SUCCEEDS — showing them right before a "no disponible" message reads wrong.
     const qr = await getQuoteTable(quoteArgs());
     if (qr.ok) {
+      if (!state.flags.requisitos_shown) {
+        writeText(requisitosBlock());
+        state = { ...state, flags: { ...state.flags, requisitos_shown: true } };
+      }
       emitQuoteTable(qr.table);
       state = {
         ...state,

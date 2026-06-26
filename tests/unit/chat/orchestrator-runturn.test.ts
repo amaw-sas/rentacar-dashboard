@@ -950,6 +950,47 @@ describe("orchestrator runTurn — on-demand (Etapa 4)", () => {
     expect(dataParts(chunks, "data-quoteTable")).toHaveLength(0);
   });
 
+  it("(s) a camioneta-only quote does NOT claim a 'most-chosen' gama (no false social proof)", async () => {
+    extractSlots.mockResolvedValue({
+      intent: "cotizar",
+      updates: {
+        ciudad: "bogota",
+        fecha_recogida: "2026-07-01",
+        fecha_devolucion: "2026-07-04",
+      },
+    });
+    // An airport-style table: only camionetas/SUVs, no económico car.
+    getQuoteTable.mockResolvedValue({
+      ok: true,
+      table: {
+        sede: "AABOG-AIR",
+        dias: 3,
+        filas: [
+          { categoria: "G4", descripcion: "Gama G4 Camioneta Mecánica 4X4", dias: 3, precioTotal: 2900000, horasExtra: 0, precioHoraExtra: 0, quote: "blob-g4" },
+          { categoria: "GY", descripcion: "Gama GY SUV Automática 7 puestos", dias: 3, precioTotal: 7000000, horasExtra: 0, precioHoraExtra: 0, quote: "blob-gy" },
+        ],
+      },
+    });
+
+    const greeted: ConversationState = {
+      ...initialState(),
+      flags: { greeted: true, requisitos_shown: true, quote_shown: false },
+    };
+    const { chunks, writer } = fakeWriter();
+    await runTurn(writer, {
+      brand: "alquilatucarro",
+      conversationId: "c1",
+      state: greeted,
+      userMessage: "bogota aeropuerto del 1 al 4",
+      recentContext: [],
+      now: NOW,
+    });
+
+    expect(dataParts(chunks, "data-quoteTable")).toHaveLength(1);
+    // No "most-chosen" claim when there is no económico car to honestly point to.
+    expect(textOf(chunks)).not.toContain("más eligen nuestros clientes");
+  });
+
   it("(g) hablar_asesor without a quote emits a neutral advisor wa.me", async () => {
     extractSlots.mockResolvedValue({ intent: "hablar_asesor", updates: {} });
 

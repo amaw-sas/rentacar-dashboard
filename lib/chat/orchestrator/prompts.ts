@@ -1,5 +1,5 @@
-import { openai } from "@ai-sdk/openai";
 import { stepCountIs } from "ai";
+import { chatModel, chatProviderOptions } from "@/lib/chat/model-config";
 import { buildChatTools } from "@/lib/chat/agent";
 import { buildKnowledgeSection } from "@/lib/chat/faq";
 import { brandName } from "@/lib/chat/orchestrator/blocks";
@@ -13,9 +13,9 @@ import { brandName } from "@/lib/chat/orchestrator/blocks";
  * The prompt is SHORT (the research showed giant prompts hurt obedience) and the
  * model is told NEVER to list prices/requisitos — those are emitted as fixed blocks
  * by code, so the model cannot re-paste them. That is why repetition disappears.
+ *
+ * Model + Gateway fallback resolution is shared via `@/lib/chat/model-config`.
  */
-const CHAT_MODEL = process.env.CHAT_MODEL ?? "gpt-5";
-const USES_GATEWAY = CHAT_MODEL.includes("/");
 
 /** Short system prompt for a free-form reply. Grounded by the editable knowledge base. */
 export async function freeFormSystem(brand: string): Promise<string> {
@@ -51,12 +51,10 @@ export async function freeFormConfig(brand: string) {
   const { crear_reserva: _omitBooking, ...tools } = buildChatTools(brand);
   void _omitBooking;
   return {
-    model: USES_GATEWAY ? CHAT_MODEL : openai(CHAT_MODEL),
+    model: chatModel(),
     system: await freeFormSystem(brand),
     tools,
     stopWhen: stepCountIs(4),
-    ...(USES_GATEWAY
-      ? {}
-      : { providerOptions: { openai: { reasoningEffort: "low" as const } } }),
+    providerOptions: chatProviderOptions(),
   };
 }

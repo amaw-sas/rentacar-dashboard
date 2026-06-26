@@ -1,6 +1,6 @@
 import { tool, stepCountIs, type ModelMessage } from "ai";
-import { openai } from "@ai-sdk/openai";
 import { z } from "zod";
+import { chatModel, chatProviderOptions } from "@/lib/chat/model-config";
 import { bogotaTodayYMD } from "@/lib/date/bogota";
 import { getFranchiseBranding } from "@/lib/constants/franchises";
 import { buildKnowledgeSection } from "@/lib/chat/faq";
@@ -433,19 +433,14 @@ export async function buildStreamConfig(
   ctx?: ChatContext,
 ) {
   return {
-    // String → Vercel AI Gateway (provider/model slug); openai() → OpenAI direct.
-    model: CHAT_MODEL_USES_GATEWAY ? CHAT_MODEL : openai(CHAT_MODEL),
+    // model + providerOptions (OpenAI reasoningEffort 'low' — the GPT-5 sweet spot,
+    // ~3x faster than medium at near-identical adherence; Gateway model-fallbacks when
+    // CHAT_MODEL_FALLBACKS is set) are resolved in `@/lib/chat/model-config`.
+    model: chatModel(),
     system: await buildSystemPrompt(brand),
     messages,
     tools: buildChatTools(brand, latestQuotes, ctx),
     stopWhen: stepCountIs(MAX_STEPS),
-    // reasoningEffort is OpenAI-specific (Haiku 4.5 rejects `effort`), so it
-    // only applies on the OpenAI path. 'low' is the GPT-5 sweet spot: intelligence
-    // index ~64 at low vs ~67 at medium (near-identical adherence) but ~3x faster
-    // (~10s vs ~29s/turn). 'minimal' (44) starved rule-following; 'medium' overpaid
-    // latency for ~no quality gain. maxDuration=90s still covers a Localiza booking turn.
-    ...(CHAT_MODEL_USES_GATEWAY
-      ? {}
-      : { providerOptions: { openai: { reasoningEffort: "low" } } }),
+    providerOptions: chatProviderOptions(),
   };
 }

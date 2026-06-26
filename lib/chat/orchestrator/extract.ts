@@ -1,5 +1,5 @@
 import { generateObject } from "ai";
-import { openai } from "@ai-sdk/openai";
+import { chatModel, chatProviderOptions } from "@/lib/chat/model-config";
 import {
   applyExtraction,
   extractionSchema,
@@ -18,12 +18,8 @@ import {
  * object. This replaces the "understand the user" bulk of the old giant prompt; the
  * orchestrator (Etapa 2) decides flow from the result deterministically.
  *
- * Model resolution mirrors the chat route (CHAT_MODEL env, Gateway slug vs OpenAI
- * id) but is duplicated here on purpose to avoid importing the heavy agent module.
+ * Model + Gateway fallback resolution is shared via `@/lib/chat/model-config`.
  */
-const CHAT_MODEL = process.env.CHAT_MODEL ?? "gpt-5";
-const USES_GATEWAY = CHAT_MODEL.includes("/");
-
 const SYSTEM = [
   "Eres un extractor de datos para un chat de alquiler de carros en Colombia. NO converses.",
   "Lee SOLO el último mensaje del cliente (con el contexto dado) y devuelve su intención y los datos que aporta.",
@@ -57,13 +53,11 @@ export async function extractSlots(input: ExtractInput): Promise<Extraction> {
   ].join("\n\n");
 
   const { object } = await generateObject({
-    model: USES_GATEWAY ? CHAT_MODEL : openai(CHAT_MODEL),
+    model: chatModel(),
     schema: extractionSchema,
     system: SYSTEM,
     prompt,
-    ...(USES_GATEWAY
-      ? {}
-      : { providerOptions: { openai: { reasoningEffort: "low" } } }),
+    providerOptions: chatProviderOptions(),
   });
   return object;
 }

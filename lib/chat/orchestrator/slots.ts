@@ -58,6 +58,9 @@ export interface Slots {
   hora_recogida?: string; // HH:mm
   hora_devolucion?: string; // HH:mm
   gama_elegida?: string; // gama code, e.g. "C"
+  /** Transmission preference the customer stated: "mecanico" | "automatico". Persisted so
+   * the bot never re-asks it (it has no deterministic slot question — it leaked via free-form). */
+  transmision?: string;
   /** How many vehicles the customer asked for. The chat books ONE per reservation;
    * >1 only triggers a one-time clarification (multi_vehicle_notice_shown). */
   cantidad?: number;
@@ -136,6 +139,7 @@ export const extractionSchema = z.object({
     hora_recogida: z.string().nullable(),
     hora_devolucion: z.string().nullable(),
     gama_elegida: z.string().nullable(),
+    transmision: z.string().nullable(),
     cantidad: z.number().nullable(),
     cliente: clienteUpdate,
   }),

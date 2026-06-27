@@ -28,6 +28,7 @@ const SYSTEM = [
   "- Horas en formato HH:mm de 24h (ej. '2pm' → '14:00').",
   "- gama_elegida: SOLO cuando el cliente ELIGE una gama YA MOSTRADA, por su código (C, CX, F, FL, FU, FX, G4, GY, LE, LU) o nombre inequívoco. NO la infieras de una preferencia en la petición inicial ('quiero un económico' es una COTIZACIÓN, no una elección) ni inventes códigos que no existen (no hay gama 'E').",
   "- cantidad: si el cliente pide MÁS DE UN vehículo ('2 carros', 'dos camionetas', 'necesito 3 autos'), pon ese número en `cantidad`; si no menciona una cantidad de vehículos, null. NO la confundas con números de fechas, horas, documento, edad ni cantidad de pasajeros/puestos.",
+  "- transmision: si el cliente indica caja, pon 'mecanico' (mecánico/manual/sincrónico) o 'automatico' (automático/automática); si no menciona la transmisión, null.",
   "- En `updates` pon SOLO los campos que el cliente menciona o cambia en este mensaje; usa null para todos los demás (no inventes ni repitas lo ya conocido).",
   "- Para datos del cliente usa `updates.cliente` (fullname, identification_type CC/CE/PA, identification, email, phone); si no aporta ninguno, `cliente` es null.",
 ].join("\n");

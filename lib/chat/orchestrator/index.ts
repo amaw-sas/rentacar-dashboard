@@ -90,6 +90,14 @@ const BOOKED_DONE_GUIDANCE =
   "el correo ni modificar la reserva (no puedes hacerlo desde el chat); si lo pide, ofrécele " +
   "pasarlo con un asesor. Solo responde su consulta.";
 
+/** The customer is wrapping up / deferring (goodbye, "lo pienso", "luego te confirmo") —
+ * don't nag them back to the gama choice; just answer warmly. */
+function isDisengaging(message: string): boolean {
+  return /\b(gracias|chao|adi[oó]s|nos vemos|hasta luego)\b|lo (voy a )?pien|lo pienso|d[eé]jame (pensar|ver|consultar|revisar)|luego (te )?(confirmo|aviso|escribo|digo)|despu[eé]s (te )?(confirmo|decido|digo|escribo)|m[aá]s tarde|lo consulto|ya (te )?(confirmo|aviso)/i.test(
+    message,
+  );
+}
+
 /** A clear affirmative that authorizes the booking ("sí", "confirmo", "dale", ...). */
 function isAffirmative(message: string): boolean {
   const m = message
@@ -701,12 +709,20 @@ async function advanceBooking(
         writeText(gamaOptionsLine(lastQuote));
         return { ...state, phase: "choosing_gama" };
       }
-      // Off-funnel question while still choosing → answer, then a SHORT nudge. We must
-      // NOT re-paste the whole gama list every turn (the repetition the user reported);
-      // the quote table already shows them.
+      // Off-funnel question while still choosing → answer. Then a SHORT nudge back to the
+      // gama — but NOT when the customer is wrapping up, and NOT after a couple of nudges
+      // already (the ~10× "¿Con cuál gama?" nagging the cohort replay surfaced).
       const ans = await freeFormText();
       if (ans) writeText(ans);
-      writeText(gamaNudgeLine());
+      const nudges = state.flags.gama_nudge_count ?? 0;
+      if (!isDisengaging(userMessage) && nudges < 2) {
+        writeText(gamaNudgeLine());
+        return {
+          ...state,
+          phase: "choosing_gama",
+          flags: { ...state.flags, gama_nudge_count: nudges + 1 },
+        };
+      }
       return { ...state, phase: "choosing_gama" };
     }
 

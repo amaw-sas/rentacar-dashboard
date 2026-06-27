@@ -1187,6 +1187,45 @@ describe("orchestrator runTurn — on-demand (Etapa 4)", () => {
     expect(saved.phase).toBe("collecting_customer");
   });
 
+  it("(aa) a disengaging message (goodbye / 'lo pienso') gets answered but NO gama nudge", async () => {
+    extractSlots.mockResolvedValue({ intent: "tangencial", updates: {} });
+    const { chunks, writer } = fakeWriter();
+    await runTurn(writer, {
+      brand: "alquilatucarro",
+      conversationId: "c1",
+      state: quotedState(),
+      userMessage: "gracias, lo voy a pensar",
+      recentContext: [],
+      now: NOW,
+    });
+    expect(streamText).toHaveBeenCalledOnce(); // answered warmly
+    expect(textOf(chunks)).not.toContain("¿Con cuál gama te quedas?"); // not nagged
+  });
+
+  it("(ab) the gama nudge stops after 2 (no more nagging)", async () => {
+    extractSlots.mockResolvedValue({ intent: "tangencial", updates: {} });
+    const { chunks, writer } = fakeWriter();
+    await runTurn(writer, {
+      brand: "alquilatucarro",
+      conversationId: "c1",
+      state: quotedState({
+        phase: "choosing_gama",
+        flags: {
+          greeted: true,
+          requisitos_shown: true,
+          quote_shown: true,
+          last_quote_signature: "bogota||2026-07-01|2026-07-04||",
+          gama_nudge_count: 2,
+        },
+      }),
+      userMessage: "¿y el seguro qué cubre?",
+      recentContext: [],
+      now: NOW,
+    });
+    expect(streamText).toHaveBeenCalledOnce();
+    expect(textOf(chunks)).not.toContain("¿Con cuál gama te quedas?");
+  });
+
   it("(g) hablar_asesor without a quote emits a neutral advisor wa.me", async () => {
     extractSlots.mockResolvedValue({ intent: "hablar_asesor", updates: {} });
 

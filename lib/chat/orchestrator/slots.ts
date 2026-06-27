@@ -87,6 +87,9 @@ export interface ConversationFlags {
   /** The quote slot we asked for last turn ("ciudad"/"fecha_recogida"/"fecha_devolucion").
    * Lets the funnel VARY a repeated question instead of asking it verbatim again. */
   last_slot_asked?: string;
+  /** How many times the "¿Con cuál gama te quedas?" nudge was appended — capped so the bot
+   * stops nagging after a couple of off-funnel answers. */
+  gama_nudge_count?: number;
 }
 
 export interface ConversationState {

@@ -73,6 +73,19 @@ interface ChatBody {
   messages: UIMessage[];
   conversationId?: string;
   brand: string;
+  /** TEST ONLY: override "now" for date resolution during replay/eval. Honored ONLY when
+   * CHAT_ALLOW_TEST_NOW=1 (set on preview, NEVER production) so real customers are unaffected
+   * and replays of past chats stop hitting phantom "fecha ya pasó" gates. */
+  _now?: string;
+}
+
+/** The "now" for a turn: the test override (preview-only, gated) or the real clock. */
+function resolveNow(body: ChatBody): Date {
+  if (process.env.CHAT_ALLOW_TEST_NOW === "1" && typeof body._now === "string") {
+    const d = new Date(body._now);
+    if (!Number.isNaN(d.getTime())) return d;
+  }
+  return new Date();
 }
 
 /** Concatenate the text parts of a UIMessage into a plain string. */
@@ -301,7 +314,7 @@ export async function POST(request: Request) {
           state: orchState,
           userMessage: extractText(lastUser),
           recentContext,
-          now: new Date(),
+          now: resolveNow(body),
           ipHash: ipHash ?? undefined,
         });
       },

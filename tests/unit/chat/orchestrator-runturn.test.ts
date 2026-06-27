@@ -1226,6 +1226,50 @@ describe("orchestrator runTurn — on-demand (Etapa 4)", () => {
     expect(textOf(chunks)).not.toContain("¿Con cuál gama te quedas?");
   });
 
+  it("(ac) a raw provider error (XML/500) is replaced with a safe line, never leaked", async () => {
+    extractSlots.mockResolvedValue({
+      intent: "cotizar",
+      updates: { ciudad: "bogota", fecha_recogida: "2026-07-01", fecha_devolucion: "2026-07-04" },
+    });
+    getQuoteTable.mockResolvedValue({
+      ok: false,
+      message: "<soap:Envelope><soap:Fault>500 Internal Error</soap:Fault></soap:Envelope>",
+    });
+    const greeted: ConversationState = {
+      ...initialState(),
+      flags: { greeted: true, requisitos_shown: true, quote_shown: false },
+    };
+    const { chunks, writer } = fakeWriter();
+    await runTurn(writer, {
+      brand: "alquilatucarro",
+      conversationId: "c1",
+      state: greeted,
+      userMessage: "bogota del 1 al 4",
+      recentContext: [],
+      now: NOW,
+    });
+    const text = textOf(chunks);
+    expect(text).toContain("No pude calcular el precio");
+    expect(text.toLowerCase()).not.toContain("soap");
+    expect(text).not.toContain("500");
+  });
+
+  it("(ad) a name mis-tagged as hablar_asesor does NOT emit the advisor button", async () => {
+    // The extractor sometimes reads "Con Marco Lamas" (a name) as an advisor request.
+    extractSlots.mockResolvedValue({ intent: "hablar_asesor", updates: {} });
+    const { chunks, writer } = fakeWriter();
+    await runTurn(writer, {
+      brand: "alquilatucarro",
+      conversationId: "c1",
+      state: quotedState(),
+      userMessage: "Con Marco Lamas",
+      recentContext: [],
+      now: NOW,
+    });
+    expect(dataParts(chunks, "data-buttons")).toHaveLength(0); // no advisor handoff
+    expect(buildOnDemandLinks).not.toHaveBeenCalled();
+  });
+
   it("(g) hablar_asesor without a quote emits a neutral advisor wa.me", async () => {
     extractSlots.mockResolvedValue({ intent: "hablar_asesor", updates: {} });
 

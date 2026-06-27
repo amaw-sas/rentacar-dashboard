@@ -166,6 +166,21 @@ export function quoteSlotQuestion(slot: QuoteSlot, repeated: boolean): string {
 }
 
 /**
+ * Never leak a raw provider error to the customer. Clean Spanish messages (no availability,
+ * past date, out-of-hours) pass through; anything that looks technical (XML/SOAP envelope,
+ * HTTP code, exception/stack, a URL, or an over-long blob) is replaced with a safe line.
+ */
+const SAFE_QUOTE_FALLBACK =
+  "No pude calcular el precio en este momento. ¿Probamos con otra fecha o sede? Si prefieres, te paso con un asesor.";
+export function safeQuoteError(message: string): string {
+  const looksRaw =
+    !message ||
+    message.length > 260 ||
+    /[<>]|soap|envelope|<\?xml|exception|stack\s?trace|https?:\/\/|\b[45]\d{2}\b/i.test(message);
+  return looksRaw ? SAFE_QUOTE_FALLBACK : message;
+}
+
+/**
  * Closing line after a quote. Carries a light, HONEST nudge to decide: reserving secures
  * the shown price + the spot, and Localiza availability genuinely moves day to day (the same
  * reason the KB recommends booking ~7 days ahead). No fake scarcity, no countdowns.

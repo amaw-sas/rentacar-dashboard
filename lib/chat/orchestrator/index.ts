@@ -37,6 +37,7 @@ import {
   quotesPriceEqual,
   quoteTableData,
   requisitosBlock,
+  safeQuoteError,
 } from "./blocks";
 
 /**
@@ -324,7 +325,7 @@ export async function runTurn(
     } else {
       // Re-quote for the new sede FAILED. Surface the error once and record the attempt so
       // we don't repeat it every turn; don't advance on a stale, old-sede quote.
-      writeText(qr.message);
+      writeText(safeQuoteError(qr.message));
       state = {
         ...state,
         flags: { ...state.flags, last_attempt_signature: sig },
@@ -359,7 +360,7 @@ export async function runTurn(
       // Quote FAILED (no availability / out of hours / past date / city not found). Surface
       // the error ONCE and record the attempt, so the next turn isn't another identical retry
       // — the free-form then answers the customer instead of repeating the error forever.
-      writeText(qr.message);
+      writeText(safeQuoteError(qr.message));
       state = {
         ...state,
         flags: { ...state.flags, last_attempt_signature: sig },
@@ -509,8 +510,12 @@ async function handleOnDemand(input: OnDemandInput): Promise<boolean> {
     return false; // no gama/quote (or link build failed) → free-form.
   }
 
-  // 3. Advisor WhatsApp.
-  if (intent === "hablar_asesor") {
+  // 3. Advisor WhatsApp. Guard the extractor mis-tagging a name/greeting/data as an advisor
+  // request ("Con Marco Lamas", the opening hello): only hand off when the message actually
+  // asks for a human/advisor/contact; otherwise let the normal flow / free-form handle it.
+  const ASKS_ADVISOR =
+    /asesor|humano|persona\s|agente|operador|whatsapp|tel[eé]fono|n[uú]mero|cont[aá]ct|hablar con|me marca|ll[aá]m/i;
+  if (intent === "hablar_asesor" && ASKS_ADVISOR.test(userMessage)) {
     const row = resolveOnDemandGama(state, userMessage);
     if (row) {
       const links = await onDemandLinksFor(row, state, brand);

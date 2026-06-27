@@ -216,10 +216,11 @@ export async function runTurn(
       fecha_devolucion &&
       quoteIsStale,
   );
-  // A sede-only change (ciudad/fechas/horas unchanged) since the last quote. The price
-  // CAN vary per sede, so we still refresh — but silently: re-pasting the whole table and
-  // resetting the funnel on every sede pick is the repetition the user reported.
-  const sedeOnlyChange =
+  // A MINOR change (sede or pickup/return hour) since the last quote — ciudad and fechas are
+  // unchanged. The price CAN move (sede discounts, an hour that crosses a day boundary), so
+  // we still refresh — but silently: re-pasting the whole table and resetting the funnel on
+  // every sede pick OR hour tweak is the repetition the customer hit while adjusting the time.
+  const minorChange =
     freshQuotePending &&
     hasQuote &&
     state.flags.last_quote_core_signature === coreSig;
@@ -258,7 +259,7 @@ export async function runTurn(
   // not a real re-quote, so an explicit on-demand request that also names a sede ("el enlace
   // en el aeropuerto") is still honored instead of being swallowed by the silent refresh.
   let onDemandHandled = false;
-  if (!freshQuotePending || sedeOnlyChange) {
+  if (!freshQuotePending || minorChange) {
     onDemandHandled = await handleOnDemand({
       writer,
       writeText,
@@ -275,7 +276,7 @@ export async function runTurn(
 
   if (onDemandHandled) {
     // On-demand already emitted its part(s) + any phase re-prompt; nothing else.
-  } else if (sedeOnlyChange) {
+  } else if (minorChange) {
     const prevQuote = state.lastQuote;
     const qr = await getQuoteTable(quoteArgs());
     if (qr.ok && prevQuote && quotesPriceEqual(prevQuote, qr.table)) {

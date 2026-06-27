@@ -94,19 +94,15 @@ export function quoteSignature(s: Slots): string {
 }
 
 /**
- * Signature WITHOUT sede (ciudad + fechas + horas). Compared against the stored core
- * signature to tell a sede-only change apart from a real price-driver change (ciudad /
- * fechas / horas). A sede-only change refreshes the quote silently — it must NOT re-paste
- * the whole table or reset the funnel (the repetition the user reported).
+ * Core signature = ciudad + fechas ONLY (no sede, no horas). Compared against the stored
+ * core signature to tell a MINOR change (sede or pickup/return hour) apart from a real
+ * re-quote (different city or dates). A minor change refreshes the quote silently and only
+ * re-shows the table if the price actually moved — it must NOT re-paste the whole table or
+ * reset the funnel on every sede/hour tweak (the repetition the customer hit while adjusting
+ * the pickup time). A genuine ciudad/fecha change still triggers a full visible re-quote.
  */
 export function quoteCoreSignature(s: Slots): string {
-  return [
-    s.ciudad,
-    s.fecha_recogida,
-    s.fecha_devolucion,
-    s.hora_recogida,
-    s.hora_devolucion,
-  ]
+  return [s.ciudad, s.fecha_recogida, s.fecha_devolucion]
     .map((x) => (x ?? "").toLowerCase())
     .join("|");
 }
@@ -191,12 +187,17 @@ function isCamioneta(descripcion: string): boolean {
  * camioneta steered in the conversational layer, not here.)
  */
 export function gamaRecommendationLine(table: QuoteTable): string | null {
-  // The "most-chosen" claim is TRUE only for the económico (cheapest CAR). When the sede
-  // has NO cars — only camionetas/SUVs, e.g. an airport — we must NOT fall back to calling
-  // the cheapest 4x4 "the most-chosen": that is false social proof. Skip the line instead.
+  // The owner's real best-seller is the ECONÓMICO gama (by category), not merely the cheapest
+  // car — in some cities a sedán undercuts the económico, but customers still pick the
+  // económico most. So: prefer the "Económico"-labelled car (cheapest one if several variants);
+  // fall back to the cheapest car only when none is labelled económico. When the sede has NO
+  // cars (only camionetas/SUVs, e.g. an airport), skip the line — naming a 4x4 the "most-chosen"
+  // would be false social proof.
   const autos = table.filas.filter((f) => !isCamioneta(f.descripcion));
   if (!autos.length) return null;
-  const top = autos.reduce((a, b) => (b.precioTotal < a.precioTotal ? b : a));
+  const economicos = autos.filter((f) => /econ[oó]mico/i.test(f.descripcion));
+  const pool = economicos.length ? economicos : autos;
+  const top = pool.reduce((a, b) => (b.precioTotal < a.precioTotal ? b : a));
   return `La que más eligen nuestros clientes es la **Gama ${top.categoria}** por su relación precio-valor.`;
 }
 

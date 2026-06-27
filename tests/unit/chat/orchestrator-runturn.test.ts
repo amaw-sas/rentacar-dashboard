@@ -697,7 +697,7 @@ describe("orchestrator runTurn — on-demand (Etapa 4)", () => {
           requisitos_shown: true,
           quote_shown: true,
           last_quote_signature: "bogota||2026-07-01|2026-07-04||",
-          last_quote_core_signature: "bogota|2026-07-01|2026-07-04||",
+          last_quote_core_signature: "bogota|2026-07-01|2026-07-04",
           summary_shown: false,
         },
       }),
@@ -752,7 +752,7 @@ describe("orchestrator runTurn — on-demand (Etapa 4)", () => {
           requisitos_shown: true,
           quote_shown: true,
           last_quote_signature: "bogota||2026-07-01|2026-07-04||",
-          last_quote_core_signature: "bogota|2026-07-01|2026-07-04||",
+          last_quote_core_signature: "bogota|2026-07-01|2026-07-04",
           summary_shown: false,
         },
       }),
@@ -843,7 +843,7 @@ describe("orchestrator runTurn — on-demand (Etapa 4)", () => {
           requisitos_shown: true,
           quote_shown: true,
           last_quote_signature: "bogota||2026-07-01|2026-07-04||",
-          last_quote_core_signature: "bogota|2026-07-01|2026-07-04||",
+          last_quote_core_signature: "bogota|2026-07-01|2026-07-04",
           summary_shown: true,
         },
       }),
@@ -933,7 +933,7 @@ describe("orchestrator runTurn — on-demand (Etapa 4)", () => {
           requisitos_shown: true,
           quote_shown: true,
           last_quote_signature: "bogota||2026-07-01|2026-07-04||",
-          last_quote_core_signature: "bogota|2026-07-01|2026-07-04||",
+          last_quote_core_signature: "bogota|2026-07-01|2026-07-04",
           summary_shown: false,
         },
       }),
@@ -1110,6 +1110,51 @@ describe("orchestrator runTurn — on-demand (Etapa 4)", () => {
     const text = textOf(turn2.chunks);
     expect(text).toContain("por ejemplo Bogotá"); // warmer, example-rich variant
     expect(text).not.toContain("¿En qué ciudad necesitas el carro?"); // not the verbatim repeat
+  });
+
+  it("(x) changing only the HOUR refreshes silently — no full table re-paste", async () => {
+    // Real chat (Pereira): the customer kept adjusting the pickup hour and the bot dumped the
+    // whole table each time. Hours are no longer part of the core signature, so an hour-only
+    // change is a MINOR change: refresh quietly, keep the funnel moving (price unchanged).
+    extractSlots.mockResolvedValue({
+      intent: "cotizar",
+      updates: { hora_recogida: "15:00", hora_devolucion: "15:00" },
+    });
+    getQuoteTable.mockResolvedValue({ ok: true, table: QUOTE_TABLE });
+
+    const { chunks, writer } = fakeWriter();
+    await runTurn(writer, {
+      brand: "alquilatucarro",
+      conversationId: "c1",
+      state: quotedState({
+        phase: "choosing_gama",
+        slots: {
+          ciudad: "bogota",
+          fecha_recogida: "2026-07-01",
+          fecha_devolucion: "2026-07-04",
+          gama_elegida: "C",
+          cliente: {},
+        },
+        flags: {
+          greeted: true,
+          requisitos_shown: true,
+          quote_shown: true,
+          last_quote_signature: "bogota||2026-07-01|2026-07-04||",
+          last_quote_core_signature: "bogota|2026-07-01|2026-07-04",
+          summary_shown: false,
+        },
+      }),
+      userMessage: "cambiemos la hora de recogida a las 3 de la tarde",
+      recentContext: [],
+      now: NOW,
+    });
+
+    expect(getQuoteTable).toHaveBeenCalledOnce(); // refreshed silently
+    expect(dataParts(chunks, "data-quoteTable")).toHaveLength(0); // NOT re-pasted
+    expect(textOf(chunks).toLowerCase()).toContain("nombre completo"); // funnel advanced
+    const saved = lastSaved();
+    expect(saved.phase).toBe("collecting_customer");
+    expect(saved.slots.hora_recogida).toBe("15:00");
   });
 
   it("(g) hablar_asesor without a quote emits a neutral advisor wa.me", async () => {

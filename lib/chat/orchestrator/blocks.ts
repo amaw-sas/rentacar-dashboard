@@ -143,23 +143,30 @@ export function nextQuoteSlot(s: Slots): QuoteSlot | null {
 }
 
 /**
- * Question for a missing quote slot. `repeated` = we already asked for THIS slot last turn
- * and the customer still hasn't given it (sent a greeting, a name, an off-topic line). Then
- * we VARY the phrasing — warmer, with an example — instead of repeating the identical
- * question verbatim (the robotic "¿en qué ciudad?" ×3 the cohort replay surfaced).
+ * Question for a missing quote slot, ESCALATING by how many times we've already asked for it
+ * (`attempt`, 1-based) so the same line is never repeated verbatim — the dominant
+ * repeated_question_verbatim failure. attempt 1 = plain ask; 2 = warmer + example; 3+ = explicit
+ * format + an advisor offer (the customer is clearly stuck or the extractor can't parse them).
  */
-export function quoteSlotQuestion(slot: QuoteSlot, repeated: boolean): string {
+export function quoteSlotQuestion(slot: QuoteSlot, attempt: number): string {
+  const stuck = attempt >= 3;
   switch (slot) {
     case "ciudad":
-      return repeated
+      if (stuck)
+        return "Disculpa que insista 🙏 Solo necesito el nombre de la ciudad, escríbelo tal cual (ej.: Bogotá). Si prefieres, te paso con un asesor que te ayuda enseguida.";
+      return attempt >= 2
         ? "Para cotizarte solo me falta la ciudad — por ejemplo Bogotá, Medellín o Cali. ¿En cuál la necesitas?"
         : "¿En qué ciudad necesitas el carro?";
     case "fecha_recogida":
-      return repeated
+      if (stuck)
+        return "Para avanzar necesito el día de RECOGIDA en fecha (ej.: 5 de julio). ¿Me lo confirmas? Si no, con gusto te paso con un asesor.";
+      return attempt >= 2
         ? "¿Qué día lo recogerías? Puede ser algo como “5 de julio” o “este sábado”."
         : "¿Para qué fecha lo necesitas (recogida)?";
     case "fecha_devolucion":
-      return repeated
+      if (stuck)
+        return "Solo me falta el día de DEVOLUCIÓN (ej.: 8 de julio) y te cotizo al instante. ¿Me lo das? o si prefieres te paso con un asesor.";
+      return attempt >= 2
         ? "¿Y qué día lo devolverías? Con eso te paso el precio de una."
         : "¿Y qué día lo devolverías?";
   }

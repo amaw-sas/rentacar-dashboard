@@ -87,6 +87,10 @@ export interface ConversationFlags {
   /** The quote slot we asked for last turn ("ciudad"/"fecha_recogida"/"fecha_devolucion").
    * Lets the funnel VARY a repeated question instead of asking it verbatim again. */
   last_slot_asked?: string;
+  /** How many CONSECUTIVE turns we've asked for `last_slot_asked` without getting it. Drives
+   * escalating phrasing (1 normal → 2 with example → 3+ explicit format + advisor offer) so the
+   * same question is NEVER emitted verbatim twice (the dominant repeated_question_verbatim bug). */
+  last_slot_ask_count?: number;
   /** How many times the "¿Con cuál gama te quedas?" nudge was appended — capped so the bot
    * stops nagging after a couple of off-funnel answers. */
   gama_nudge_count?: number;

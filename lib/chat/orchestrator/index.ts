@@ -380,11 +380,21 @@ export async function runTurn(
     }
     const slot = nextQuoteSlot(state.slots);
     if (slot) {
-      // If we asked for this same slot last turn and still don't have it (the customer sent
-      // a greeting / name / off-topic line), VARY the phrasing instead of repeating it.
-      const repeated = state.flags.last_slot_asked === slot;
-      writeText(quoteSlotQuestion(slot, repeated));
-      state = { ...state, flags: { ...state.flags, last_slot_asked: slot } };
+      // Count CONSECUTIVE asks for this same slot so the phrasing escalates (never verbatim
+      // twice): same slot as last turn → bump the counter; a different slot → reset to 1.
+      const attempt =
+        state.flags.last_slot_asked === slot
+          ? (state.flags.last_slot_ask_count ?? 1) + 1
+          : 1;
+      writeText(quoteSlotQuestion(slot, attempt));
+      state = {
+        ...state,
+        flags: {
+          ...state.flags,
+          last_slot_asked: slot,
+          last_slot_ask_count: attempt,
+        },
+      };
     }
   } else {
     // Off-funnel before any quote: short free-form reply.

@@ -1113,6 +1113,34 @@ describe("orchestrator runTurn — on-demand (Etapa 4)", () => {
     expect(text).not.toContain("¿En qué ciudad necesitas el carro?"); // not the verbatim repeat
   });
 
+  it("(ae) the THIRD consecutive ask for a slot escalates (advisor offer), never verbatim", async () => {
+    extractSlots.mockResolvedValue({ intent: "saludo", updates: {} });
+    const { chunks, writer } = fakeWriter();
+    await runTurn(writer, {
+      brand: "alquilatucarro",
+      conversationId: "c1",
+      state: {
+        phase: "greeting",
+        slots: { cliente: {} },
+        flags: {
+          greeted: true,
+          requisitos_shown: false,
+          quote_shown: false,
+          last_slot_asked: "ciudad",
+          last_slot_ask_count: 2,
+        },
+      },
+      userMessage: "mmm",
+      recentContext: [],
+      now: NOW,
+    });
+    const text = textOf(chunks);
+    expect(text).toContain("asesor"); // escalates to an advisor offer
+    expect(text).not.toContain("por ejemplo Bogotá"); // not the attempt-2 line
+    expect(text).not.toContain("¿En qué ciudad necesitas el carro?"); // not verbatim
+    expect(lastSaved().flags.last_slot_ask_count).toBe(3);
+  });
+
   it("(x) changing only the HOUR refreshes silently — no full table re-paste", async () => {
     // Real chat (Pereira): the customer kept adjusting the pickup hour and the bot dumped the
     // whole table each time. Hours are no longer part of the core signature, so an hour-only

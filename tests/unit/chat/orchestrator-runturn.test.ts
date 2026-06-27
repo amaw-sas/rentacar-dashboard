@@ -586,6 +586,7 @@ describe("orchestrator runTurn — on-demand (Etapa 4)", () => {
         hora_recogida: "10:00",
         hora_devolucion: "13:00",
       }),
+      expect.anything(), // now (threaded for replay date override)
     );
     const text = textOf(chunks);
     expect(text).toContain("Gama C");

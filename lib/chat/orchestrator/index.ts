@@ -277,6 +277,7 @@ export async function runTurn(
       intent,
       userMessage,
       brand,
+      now,
     });
     if (onDemandHandled) {
       const rp = phaseReprompt(state);
@@ -288,7 +289,7 @@ export async function runTurn(
     // On-demand already emitted its part(s) + any phase re-prompt; nothing else.
   } else if (minorChange) {
     const prevQuote = state.lastQuote;
-    const qr = await getQuoteTable(quoteArgs());
+    const qr = await getQuoteTable(quoteArgs(), now);
     if (qr.ok && prevQuote && quotesPriceEqual(prevQuote, qr.table)) {
       // Same prices for this sede → DON'T re-paste the table; refresh the blobs and keep
       // the booking funnel moving (advanceBooking re-asks the current phase's question).
@@ -335,7 +336,7 @@ export async function runTurn(
     // First quote OR a real price-driver change (ciudad/fechas/horas). Emit requisitos +
     // table (both code-owned), resetting the booking phase to `quoted`. Requisitos only when
     // the quote SUCCEEDS — showing them right before a "no disponible" message reads wrong.
-    const qr = await getQuoteTable(quoteArgs());
+    const qr = await getQuoteTable(quoteArgs(), now);
     if (qr.ok) {
       if (!state.flags.requisitos_shown) {
         writeText(requisitosBlock());
@@ -417,6 +418,7 @@ interface OnDemandInput {
   intent: Intent;
   userMessage: string;
   brand: string;
+  now: Date;
 }
 
 /** Customer slots → the booking customer shape (empty strings for unknown fields). */
@@ -587,21 +589,24 @@ function extraHourDropoff(hhmm: string): string | null {
  * Read-only: never touches phase/flags, never books.
  */
 async function answerHoraExtra(input: OnDemandInput): Promise<boolean> {
-  const { writeText, state, userMessage } = input;
+  const { writeText, state, userMessage, now } = input;
   const s = state.slots;
   if (!s.ciudad || !s.fecha_recogida || !s.fecha_devolucion) return false;
   const pickup = s.hora_recogida ?? "10:00";
   const dropoff = extraHourDropoff(pickup);
   if (!dropoff) return false;
 
-  const qr = await getQuoteTable({
-    ciudad: s.ciudad,
-    fecha_recogida: s.fecha_recogida,
-    fecha_devolucion: s.fecha_devolucion,
-    hora_recogida: pickup,
-    hora_devolucion: dropoff,
-    sede: s.sede,
-  });
+  const qr = await getQuoteTable(
+    {
+      ciudad: s.ciudad,
+      fecha_recogida: s.fecha_recogida,
+      fecha_devolucion: s.fecha_devolucion,
+      hora_recogida: pickup,
+      hora_devolucion: dropoff,
+      sede: s.sede,
+    },
+    now,
+  );
   if (!qr.ok) return false;
 
   // The gama the client means: chosen slot, or one named in the message, else the first

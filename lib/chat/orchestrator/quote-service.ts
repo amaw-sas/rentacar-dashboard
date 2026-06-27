@@ -59,8 +59,9 @@ const pesos = (v: unknown): number => Math.round(num(v));
  */
 export async function getQuoteTable(
   args: CotizarArgs,
+  now?: Date,
 ): Promise<QuoteTableResult> {
-  const result = await runCotizar(args);
+  const result = await runCotizar(args, now);
   if (!result.ok) return { ok: false, message: result.message };
 
   const data = result.data as {

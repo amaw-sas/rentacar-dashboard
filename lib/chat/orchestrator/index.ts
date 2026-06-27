@@ -338,6 +338,13 @@ export async function runTurn(
     // the quote SUCCEEDS — showing them right before a "no disponible" message reads wrong.
     const qr = await getQuoteTable(quoteArgs(), now);
     if (qr.ok) {
+      // The slots completed on a turn that ALSO carried an off-funnel question ("Bogotá del 5
+      // al 8, ¿tienen automático?"): answer it FIRST so the requisitos+table don't steamroll
+      // what they asked (the premature_requisitos_dump the replay surfaced).
+      if (OFF_FUNNEL.has(intent)) {
+        const ans = await freeFormText();
+        if (ans) writeText(ans);
+      }
       if (!state.flags.requisitos_shown) {
         writeText(requisitosBlock());
         state = { ...state, flags: { ...state.flags, requisitos_shown: true } };

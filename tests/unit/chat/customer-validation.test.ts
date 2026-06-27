@@ -3,6 +3,7 @@ import {
   isValidEmail,
   isValidPhone,
   isValidIdentification,
+  normalizeIdentification,
   isValidFullname,
   validateCustomerData,
   type CustomerData,
@@ -33,6 +34,20 @@ describe("field validators", () => {
     expect(isValidIdentification("CC", "12ab56")).toBe(false);
     expect(isValidIdentification("PA", "AB123456")).toBe(true);
     expect(isValidIdentification("PA", "ab")).toBe(false);
+  });
+
+  it("accepts cédulas written with thousands separators or spaces (the loop bug)", () => {
+    // Colombians write IDs with dots; the strict /^\d{6,10}$/ rejected these and the bot
+    // looped "el número no parece válido" forever, blocking real bookings.
+    expect(isValidIdentification("CC", "1.045.223.117")).toBe(true);
+    expect(isValidIdentification("CC", "71.345.876")).toBe(true);
+    expect(isValidIdentification("CC", "71 345 876")).toBe(true);
+    expect(normalizeIdentification("CC", "1.045.223.117")).toBe("1045223117");
+    expect(normalizeIdentification("CC", "71.345.876")).toBe("71345876");
+    // PA keeps its alphanumeric form (only trimmed).
+    expect(normalizeIdentification("PA", " AB123456 ")).toBe("AB123456");
+    // Still rejects junk (too short after stripping non-digits).
+    expect(isValidIdentification("CC", "12.3")).toBe(false);
   });
 
   it("fullname requires real letters, not just digits/symbols", () => {

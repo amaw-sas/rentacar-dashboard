@@ -46,13 +46,25 @@ export function isValidPhone(phone: string): boolean {
 }
 
 /**
- * Identification by type. CC/CE are numeric (6–10 digits in Colombia); PA
- * (passport) is alphanumeric (5–15). Unknown types fall back to a lenient
- * alphanumeric check so we never block a valid-but-unexpected document.
+ * Canonical document value. Colombians routinely write their cédula with thousands
+ * separators ("1.045.223.117", "71.345.876") or spaces; CC/CE are numeric, so we strip
+ * every non-digit. PA (passport) and unknown types keep their alphanumeric form (trimmed).
+ * Use this BOTH to validate and before sending to the provider so dotted IDs never reach it.
+ */
+export function normalizeIdentification(type: string, id: string): string {
+  const t = type.trim().toUpperCase();
+  if (t === "CC" || t === "CE") return id.replace(/\D/g, "");
+  return id.trim();
+}
+
+/**
+ * Identification by type. CC/CE are numeric (6–10 digits in Colombia, separators stripped);
+ * PA (passport) is alphanumeric (5–15). Unknown types fall back to a lenient alphanumeric
+ * check so we never block a valid-but-unexpected document.
  */
 export function isValidIdentification(type: string, id: string): boolean {
   const t = type.trim().toUpperCase();
-  const value = id.trim();
+  const value = normalizeIdentification(type, id);
   if (t === "CC" || t === "CE") return /^\d{6,10}$/.test(value);
   if (t === "PA") return /^[A-Za-z0-9]{5,15}$/.test(value);
   return /^[A-Za-z0-9]{4,20}$/.test(value);

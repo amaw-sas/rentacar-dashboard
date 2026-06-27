@@ -1,6 +1,7 @@
 import { getFranchiseBranding } from "@/lib/constants/franchises";
 import {
   validateCustomerData,
+  normalizeIdentification,
   type CustomerData,
 } from "@/lib/chat/customer-validation";
 import { runCrearReserva } from "@/lib/chat/reserva-tool";
@@ -177,7 +178,10 @@ export async function executeBooking(params: {
     quote,
     fullname: customer.fullname,
     identification_type: customer.identification_type,
-    identification: customer.identification,
+    identification: normalizeIdentification(
+      customer.identification_type,
+      customer.identification,
+    ),
     email: customer.email,
     phone: customer.phone,
     franchise: brand,

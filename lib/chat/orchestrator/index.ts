@@ -20,6 +20,7 @@ import {
   bookingConfirmedLine,
   bookingSummaryBlock,
   canQuote,
+  gamaByLabel,
   gamaNudgeLine,
   gamaOptionsLine,
   gamaRecommendationLine,
@@ -261,7 +262,11 @@ export async function runTurn(
     writer.write({ type: "data-quoteTable", data: quoteTableData(table) });
     // Social-proof + default recommendation (the most-chosen gama that matches a stated
     // transmission), then the decision CTA.
-    const rec = gamaRecommendationLine(table, state.slots.transmision);
+    const rec = gamaRecommendationLine(
+      table,
+      state.slots.transmision,
+      state.slots.tipo_vehiculo,
+    );
     if (rec) writeText(rec);
     writeText(quoteClosingLine());
   };
@@ -709,6 +714,27 @@ async function advanceBooking(
           writeText,
         );
       }
+      // Label pick ("el más económico", "el intermedio") → resolve deterministically and commit
+      // instead of re-pasting the whole gama list (the gama_not_committed that lost a buyer).
+      const byLabel = gamaByLabel(
+        lastQuote,
+        userMessage,
+        state.slots.transmision,
+        state.slots.tipo_vehiculo,
+      );
+      if (byLabel) {
+        writeText(
+          `Perfecto, seguimos con la **Gama ${byLabel.categoria}** (${byLabel.descripcion}); si prefieres otra, dímelo.`,
+        );
+        return progressCustomer(
+          {
+            ...state,
+            phase: "collecting_customer",
+            slots: { ...state.slots, gama_elegida: byLabel.categoria },
+          },
+          writeText,
+        );
+      }
       // No resolved gama, but a clear BUY signal — an affirmative ("reservemos", "dale") or
       // the customer handed over their data (da_datos). Don't keep nudging for a gama: commit
       // the recommended one as a sensible default, ECHO it so they can correct, and move
@@ -721,7 +747,11 @@ async function advanceBooking(
         // Default to the recommended gama that MATCHES their stated transmission. If none
         // matches (e.g. they asked for automático but the default would be mechanical), DON'T
         // commit the wrong product — ask which gama (the gama_mismatch defect from the eval).
-        const rec = recommendedGama(lastQuote, state.slots.transmision);
+        const rec = recommendedGama(
+          lastQuote,
+          state.slots.transmision,
+          state.slots.tipo_vehiculo,
+        );
         if (rec) {
           writeText(
             `Perfecto, seguimos con la **Gama ${rec.categoria}** (${rec.descripcion}); si prefieres otra, dímelo.`,

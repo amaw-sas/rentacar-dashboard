@@ -61,6 +61,9 @@ export interface Slots {
   /** Transmission preference the customer stated: "mecanico" | "automatico". Persisted so
    * the bot never re-asks it (it has no deterministic slot question — it leaked via free-form). */
   transmision?: string;
+  /** Vehicle-class preference: "auto" | "camioneta". So the recommended/committed gama matches
+   * a "camioneta/SUV/para 7" request instead of defaulting to the cheapest económico car. */
+  tipo_vehiculo?: string;
   /** How many vehicles the customer asked for. The chat books ONE per reservation;
    * >1 only triggers a one-time clarification (multi_vehicle_notice_shown). */
   cantidad?: number;
@@ -151,6 +154,7 @@ export const extractionSchema = z.object({
     hora_devolucion: z.string().nullable(),
     gama_elegida: z.string().nullable(),
     transmision: z.string().nullable(),
+    tipo_vehiculo: z.string().nullable(),
     cantidad: z.number().nullable(),
     cliente: clienteUpdate,
   }),

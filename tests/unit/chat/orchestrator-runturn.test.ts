@@ -1242,6 +1242,43 @@ describe("orchestrator runTurn — on-demand (Etapa 4)", () => {
     expect(textOf(chunks)).toContain("¿Con cuál gama"); // showed the options
   });
 
+  it("(ai) a buy signal with a camioneta request commits a camioneta gama, not the económico car", async () => {
+    // Vehicle-class half of gama_mismatch: "camioneta para 5" must NOT default to Gama C económico.
+    extractSlots.mockResolvedValue({ intent: "confirma_reserva", updates: {} });
+    const { chunks, writer } = fakeWriter();
+    await runTurn(writer, {
+      brand: "alquilatucarro",
+      conversationId: "c1",
+      state: quotedState({
+        phase: "choosing_gama",
+        slots: { tipo_vehiculo: "camioneta", cliente: {} },
+      }),
+      userMessage: "resérvamelo",
+      recentContext: [],
+      now: NOW,
+    });
+    const saved = lastSaved();
+    expect(saved.slots.gama_elegida).toBe("F"); // the SUV/camioneta, not C económico
+    expect(textOf(chunks)).toContain("Gama F");
+  });
+
+  it("(aj) 'el más económico' commits the económico gama instead of re-pasting the list", async () => {
+    extractSlots.mockResolvedValue({ intent: "elige_gama", updates: {} });
+    const { chunks, writer } = fakeWriter();
+    await runTurn(writer, {
+      brand: "alquilatucarro",
+      conversationId: "c1",
+      state: quotedState({ phase: "choosing_gama", slots: { cliente: {} } }),
+      userMessage: "no mejor el más económico",
+      recentContext: [],
+      now: NOW,
+    });
+    const saved = lastSaved();
+    expect(saved.slots.gama_elegida).toBe("C"); // resolved the label deterministically
+    expect(saved.phase).toBe("collecting_customer");
+    expect(textOf(chunks)).not.toContain("¿Con cuál gama seguimos?"); // not re-pasted
+  });
+
   it("(aa) a disengaging message (goodbye / 'lo pienso') gets answered but NO gama nudge", async () => {
     extractSlots.mockResolvedValue({ intent: "tangencial", updates: {} });
     const { chunks, writer } = fakeWriter();

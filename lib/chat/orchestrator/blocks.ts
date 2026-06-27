@@ -218,28 +218,59 @@ function isCamioneta(descripcion: string): boolean {
 export function recommendedGama(
   table: QuoteTable,
   transmision?: string,
+  tipoVehiculo?: string,
 ): QuoteTable["filas"][number] | null {
-  const autos = table.filas.filter((f) => !isCamioneta(f.descripcion));
-  if (!autos.length) return null;
+  // Respect the stated vehicle CLASS: a "camioneta/SUV/para 7" request must recommend a
+  // camioneta, not the cheapest económico car (the vehicle-class half of gama_mismatch).
+  const wantsCamioneta = tipoVehiculo === "camioneta";
+  let pool = table.filas.filter((f) =>
+    wantsCamioneta ? isCamioneta(f.descripcion) : !isCamioneta(f.descripcion),
+  );
+  if (!pool.length) return null;
   // Respect a stated transmission: NEVER default a customer who asked for "automático" into a
-  // mechanical económico (the gama_mismatch defect that booked the wrong product). If none of
-  // the cars match the stated transmission, return null so the caller ASKS instead of guessing.
-  let pool = autos;
+  // mechanical option (the gama_mismatch defect that booked the wrong product). If nothing
+  // matches the stated class+transmission, return null so the caller ASKS instead of guessing.
   if (transmision === "automatico")
-    pool = autos.filter((f) => /autom/i.test(f.descripcion));
+    pool = pool.filter((f) => /autom/i.test(f.descripcion));
   else if (transmision === "mecanico")
-    pool = autos.filter((f) => /mec[aá]nic/i.test(f.descripcion));
+    pool = pool.filter((f) => /mec[aá]nic/i.test(f.descripcion));
   if (!pool.length) return null;
   const economicos = pool.filter((f) => /econ[oó]mico/i.test(f.descripcion));
   const finalPool = economicos.length ? economicos : pool;
   return finalPool.reduce((a, b) => (b.precioTotal < a.precioTotal ? b : a));
 }
 
+/**
+ * Resolve a LABEL pick ("el más económico", "el intermedio", "el de la mitad") to a concrete
+ * quoted row, deterministically — so the bot commits it instead of re-pasting the whole gama
+ * list (the gama_not_committed that lost a ready buyer). Returns null when the message names no
+ * such label. Económico respects the stated transmission/vehicle class.
+ */
+export function gamaByLabel(
+  table: QuoteTable,
+  message: string,
+  transmision?: string,
+  tipoVehiculo?: string,
+): QuoteTable["filas"][number] | null {
+  const m = message.toLowerCase();
+  if (/m[aá]s econ[oó]mic|el econ[oó]mic|m[aá]s barat|el barat|la barat|lo m[aá]s barat/.test(m))
+    return recommendedGama(table, transmision, tipoVehiculo);
+  if (/intermedi|el de la mitad|el del medio|el de en medio|el mediano/.test(m)) {
+    const autos = table.filas.filter((f) => !isCamioneta(f.descripcion));
+    const rows = (autos.length ? autos : table.filas)
+      .slice()
+      .sort((a, b) => a.precioTotal - b.precioTotal);
+    return rows.length ? rows[Math.floor((rows.length - 1) / 2)] : null;
+  }
+  return null;
+}
+
 export function gamaRecommendationLine(
   table: QuoteTable,
   transmision?: string,
+  tipoVehiculo?: string,
 ): string | null {
-  const top = recommendedGama(table, transmision);
+  const top = recommendedGama(table, transmision, tipoVehiculo);
   return top
     ? `La que más eligen nuestros clientes es la **Gama ${top.categoria}** por su relación precio-valor.`
     : null;

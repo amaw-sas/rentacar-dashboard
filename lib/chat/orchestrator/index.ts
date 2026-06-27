@@ -259,8 +259,9 @@ export async function runTurn(
     });
   const emitQuoteTable = (table: NonNullable<ConversationState["lastQuote"]>) => {
     writer.write({ type: "data-quoteTable", data: quoteTableData(table) });
-    // Social-proof + default recommendation (the most-chosen gama), then the decision CTA.
-    const rec = gamaRecommendationLine(table);
+    // Social-proof + default recommendation (the most-chosen gama that matches a stated
+    // transmission), then the decision CTA.
+    const rec = gamaRecommendationLine(table, state.slots.transmision);
     if (rec) writeText(rec);
     writeText(quoteClosingLine());
   };
@@ -717,7 +718,10 @@ async function advanceBooking(
         intent === "confirma_reserva" ||
         isAffirmative(userMessage)
       ) {
-        const rec = recommendedGama(lastQuote);
+        // Default to the recommended gama that MATCHES their stated transmission. If none
+        // matches (e.g. they asked for automático but the default would be mechanical), DON'T
+        // commit the wrong product — ask which gama (the gama_mismatch defect from the eval).
+        const rec = recommendedGama(lastQuote, state.slots.transmision);
         if (rec) {
           writeText(
             `Perfecto, seguimos con la **Gama ${rec.categoria}** (${rec.descripcion}); si prefieres otra, dímelo.`,
@@ -731,6 +735,8 @@ async function advanceBooking(
             writeText,
           );
         }
+        writeText(gamaOptionsLine(lastQuote));
+        return { ...state, phase: "choosing_gama" };
       }
       if (intent === "elige_gama") {
         // Named a gama that isn't in the table → ask for a valid one.

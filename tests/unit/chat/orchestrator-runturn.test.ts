@@ -1220,6 +1220,28 @@ describe("orchestrator runTurn — on-demand (Etapa 4)", () => {
     expect(saved.phase).toBe("collecting_customer");
   });
 
+  it("(ah) a buy signal does NOT commit a gama that violates the stated transmission", async () => {
+    // The gama_mismatch defect: customer asked for automático; the recommended default (Gama C
+    // económico) is mechanical. Don't book the wrong product — ask which gama instead.
+    extractSlots.mockResolvedValue({ intent: "confirma_reserva", updates: {} });
+    const { chunks, writer } = fakeWriter();
+    await runTurn(writer, {
+      brand: "alquilatucarro",
+      conversationId: "c1",
+      state: quotedState({
+        phase: "choosing_gama",
+        slots: { transmision: "automatico", cliente: {} },
+      }),
+      userMessage: "resérvamelo",
+      recentContext: [],
+      now: NOW,
+    });
+    const saved = lastSaved();
+    expect(saved.slots.gama_elegida).toBeUndefined(); // did NOT commit the mechanical Gama C
+    expect(saved.phase).toBe("choosing_gama"); // asked instead
+    expect(textOf(chunks)).toContain("¿Con cuál gama"); // showed the options
+  });
+
   it("(aa) a disengaging message (goodbye / 'lo pienso') gets answered but NO gama nudge", async () => {
     extractSlots.mockResolvedValue({ intent: "tangencial", updates: {} });
     const { chunks, writer } = fakeWriter();

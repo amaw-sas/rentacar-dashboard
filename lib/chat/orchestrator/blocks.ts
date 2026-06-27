@@ -215,16 +215,31 @@ function isCamioneta(descripcion: string): boolean {
  * sede has no cars (only camionetas/SUVs). Also the default gama to commit when the customer
  * gives a buy signal without naming one.
  */
-export function recommendedGama(table: QuoteTable): QuoteTable["filas"][number] | null {
+export function recommendedGama(
+  table: QuoteTable,
+  transmision?: string,
+): QuoteTable["filas"][number] | null {
   const autos = table.filas.filter((f) => !isCamioneta(f.descripcion));
   if (!autos.length) return null;
-  const economicos = autos.filter((f) => /econ[oó]mico/i.test(f.descripcion));
-  const pool = economicos.length ? economicos : autos;
-  return pool.reduce((a, b) => (b.precioTotal < a.precioTotal ? b : a));
+  // Respect a stated transmission: NEVER default a customer who asked for "automático" into a
+  // mechanical económico (the gama_mismatch defect that booked the wrong product). If none of
+  // the cars match the stated transmission, return null so the caller ASKS instead of guessing.
+  let pool = autos;
+  if (transmision === "automatico")
+    pool = autos.filter((f) => /autom/i.test(f.descripcion));
+  else if (transmision === "mecanico")
+    pool = autos.filter((f) => /mec[aá]nic/i.test(f.descripcion));
+  if (!pool.length) return null;
+  const economicos = pool.filter((f) => /econ[oó]mico/i.test(f.descripcion));
+  const finalPool = economicos.length ? economicos : pool;
+  return finalPool.reduce((a, b) => (b.precioTotal < a.precioTotal ? b : a));
 }
 
-export function gamaRecommendationLine(table: QuoteTable): string | null {
-  const top = recommendedGama(table);
+export function gamaRecommendationLine(
+  table: QuoteTable,
+  transmision?: string,
+): string | null {
+  const top = recommendedGama(table, transmision);
   return top
     ? `La que más eligen nuestros clientes es la **Gama ${top.categoria}** por su relación precio-valor.`
     : null;

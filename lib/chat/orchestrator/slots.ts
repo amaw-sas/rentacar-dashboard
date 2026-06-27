@@ -94,6 +94,10 @@ export interface ConversationFlags {
   /** How many times the "¿Con cuál gama te quedas?" nudge was appended — capped so the bot
    * stops nagging after a couple of off-funnel answers. */
   gama_nudge_count?: number;
+  /** The customer field asked last turn ("fullname"/"document"/"email"/"phone") and how many
+   * CONSECUTIVE times — so the data question also escalates instead of repeating verbatim. */
+  last_customer_field_asked?: string;
+  last_customer_field_ask_count?: number;
 }
 
 export interface ConversationState {

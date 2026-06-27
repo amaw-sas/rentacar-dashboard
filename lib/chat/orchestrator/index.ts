@@ -26,6 +26,7 @@ import {
   greetingBlock,
   horaExtraLine,
   multiVehicleNoticeLine,
+  nextCustomerField,
   nextCustomerQuestion,
   nextQuoteSlot,
   postBookingChangeLine,
@@ -754,13 +755,13 @@ async function advanceBooking(
     }
 
     case "collecting_customer": {
-      if (OFF_FUNNEL.has(intent)) {
-        // Side question mid-collection → answer, then re-ask the current gap.
+      // A side question mid-collection — an OFF_FUNNEL intent OR any "?" the extractor
+      // mis-tagged (e.g. "¿cuánto el total?" as cotizar). Answer it FIRST so we don't ignore
+      // it and re-fire the data prompt, then re-ask the current gap WITH escalating phrasing.
+      if (OFF_FUNNEL.has(intent) || userMessage.includes("?")) {
         const ans = await freeFormText();
         if (ans) writeText(ans);
-        const q = nextCustomerQuestion(state.slots.cliente);
-        if (q) writeText(q);
-        return state;
+        return askCustomerField(state, writeText);
       }
       return progressCustomer(state, writeText);
     }
@@ -849,14 +850,39 @@ async function advanceBooking(
  * (when all present) validate and either relay the validation error or transition
  * to `confirming` emitting the booking summary ONCE (guarded by summary_shown).
  */
+/**
+ * Ask the current missing customer field, ESCALATING phrasing when it's the same field as
+ * last turn (so "¿Tu nombre completo?" is never repeated verbatim). Tracks the field + a
+ * consecutive-attempt counter in flags. Returns the state in `collecting_customer`.
+ */
+function askCustomerField(
+  state: ConversationState,
+  writeText: (text: string) => void,
+): ConversationState {
+  const field = nextCustomerField(state.slots.cliente);
+  const attempt =
+    state.flags.last_customer_field_asked === field
+      ? (state.flags.last_customer_field_ask_count ?? 1) + 1
+      : 1;
+  const q = nextCustomerQuestion(state.slots.cliente, attempt);
+  if (q) writeText(q);
+  return {
+    ...state,
+    phase: "collecting_customer",
+    flags: {
+      ...state.flags,
+      last_customer_field_asked: field ?? undefined,
+      last_customer_field_ask_count: attempt,
+    },
+  };
+}
+
 function progressCustomer(
   state: ConversationState,
   writeText: (text: string) => void,
 ): ConversationState {
-  const q = nextCustomerQuestion(state.slots.cliente);
-  if (q) {
-    writeText(q);
-    return { ...state, phase: "collecting_customer" };
+  if (nextCustomerField(state.slots.cliente)) {
+    return askCustomerField(state, writeText);
   }
 
   const c = state.slots.cliente;

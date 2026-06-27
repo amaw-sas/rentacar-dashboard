@@ -302,22 +302,48 @@ function capitalize(x: string): string {
   return x ? x.charAt(0).toUpperCase() + x.slice(1) : x;
 }
 
-/**
- * The next customer datum to ask for, in order (fullname → document → email →
- * phone); null when every field is present. One warm question at a time on re-ask.
- */
-export function nextCustomerQuestion(cliente: ClienteSlots): string | null {
-  // Light persuasion woven into the funnel: low-friction framing ("datos rápidos"),
-  // endowment ("tu reserva"), and end-of-task momentum ("¡Ya casi!") to carry the
-  // customer over the last step. Kept to one short question at a time.
-  if (!cliente.fullname)
-    return "Perfecto, son solo unos datos rápidos y aseguramos tu reserva. ¿Tu nombre completo?";
-  if (!cliente.identification_type || !cliente.identification) {
-    return "¿Cuál es tu tipo y número de documento? (CC, CE o PA)";
-  }
-  if (!cliente.email) return "¿A qué correo te envío la confirmación?";
-  if (!cliente.phone) return "¡Ya casi! Por último, ¿cuál es tu número de teléfono?";
+/** Which customer datum is missing next, in order; null when all present. */
+export type CustomerField = "fullname" | "document" | "email" | "phone";
+export function nextCustomerField(c: ClienteSlots): CustomerField | null {
+  if (!c.fullname) return "fullname";
+  if (!c.identification_type || !c.identification) return "document";
+  if (!c.email) return "email";
+  if (!c.phone) return "phone";
   return null;
+}
+
+/**
+ * The next customer datum to ask for, ESCALATING by `attempt` (1-based) so the same field
+ * question is never repeated verbatim — the data-collection half of repeated_question_verbatim
+ * (the bot re-firing "¿Tu nombre completo?" identically when the customer answered with a
+ * question or unparsed data). attempt 1 = the warm funnel line; 2+ = rephrased with an example.
+ * Light persuasion kept: low-friction framing, endowment, end-of-task momentum.
+ */
+export function nextCustomerQuestion(
+  cliente: ClienteSlots,
+  attempt = 1,
+): string | null {
+  const repeat = attempt >= 2;
+  switch (nextCustomerField(cliente)) {
+    case "fullname":
+      return repeat
+        ? "Solo me falta tu nombre completo (nombre y apellidos) para dejar la reserva 🙂"
+        : "Perfecto, son solo unos datos rápidos y aseguramos tu reserva. ¿Tu nombre completo?";
+    case "document":
+      return repeat
+        ? "¿Me confirmas tu documento? El tipo y el número, por ejemplo: CC 1018456722."
+        : "¿Cuál es tu tipo y número de documento? (CC, CE o PA)";
+    case "email":
+      return repeat
+        ? "¿A qué correo te mando la confirmación? (ej.: nombre@gmail.com)"
+        : "¿A qué correo te envío la confirmación?";
+    case "phone":
+      return repeat
+        ? "¿Cuál es tu número de celular para la reserva? (ej.: 3105567812)"
+        : "¡Ya casi! Por último, ¿cuál es tu número de teléfono?";
+    default:
+      return null;
+  }
 }
 
 /** Short list of the quoted gamas — used ONLY when the client must pick a valid one

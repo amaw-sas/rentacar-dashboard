@@ -249,7 +249,11 @@ const FULL_CLIENTE = {
 };
 
 /** A state that already has a shown quote (post-cotización), parametrized by phase. */
-function quotedState(over: Partial<ConversationState> = {}): ConversationState {
+function quotedState(
+  over: Partial<Omit<ConversationState, "flags">> & {
+    flags?: Partial<ConversationState["flags"]>;
+  } = {},
+): ConversationState {
   return {
     phase: "quoted",
     slots: {
@@ -1297,6 +1301,45 @@ describe("orchestrator runTurn — on-demand (Etapa 4)", () => {
     });
     expect(dataParts(chunks, "data-buttons")).toHaveLength(0); // no advisor handoff
     expect(buildOnDemandLinks).not.toHaveBeenCalled();
+  });
+
+  it("(af) re-asking the same customer field escalates phrasing, never verbatim", async () => {
+    extractSlots.mockResolvedValue({ intent: "da_datos", updates: {} }); // nothing usable parsed
+    const { chunks, writer } = fakeWriter();
+    await runTurn(writer, {
+      brand: "alquilatucarro",
+      conversationId: "c1",
+      state: quotedState({
+        phase: "collecting_customer",
+        slots: { gama_elegida: "C", cliente: {} },
+        flags: { last_customer_field_asked: "fullname", last_customer_field_ask_count: 1 },
+      }),
+      userMessage: "ajá",
+      recentContext: [],
+      now: NOW,
+    });
+    const text = textOf(chunks);
+    expect(text).toContain("Solo me falta tu nombre completo"); // escalated variant
+    expect(text).not.toContain("¿Tu nombre completo?"); // not the verbatim line
+    expect(lastSaved().flags.last_customer_field_ask_count).toBe(2);
+  });
+
+  it("(ag) a question mid data-collection is answered before re-asking the field", async () => {
+    extractSlots.mockResolvedValue({ intent: "cotizar", updates: {} }); // "¿cuánto el total?" mis-tagged
+    const { chunks, writer } = fakeWriter();
+    await runTurn(writer, {
+      brand: "alquilatucarro",
+      conversationId: "c1",
+      state: quotedState({
+        phase: "collecting_customer",
+        slots: { gama_elegida: "C", cliente: {} },
+      }),
+      userMessage: "¿cuánto me sale el total?",
+      recentContext: [],
+      now: NOW,
+    });
+    expect(streamText).toHaveBeenCalledOnce(); // answered the question
+    expect(textOf(chunks).toLowerCase()).toContain("nombre completo"); // then re-asked the gap
   });
 
   it("(g) hablar_asesor without a quote emits a neutral advisor wa.me", async () => {

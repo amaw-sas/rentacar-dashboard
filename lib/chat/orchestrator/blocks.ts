@@ -186,19 +186,26 @@ function isCamioneta(descripcion: string): boolean {
  * of 5–10 gamas. Returns null when the table is empty. (Camioneta-seekers get the cheapest
  * camioneta steered in the conversational layer, not here.)
  */
-export function gamaRecommendationLine(table: QuoteTable): string | null {
-  // The owner's real best-seller is the ECONÓMICO gama (by category), not merely the cheapest
-  // car — in some cities a sedán undercuts the económico, but customers still pick the
-  // económico most. So: prefer the "Económico"-labelled car (cheapest one if several variants);
-  // fall back to the cheapest car only when none is labelled económico. When the sede has NO
-  // cars (only camionetas/SUVs, e.g. an airport), skip the line — naming a 4x4 the "most-chosen"
-  // would be false social proof.
+/**
+ * The recommended ("most-chosen") quote row: the ECONÓMICO car by category — in some cities a
+ * sedán undercuts the económico, but customers still pick the económico most. Prefer the
+ * "Económico"-labelled car (cheapest variant); fall back to the cheapest car; null when the
+ * sede has no cars (only camionetas/SUVs). Also the default gama to commit when the customer
+ * gives a buy signal without naming one.
+ */
+export function recommendedGama(table: QuoteTable): QuoteTable["filas"][number] | null {
   const autos = table.filas.filter((f) => !isCamioneta(f.descripcion));
   if (!autos.length) return null;
   const economicos = autos.filter((f) => /econ[oó]mico/i.test(f.descripcion));
   const pool = economicos.length ? economicos : autos;
-  const top = pool.reduce((a, b) => (b.precioTotal < a.precioTotal ? b : a));
-  return `La que más eligen nuestros clientes es la **Gama ${top.categoria}** por su relación precio-valor.`;
+  return pool.reduce((a, b) => (b.precioTotal < a.precioTotal ? b : a));
+}
+
+export function gamaRecommendationLine(table: QuoteTable): string | null {
+  const top = recommendedGama(table);
+  return top
+    ? `La que más eligen nuestros clientes es la **Gama ${top.categoria}** por su relación precio-valor.`
+    : null;
 }
 
 /**

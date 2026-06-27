@@ -1157,6 +1157,36 @@ describe("orchestrator runTurn — on-demand (Etapa 4)", () => {
     expect(saved.slots.hora_recogida).toBe("15:00");
   });
 
+  it("(z) a buy signal with no gama chosen commits the recommended gama and progresses", async () => {
+    // The Pereira/Manizales loop: customer says "reservemos" (confirma_reserva) while still in
+    // choosing_gama with nothing committed. Instead of nudging again, commit the recommended
+    // económico, echo it, and advance to data collection.
+    extractSlots.mockResolvedValue({ intent: "confirma_reserva", updates: {} });
+    const { chunks, writer } = fakeWriter();
+    await runTurn(writer, {
+      brand: "alquilatucarro",
+      conversationId: "c1",
+      state: quotedState({
+        phase: "choosing_gama",
+        slots: {
+          ciudad: "bogota",
+          fecha_recogida: "2026-07-01",
+          fecha_devolucion: "2026-07-04",
+          cliente: {},
+        },
+      }),
+      userMessage: "reservemos entonces",
+      recentContext: [],
+      now: NOW,
+    });
+    const text = textOf(chunks);
+    expect(text).toContain("seguimos con la **Gama C**"); // committed + echoed the recommended
+    expect(text.toLowerCase()).toContain("nombre completo"); // and progressed to data
+    const saved = lastSaved();
+    expect(saved.slots.gama_elegida).toBe("C");
+    expect(saved.phase).toBe("collecting_customer");
+  });
+
   it("(g) hablar_asesor without a quote emits a neutral advisor wa.me", async () => {
     extractSlots.mockResolvedValue({ intent: "hablar_asesor", updates: {} });
 

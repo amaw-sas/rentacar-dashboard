@@ -30,6 +30,7 @@ import {
   nextQuoteSlot,
   postBookingChangeLine,
   quoteSlotQuestion,
+  recommendedGama,
   quoteClosingLine,
   quoteCoreSignature,
   quoteSignature,
@@ -670,6 +671,30 @@ async function advanceBooking(
           { ...state, phase: "collecting_customer" },
           writeText,
         );
+      }
+      // No resolved gama, but a clear BUY signal — an affirmative ("reservemos", "dale") or
+      // the customer handed over their data (da_datos). Don't keep nudging for a gama: commit
+      // the recommended one as a sensible default, ECHO it so they can correct, and move
+      // forward (the Pereira/Manizales "gave data + reservemos but the bot looped" cases).
+      if (
+        intent === "da_datos" ||
+        intent === "confirma_reserva" ||
+        isAffirmative(userMessage)
+      ) {
+        const rec = recommendedGama(lastQuote);
+        if (rec) {
+          writeText(
+            `Perfecto, seguimos con la **Gama ${rec.categoria}** (${rec.descripcion}); si prefieres otra, dímelo.`,
+          );
+          return progressCustomer(
+            {
+              ...state,
+              phase: "collecting_customer",
+              slots: { ...state.slots, gama_elegida: rec.categoria },
+            },
+            writeText,
+          );
+        }
       }
       if (intent === "elige_gama") {
         // Named a gama that isn't in the table → ask for a valid one.

@@ -431,6 +431,32 @@ export function horaExtraLine(
  * maps or the provider; the sede code is intentionally omitted (the city already
  * locates it). Ends with the explicit confirmation question.
  */
+/**
+ * Safety net: if the gama about to be booked CONTRADICTS a preference the customer stated
+ * (transmission or vehicle class), return an active warning so the wrong product isn't booked
+ * silently — works no matter HOW the gama was resolved (deixis, default, model name), and stays
+ * useful even after the Controller exists (defense in depth). null when there's no conflict.
+ */
+export function gamaConflictNote(
+  row: QuoteTable["filas"][number],
+  transmision?: string,
+  tipoVehiculo?: string,
+): string | null {
+  const d = row.descripcion.toLowerCase();
+  const isAuto = /autom/.test(d);
+  const isMec = /mec[aá]nic/.test(d);
+  if (transmision === "automatico" && isMec && !isAuto)
+    return " ⚠️ Ojo: pediste automático y esta gama es mecánica; si prefieres una automática, dime y te la muestro.";
+  if (transmision === "mecanico" && isAuto && !isMec)
+    return " ⚠️ Ojo: pediste mecánico y esta gama es automática; si prefieres una mecánica, dime y te la muestro.";
+  const cam = isCamioneta(row.descripcion);
+  if (tipoVehiculo === "camioneta" && !cam)
+    return " ⚠️ Ojo: pediste camioneta y esta gama es un auto; si quieres una camioneta, dime y te la muestro.";
+  if (tipoVehiculo === "auto" && cam)
+    return " ⚠️ Ojo: pediste un auto y esta gama es camioneta; si prefieres un auto, dime y te la muestro.";
+  return null;
+}
+
 export function bookingSummaryBlock(state: ConversationState): string {
   const s = state.slots;
   const row =
@@ -457,6 +483,9 @@ export function bookingSummaryBlock(state: ConversationState): string {
         ? ` (≈$${COP.format(Math.round(row.precioTotal / dias))}/día, todo incluido)`
         : "";
     line += ` Total **$${COP.format(row.precioTotal)}**${perDay}.`;
+    // Active mismatch alert — turns the passive gama echo into a real check before booking.
+    const conflict = gamaConflictNote(row, s.transmision, s.tipo_vehiculo);
+    if (conflict) line += conflict;
   }
   if (s.cliente.fullname) line += ` A nombre de ${s.cliente.fullname}.`;
   // Loss-aversion + present-bias close: confirming secures the price/spot, and nothing is

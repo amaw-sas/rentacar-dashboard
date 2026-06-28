@@ -7,6 +7,8 @@ import { buildOnDemandLinks } from "@/lib/chat/reserva-link";
 import { getLocationDirectory } from "@/lib/api/location-directory";
 import { getFranchiseBranding } from "@/lib/constants/franchises";
 import { extractSlots } from "./extract";
+import { runController } from "./controller";
+import { getModelsByGama } from "./models-catalog";
 import {
   applyExtraction,
   type ConversationState,
@@ -66,6 +68,23 @@ export interface RunTurnInput {
   now: Date;
   /** Salted client-IP hash for the booking rate cap (threaded by the route). */
   ipHash?: string;
+}
+
+/**
+ * Models per quoted gama for the Controller's context, cached in state at quote time. Fetched
+ * ONLY when the Controller is on (the extractor never uses it) and the cached map doesn't already
+ * cover this table's gamas. Best-effort — getModelsByGama swallows DB errors and the off path
+ * just returns the prior map — so it never blocks or breaks a quote turn.
+ */
+async function modelsForTable(
+  state: ConversationState,
+  table: NonNullable<ConversationState["lastQuote"]>,
+): Promise<Record<string, string[]> | undefined> {
+  if (process.env.CHAT_CONTROLLER !== "on") return state.modelsByGama;
+  const codes = table.filas.map((f) => f.categoria);
+  const cached = state.modelsByGama;
+  if (cached && codes.every((c) => c in cached)) return cached;
+  return await getModelsByGama(codes);
 }
 
 /** Off-funnel intents: questions/objections that the free-form LLM answers. */
@@ -167,16 +186,27 @@ export async function runTurn(
     }
   };
 
-  // 1. The one narrow LLM read: extract intent + slot updates. Degrade to a
-  // free-form reply if it fails (never block the turn).
+  // 1. The one narrow LLM read. CHAT_CONTROLLER=on swaps the context-blind extractor for the
+  // Controller — a context-aware read that also RESOLVES the gama reference (deixis, model name,
+  // label) to a concrete quoted row and commits it via a typed action. Both return the same
+  // {intent, updates} shape, so the deterministic FSM below is unchanged. Off → byte-identical to
+  // the extractor path (instant rollback). Degrade to a free-form reply if it fails.
+  const useController = process.env.CHAT_CONTROLLER === "on";
   let intent: Intent = "tangencial";
   try {
-    const ext = await extractSlots({
-      todayYMD: bogotaTodayYMD(now),
-      state,
-      recentContext,
-      userMessage,
-    });
+    const ext = useController
+      ? await runController({
+          todayYMD: bogotaTodayYMD(now),
+          state,
+          recentContext,
+          userMessage,
+        })
+      : await extractSlots({
+          todayYMD: bogotaTodayYMD(now),
+          state,
+          recentContext,
+          userMessage,
+        });
     state = applyExtraction(state, ext);
     intent = ext.intent;
   } catch (e) {
@@ -327,12 +357,14 @@ export async function runTurn(
       // Prices genuinely differ by sede → show the updated table (it's new info), reset to
       // `quoted`, and CLEAR the prior gama pick so the customer re-confirms against the new
       // prices instead of being silently locked into the old one at a new total.
+      const modelsByGama = await modelsForTable(state, qr.table);
       emitQuoteTable(qr.table);
       state = {
         ...state,
         phase: "quoted",
         slots: { ...state.slots, gama_elegida: undefined },
         lastQuote: qr.table,
+        modelsByGama,
         flags: {
           ...state.flags,
           quote_shown: true,
@@ -368,11 +400,13 @@ export async function runTurn(
         writeText(requisitosBlock());
         state = { ...state, flags: { ...state.flags, requisitos_shown: true } };
       }
+      const modelsByGama = await modelsForTable(state, qr.table);
       emitQuoteTable(qr.table);
       state = {
         ...state,
         phase: "quoted",
         lastQuote: qr.table,
+        modelsByGama,
         flags: {
           ...state.flags,
           quote_shown: true,

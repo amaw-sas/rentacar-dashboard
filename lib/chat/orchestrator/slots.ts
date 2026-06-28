@@ -110,6 +110,10 @@ export interface ConversationState {
   /** Last quote table shown (incl. the opaque quote blobs) — the booking phase
    * (Etapa 3) resolves the chosen gama's quote from here. Server-side only. */
   lastQuote?: QuoteTable;
+  /** Model names per quoted gama code (e.g. {C:["Picanto","Spark"], F:["Sandero"]}), cached
+   * at quote time. Feeds the Controller so it can resolve a model name ("el Picanto") to a
+   * quoted gama. Server-side only; absent when the Controller is off or the lookup failed. */
+  modelsByGama?: Record<string, string[]>;
 }
 
 export function initialState(): ConversationState {
@@ -141,23 +145,27 @@ const clienteUpdate = z
   })
   .nullable();
 
+/** The slot-update object: every field nullable (OpenAI strict). Shared by the extractor
+ * AND the Controller so both read the same slot vocabulary without drift. */
+export const extractionUpdates = z.object({
+  ciudad: z.string().nullable(),
+  sede: z.string().nullable(),
+  fecha_recogida: z.string().nullable(),
+  fecha_devolucion: z.string().nullable(),
+  hora_recogida: z.string().nullable(),
+  hora_devolucion: z.string().nullable(),
+  gama_elegida: z.string().nullable(),
+  transmision: z.string().nullable(),
+  tipo_vehiculo: z.string().nullable(),
+  cantidad: z.number().nullable(),
+  cliente: clienteUpdate,
+});
+
 export const extractionSchema = z.object({
   /** What the latest user message is doing. */
   intent: z.enum(INTENTS),
   /** Slot values present/updated in THIS message. Use null for fields not mentioned. */
-  updates: z.object({
-    ciudad: z.string().nullable(),
-    sede: z.string().nullable(),
-    fecha_recogida: z.string().nullable(),
-    fecha_devolucion: z.string().nullable(),
-    hora_recogida: z.string().nullable(),
-    hora_devolucion: z.string().nullable(),
-    gama_elegida: z.string().nullable(),
-    transmision: z.string().nullable(),
-    tipo_vehiculo: z.string().nullable(),
-    cantidad: z.number().nullable(),
-    cliente: clienteUpdate,
-  }),
+  updates: extractionUpdates,
 });
 export type Extraction = z.infer<typeof extractionSchema>;
 

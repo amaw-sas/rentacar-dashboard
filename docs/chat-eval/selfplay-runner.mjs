@@ -2,7 +2,9 @@
 // No _now needed — the personas use genuinely-future dates, so Localiza accepts them (clean).
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 
-const URL = "https://rentacar-dashboard-git-preview-c-5e09c0-info-42181061s-projects.vercel.app/api/chat";
+// Override with CHAT_URL to point at another preview/local build (e.g. when testing the
+// Controller A/B). Defaults to the preview/chat-test deployment.
+const URL = process.env.CHAT_URL ?? "https://rentacar-dashboard-git-preview-c-5e09c0-info-42181061s-projects.vercel.app/api/chat";
 const PERSONAS = JSON.parse(readFileSync("personas.json", "utf8"));
 const OUT = process.env.OUT ?? "selfplay-results";
 mkdirSync(OUT, { recursive: true });

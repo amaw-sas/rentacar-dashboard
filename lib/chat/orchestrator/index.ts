@@ -25,6 +25,7 @@ import {
   gamaByLabel,
   gamaNudgeLine,
   gamaOptionsLine,
+  gamaPickPrompt,
   gamaRecommendationLine,
   greetingBlock,
   horaExtraLine,
@@ -209,11 +210,6 @@ export async function runTurn(
         });
     state = applyExtraction(state, ext);
     intent = ext.intent;
-    // TEMP DEBUG (Controller activation): raw flag value + path + resolution. Remove after A/B.
-    const dbg = ext as Partial<{ action: string; gamaCode: string | null }>;
-    console.log(
-      `[ctrl-debug] flag=${JSON.stringify(process.env.CHAT_CONTROLLER)} useController=${useController} intent=${ext.intent} action=${dbg.action ?? "-"} gama=${dbg.gamaCode ?? "-"} committed=${state.slots.gama_elegida ?? "-"}`,
-    );
   } catch (e) {
     console.error("[orchestrator] extract failed", e);
   }
@@ -786,23 +782,35 @@ async function advanceBooking(
           writeText,
         );
       }
-      // No resolved gama, but a clear BUY signal — an affirmative ("reservemos", "dale") or
-      // the customer handed over their data (da_datos). Don't keep nudging for a gama: commit
-      // the recommended one as a sensible default, ECHO it so they can correct, and move
-      // forward (the Pereira/Manizales "gave data + reservemos but the bot looped" cases).
+      // A clear BUY signal — an affirmative ("reservemos", "dale") or the customer handed over
+      // data (da_datos) — but no gama resolved. The recommendation (respects stated transmission/
+      // class; null when nothing matches, so we never offer the wrong product).
       if (
         intent === "da_datos" ||
         intent === "confirma_reserva" ||
         isAffirmative(userMessage)
       ) {
-        // Default to the recommended gama that MATCHES their stated transmission. If none
-        // matches (e.g. they asked for automático but the default would be mechanical), DON'T
-        // commit the wrong product — ask which gama (the gama_mismatch defect from the eval).
         const rec = recommendedGama(
           lastQuote,
           state.slots.transmision,
           state.slots.tipo_vehiculo,
         );
+        // Controller path: do NOT silently lock the cheapest gama here — that premature commit fired
+        // on a slot/info turn the model mis-read as a buy signal and then ignored a later "quiero
+        // automático", booking the wrong car. ASK which gama first (offering the recommendation);
+        // only commit it as a LAST RESORT after a prior ask, so a true no-preference buyer still
+        // closes and the stated transmission (set by then) is honored.
+        if (process.env.CHAT_CONTROLLER === "on" && (state.flags.gama_ask_count ?? 0) < 1) {
+          writeText(gamaPickPrompt(rec));
+          return {
+            ...state,
+            phase: "choosing_gama",
+            flags: {
+              ...state.flags,
+              gama_ask_count: (state.flags.gama_ask_count ?? 0) + 1,
+            },
+          };
+        }
         if (rec) {
           writeText(
             `Perfecto, seguimos con la **Gama ${rec.categoria}** (${rec.descripcion}); si prefieres otra, dímelo.`,

@@ -410,6 +410,21 @@ export function gamaNudgeLine(): string {
 }
 
 /**
+ * Ask which gama on a buy signal that did NOT resolve to a specific gama, OFFERING the
+ * recommendation as a hint instead of silently committing the cheapest one (the premature-commit
+ * defect: it locked Gama C on a slot/info turn and then ignored a later "quiero automático").
+ * The customer picks → the Controller resolves it next turn.
+ */
+export function gamaPickPrompt(
+  rec: QuoteTable["filas"][number] | null,
+): string {
+  if (!rec) return "¿Con cuál gama te quedas?";
+  return `¿Con cuál gama te quedas? La que más eligen es la **Gama ${rec.categoria}** (${rec.descripcion}, $${COP.format(
+    rec.precioTotal,
+  )}); ¿te sirve esa o prefieres otra?`;
+}
+
+/**
  * Concrete extra-hour answer for ONE gama, fed by a re-quote's per-hour `precio_hora_extra`
  * (Localiza only returns the charge when the quote actually spans extra hours, so the
  * orchestrator re-quotes with a later return to read it). Whole COP.

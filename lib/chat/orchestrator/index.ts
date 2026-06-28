@@ -25,7 +25,6 @@ import {
   gamaByLabel,
   gamaNudgeLine,
   gamaOptionsLine,
-  gamaPickPrompt,
   gamaRecommendationLine,
   greetingBlock,
   horaExtraLine,
@@ -790,27 +789,16 @@ async function advanceBooking(
         intent === "confirma_reserva" ||
         isAffirmative(userMessage)
       ) {
+        // Default to the recommended gama that MATCHES the stated transmission/class. If none
+        // matches, DON'T commit the wrong product — ask which gama. (The "ask-first instead of
+        // committing" experiment REGRESSED hard: the bot's own "la más elegida es la Gama C"
+        // suggestion polluted the deixis anchor, so a later "esa"/"camioneta" resolved to that C —
+        // defect 17%->37%. Reverted; the measured-best is committing the matched recommendation.)
         const rec = recommendedGama(
           lastQuote,
           state.slots.transmision,
           state.slots.tipo_vehiculo,
         );
-        // Controller path: do NOT silently lock the cheapest gama here — that premature commit fired
-        // on a slot/info turn the model mis-read as a buy signal and then ignored a later "quiero
-        // automático", booking the wrong car. ASK which gama first (offering the recommendation);
-        // only commit it as a LAST RESORT after a prior ask, so a true no-preference buyer still
-        // closes and the stated transmission (set by then) is honored.
-        if (process.env.CHAT_CONTROLLER === "on" && (state.flags.gama_ask_count ?? 0) < 1) {
-          writeText(gamaPickPrompt(rec));
-          return {
-            ...state,
-            phase: "choosing_gama",
-            flags: {
-              ...state.flags,
-              gama_ask_count: (state.flags.gama_ask_count ?? 0) + 1,
-            },
-          };
-        }
         if (rec) {
           writeText(
             `Perfecto, seguimos con la **Gama ${rec.categoria}** (${rec.descripcion}); si prefieres otra, dímelo.`,

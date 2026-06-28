@@ -97,10 +97,6 @@ export interface ConversationFlags {
   /** How many times the "¿Con cuál gama te quedas?" nudge was appended — capped so the bot
    * stops nagging after a couple of off-funnel answers. */
   gama_nudge_count?: number;
-  /** How many times we ASKED which gama on a buy signal that resolved to no gama (Controller path).
-   * Caps the ask so a true no-preference buyer still closes (last-resort commit) — and stops the
-   * premature silent commit of the cheapest gama that booked the wrong car. */
-  gama_ask_count?: number;
   /** The customer field asked last turn ("fullname"/"document"/"email"/"phone") and how many
    * CONSECUTIVE times — so the data question also escalates instead of repeating verbatim. */
   last_customer_field_asked?: string;

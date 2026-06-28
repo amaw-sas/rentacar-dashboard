@@ -20,6 +20,7 @@ import {
 import {
   deriveAttributionChannel,
   type AttributionInput,
+  type AttributionChannel,
 } from "@/lib/attribution/derive-channel";
 import { ServiceError } from "@/lib/api/service-error";
 import type { ReservationStatus } from "@/lib/schemas/reservation";
@@ -64,6 +65,10 @@ export interface CreateReservationInput {
   franchise: string;
   user?: string;
   attribution?: AttributionInput;
+  // Issue #199 (Fase 0): explicit channel override. When set (chat booking path),
+  // it WINS over the utm-derived channel — the chat carries no utm, so this is how
+  // a bot reservation is stamped 'chat-bot'. Absent on the web path → derivation.
+  attributionChannel?: AttributionChannel;
   idempotency_key?: string; // issue #99: forwarded to the proxy to dedupe resubmits
   // — extras (affect booking_type / notification_required) —
   total_insurance?: boolean | number;
@@ -150,7 +155,9 @@ export async function createReservation(
     // verbatim for audit. The derivation is total — never throws — so a
     // malformed attribution object can never block a booking.
     const attribution = input.attribution;
-    const attributionChannel = deriveAttributionChannel(attribution);
+    // Explicit override (chat → 'chat-bot', issue #199) wins; else derive from utm.
+    const attributionChannel =
+      input.attributionChannel ?? deriveAttributionChannel(attribution);
 
     // 4. Resolve referral
     let referralId: string | null = null;

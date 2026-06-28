@@ -9,6 +9,7 @@ import {
   createReservation,
   type CreateReservationInput,
 } from "@/lib/api/reservation-service";
+import type { AttributionChannel } from "@/lib/attribution/derive-channel";
 import { ServiceError } from "@/lib/api/service-error";
 import {
   encodeQuote,
@@ -529,6 +530,10 @@ interface CrearSolicitudReservaArgs {
   // Defensive: NOT in the input schema (seguro total is out of Phase 1), but
   // guarded at runtime so a direct/forged call can never book with it.
   total_insurance?: boolean;
+  // Issue #199 (Fase 0): server-only override stamped by the chat booking path
+  // (lib/chat/reserva-tool.ts). NOT in the public MCP input schema, so an external
+  // MCP client can never forge the channel — same pattern as `total_insurance`.
+  attribution_channel?: AttributionChannel;
 }
 
 export async function crearSolicitudReserva(
@@ -585,6 +590,7 @@ export async function crearSolicitudReserva(
     flight: args.flight,
     aeroline: args.aeroline,
     flight_number: args.flight_number,
+    attributionChannel: args.attribution_channel,
   };
 
   let result;

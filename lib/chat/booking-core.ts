@@ -71,6 +71,16 @@ export function reservationsEnabled(): boolean {
 }
 
 /**
+ * Issue #199 (Fase 0): when on, the chat stamps `attribution_channel = 'chat-bot'`
+ * on every reservation it creates, making bot bookings distinguishable in the
+ * dashboard. Off by default so it never changes the recorded channel until
+ * enabled per environment (matches the issue's "everything behind a flag").
+ */
+function attributionBotEnabled(): boolean {
+  return process.env.CHAT_ATTRIBUTION_BOT === "true";
+}
+
+/**
  * Build the pre-filled fallback links (finish-on-web + advisor WhatsApp) for a
  * booking that couldn't be created in chat — provider failure OR a rate cap, so
  * the lead is never lost. Best-effort: any failure resolving them returns null.
@@ -185,6 +195,7 @@ export async function executeBooking(params: {
     email: customer.email,
     phone: customer.phone,
     franchise: brand,
+    attribution_channel: attributionBotEnabled() ? "chat-bot" : undefined,
   });
   // Telemetry for the real provider attempt (drives the dashboard health alert AND
   // the booking caps above). Fire-and-forget — never await, never block the turn.

@@ -165,6 +165,48 @@ describe("createReservation (issue #72 Step 3)", () => {
     expect(payload.booking_type).toBe("standard");
   });
 
+  // Issue #199 (Fase 0) — the explicit `attributionChannel` override WINS over the
+  // utm-derived channel (the chat carries no utm), so a bot booking is stamped
+  // 'chat-bot'. With the override absent the column derives as today (null here).
+  it("issue #199: explicit attributionChannel override is persisted ('chat-bot')", async () => {
+    const { sb } = await wireMocks();
+    vi.mocked(fetch).mockResolvedValue(
+      proxyResponse({
+        ok: true,
+        status: 200,
+        text: () =>
+          JSON.stringify({ reserveCode: "LOC-1", reservationStatus: "Reserved" }),
+      }) as Response,
+    );
+
+    const { createReservation } = await import("@/lib/api/reservation-service");
+    await createReservation({
+      ...STANDARD_INPUT,
+      attributionChannel: "chat-bot",
+    });
+
+    const payload = sb.insert.mock.calls[0][0];
+    expect(payload.attribution_channel).toBe("chat-bot");
+  });
+
+  it("issue #199: no override and no utm → attribution_channel stays null", async () => {
+    const { sb } = await wireMocks();
+    vi.mocked(fetch).mockResolvedValue(
+      proxyResponse({
+        ok: true,
+        status: 200,
+        text: () =>
+          JSON.stringify({ reserveCode: "LOC-2", reservationStatus: "Reserved" }),
+      }) as Response,
+    );
+
+    const { createReservation } = await import("@/lib/api/reservation-service");
+    await createReservation(STANDARD_INPUT);
+
+    const payload = sb.insert.mock.calls[0][0];
+    expect(payload.attribution_channel).toBeNull();
+  });
+
   // SCEN-006 — standard without token/qualifier → ServiceError(400) exact msg,
   // no proxy call.
   it("SCEN-006: standard without reference_token throws ServiceError(400) and skips the proxy", async () => {

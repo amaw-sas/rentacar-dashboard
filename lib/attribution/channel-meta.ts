@@ -30,6 +30,9 @@ export const ATTRIBUTION_CHANNELS: readonly AttributionChannel[] = [
   "referral",
   "direct",
   "other",
+  // Issue #199 (Fase 0): not a marketing channel — bot-created reservations. Last
+  // in display order so the marketing channels read as a group above it.
+  "chat-bot",
 ] as const;
 
 /**
@@ -119,6 +122,13 @@ export const CHANNEL_META: Record<AttributionChannel, ChannelMeta> = {
   other: {
     label: "Otro",
     variant: "outline",
+    chartColor: "hsl(var(--chart-5))",
+  },
+  // Issue #199 (Fase 0): bot-created reservations. `default` variant so it reads
+  // as a deliberate channel (not an absence like Desconocido); reuses chart-5.
+  "chat-bot": {
+    label: "Chat bot",
+    variant: "default",
     chartColor: "hsl(var(--chart-5))",
   },
 };

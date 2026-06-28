@@ -88,6 +88,22 @@ Cada commit pasó tsc + eslint + suite (vitest, ~1336 tests al final) antes de d
 - `27bbfb2` slot `tipo_vehiculo` (camioneta/SUV) + `gamaByLabel` ("el más económico"/"el intermedio")
 - **Resultado: no movió el defectuoso** (dentro del ruido). El residual ya es deixis/modelo.
 
+**Consolidación (post-decisión de parar):**
+- `a33d0b7` **bug precio cotizado≠cobrado ARREGLADO.** Causa real: NO era IVA+tasa — el free-form
+  era **ciego a `lastQuote`** (su prompt no incluía los precios), así que recotizaba con params
+  divergentes (sin la sede ya elegida) o inventaba. Fix: inyectar la cotización vigente en el
+  prompt del free-form + **quitarle la tool `cotizar`** (cotizar es del orquestador). Verificado
+  en vivo: gama LU = $3.316.049 consistente en free-form y resumen.
+- `4ae72b9` **Round 5 (parcial) — detector de conflicto.** `gamaConflictNote`: antes de reservar,
+  si la gama a comprometer contradice la transmisión/tipo pedidos, el resumen lanza una alerta
+  activa ("Ojo: pediste automático y esta gama es mecánica…"). **Guardrail/defensa en profundidad**
+  — atrapa la reserva equivocada sin importar cómo se resolvió la gama (deixis incluida), y sigue
+  útil después del Controlador. NOTA: el self-play NO mide su efecto (las personas guionadas
+  confirman igual); su valor es proteger al cliente REAL que lee la alerta y objeta.
+- **Round 5 — lo que queda para la sesión del Controlador:** mapa modelo→gama (Picanto→C,
+  Sandero→F) y la deixis pura ("ese el blanco") → son afines a la resolución de referencias del
+  Controlador, no se hicieron como parche.
+
 ## 5. Los números (mediciones CONTROLADAS, self-play limpio, mismas 30 personas)
 
 | Métrica | Self-play #1 (post-R2, `8eff54a`) | #2 (post-R3, `eeb8fb9`) | #3 (post-R4, `27bbfb2`) |
@@ -153,21 +169,23 @@ self-play NO lo necesita — usa fechas futuras reales).
 
 ## 8. Pendientes / bugs reales conocidos
 
-1. 🔴 **Precio cotizado ≠ cobrado**: la gama híbrida LU se cotizó $3.100.399 y se reservó
-   $3.316.049 (IVA+tasa que la cotización no muestra). El cliente acepta un precio y se reserva
-   otro. Es el IVA+tasa diferido en rentacar-web. **Cerrar antes de prod.**
-2. 🟡 **Ciudad sin sede** (Pitalito/Garzón): la cotización determinista muestra el fallback
+1. ✅ **Precio cotizado ≠ cobrado — ARREGLADO** (`a33d0b7`). La causa NO era IVA+tasa sino el
+   free-form ciego a `lastQuote` recotizando/inventando. Ver §4 "Consolidación". Verificado en vivo.
+2. 🟡 **~35% reservas defectuosas** (el residual semántico: deixis/modelo) → el Controlador.
+   Mitigado para el cliente real por el detector de conflicto (`4ae72b9`), pero la resolución
+   correcta de la referencia sigue siendo trabajo del Controlador.
+3. 🟡 **Ciudad sin sede** (Pitalito/Garzón): la cotización determinista muestra el fallback
    genérico "No pude calcular el precio" en vez de "no hay sede ahí". Cosmético (el free-form ya
    redirige bien a la sede más cercana). NO es motor roto.
-3. 🟡 **~35% reservas defectuosas** (el residual semántico) → el Controlador.
 4. KB compartida dice "AlquilaTuCarro" para las 3 marcas (mitigado en prompt; fix durable = editar KB).
 5. Formato de precio en tabla muestra milésimas en algunos casos.
 
 ## 9. Resumen ejecutivo
 
 - **Logrado**: close-rate real **94%** (era percibido como roto); cédula válida ya no se rechaza;
-  repetición y mismatch de transmisión reducidos; un eval **limpio y repetible** que es el activo
-  más valioso (sirve para este chat y para otros negocios).
+  repetición y mismatch de transmisión reducidos; **precio cotizado == cobrado** (arreglado);
+  **detector de conflicto** que avisa antes de reservar una gama equivocada; un eval **limpio y
+  repetible** que es el activo más valioso (sirve para este chat y para otros negocios).
 - **Aprendido**: el problema NO era el cierre; es la **fidelidad** (reservar la gama correcta) y la
   **memoria conversacional** — ambos con una raíz: el bot es ciego a lo que el cliente ya eligió.
 - **Decidido**: el Controlador queda **justificado con evidencia** (no intuición). Se construye en

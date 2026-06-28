@@ -71,6 +71,11 @@ close-rate se hace determinista sobre esas etiquetas (más confiable que pedírs
 - **Separa el ruido de evaluación de los bugs reales** (en rentacar, el 36-43% de "errores" eran
   fechas del replay, no del bot).
 - **Muestrea al azar**, no cures las "malas" (sesgo de selección infla los problemas).
+- **Las personas guionadas NO reaccionan como un humano.** Confirman aunque el bot muestre la
+  opción equivocada, así que un guardrail (ej.: una alerta "pediste automático y esto es
+  mecánica") **no baja la métrica del eval** aunque proteja al cliente real. No descartes una
+  mejora porque no mueve el número: pregúntate si el eval puede siquiera medirla. (Para medir
+  esos casos se necesita un cliente simulado REACTIVO, no guionado — ver "self-play reactivo".)
 
 ## El patrón de mejora que funcionó
 
@@ -81,3 +86,15 @@ close-rate se hace determinista sobre esas etiquetas (más confiable que pedírs
    contexto) → ahí, y solo ahí, se justifica la re-arquitectura (un "Controlador" con contexto).
 
 Ver el caso completo y los números en `SESSION-LOG-2026-06-27.md`.
+
+## Mejora futura: self-play REACTIVO
+
+Las personas actuales son **guiones fijos** (no reaccionan al bot). Limpio y repetible, pero no
+modela a un humano que objeta cuando ve algo mal. El siguiente nivel es un **cliente simulado por
+LLM**: en cada turno otra IA lee la respuesta del bot y genera el mensaje del cliente reaccionando
+de verdad (objeta el precio, corrige "no, yo quería automático", se despide si lo ignoran).
+
+Requiere una llave de API para el simulador (p. ej. el mismo Vercel AI Gateway que usa el bot).
+El runner cambiaría: en vez de leer `messages` de `personas.json`, llamaría al LLM-cliente con
+el historial para producir el siguiente turno. Con eso SÍ se medirían cosas que el guion no ve
+(guardrails, recuperación ante confusión, abandono por mal trato).

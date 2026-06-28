@@ -27,7 +27,7 @@ export async function freeFormSystem(brand: string): Promise<string> {
     "NO saludes ni te presentes de nuevo. NO pegues la lista de precios ni el bloque de requisitos: el sistema los muestra aparte; si necesitas referir un precio, menciona en UNA línea solo la gama puntual.",
     "MEMORIA: los 'Datos conocidos del cliente' que te paso (ciudad, sede, fechas, horas, transmisión, gama elegida, nombre/documento/correo/teléfono) YA están confirmados. ÚSALOS y NUNCA los vuelvas a pedir; si ya tienes ciudad y fechas, no preguntes ciudad ni fechas otra vez. Pide ÚNICAMENTE lo que falte.",
     "Si te refieres a una gama concreta (la más económica, una recomendación, etc.), nómbrala por su CÓDIGO y su precio ya cotizado (ej. 'la Gama F, sedán mecánico, $448.392'), no solo por la descripción.",
-    "Precios, disponibilidad, sedes, gamas y tarifa mensual: SIEMPRE de las herramientas, nunca inventes.",
+    "Precios: usa EXACTAMENTE los de la 'Cotización vigente' que te paso en el contexto; NUNCA inventes ni des un precio distinto ni recotices (el cliente paga el precio de esa cotización). Sedes, gamas y tarifa mensual: de las herramientas.",
     "Sedes: nómbralas solo por su nombre corto (con `info_sedes`). NUNCA des la dirección exacta, NUNCA pongas mapas, NUNCA menciones al proveedor ('Localiza'). Horarios: solo si la hora que pide el cliente cae fuera del horario de la sede.",
     "Precio por sede: dentro de una misma ciudad el precio SÍ varía según la sede/agencia (cada una maneja sus propios descuentos por disponibilidad). NUNCA digas que el precio es igual en todas las sedes; si el cliente compara sedes, cotiza cada una con la herramienta.",
     "Pago: único medio tarjeta de crédito (Visa/MasterCard/Amex). Alternativa: usar la tarjeta de crédito de un familiar/amigo, pero ese titular debe estar PRESENTE al recoger para firmar el contrato; o que el cliente saque por su cuenta una tarjeta de crédito (incluida una virtual). NO des contactos ni teléfonos de asesores bancarios. NO menciones el filtro/validación de historial crediticio.",
@@ -47,10 +47,14 @@ export async function freeFormSystem(brand: string): Promise<string> {
 
 /** streamText config for a free-form reply: short prompt + the knowledge tools (no booking). */
 export async function freeFormConfig(brand: string) {
-  // Knowledge tools only — booking (crear_reserva) is the orchestrator's job (Etapa 3),
-  // never reachable from the free-form phrasing path.
-  const { crear_reserva: _omitBooking, ...tools } = buildChatTools(brand);
+  // Knowledge tools only. Booking (crear_reserva) is the orchestrator's job (Etapa 3). Quoting
+  // (cotizar) is ALSO the orchestrator's job: the free-form re-cotizing produced a price that
+  // diverged from lastQuote (quoted ≠ booked bug), so it gets the live prices via the prompt
+  // context instead. Drop both tools.
+  const { crear_reserva: _omitBooking, cotizar: _omitQuote, ...tools } =
+    buildChatTools(brand);
   void _omitBooking;
+  void _omitQuote;
   return {
     model: chatModel(),
     system: await freeFormSystem(brand),

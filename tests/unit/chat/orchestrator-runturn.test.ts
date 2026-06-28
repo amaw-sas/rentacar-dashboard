@@ -1401,6 +1401,25 @@ describe("orchestrator runTurn — on-demand (Etapa 4)", () => {
     expect(textOf(chunks).toLowerCase()).toContain("nombre completo"); // then re-asked the gap
   });
 
+  it("(ak) the free-form prompt carries the live quote prices so quoted == booked", async () => {
+    extractSlots.mockResolvedValue({ intent: "pregunta_gama", updates: {} });
+    const { writer } = fakeWriter();
+    await runTurn(writer, {
+      brand: "alquilatucarro",
+      conversationId: "c1",
+      state: quotedState(),
+      userMessage: "¿cuánto vale la gama F?",
+      recentContext: [],
+      now: NOW,
+    });
+    const calls = (
+      streamText as unknown as { mock: { calls: Array<[{ prompt?: string }]> } }
+    ).mock.calls;
+    const prompt = calls.at(-1)?.[0]?.prompt ?? "";
+    expect(prompt).toContain("Cotización vigente"); // live quote injected
+    expect(prompt).toContain("Gama F"); // the actual quoted row (price from lastQuote, not re-cotized)
+  });
+
   it("(g) hablar_asesor without a quote emits a neutral advisor wa.me", async () => {
     extractSlots.mockResolvedValue({ intent: "hablar_asesor", updates: {} });
 

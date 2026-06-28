@@ -138,9 +138,21 @@ export async function runTurn(
   //    (the follow-up lands first), which is the out-of-order nudge bug.
   const freeFormResult = async (guidance?: string) => {
     const cfg = await freeFormConfig(brand);
+    // Feed the LIVE quote so a price the free-form states for any gama matches lastQuote (and
+    // therefore the booking summary). Without it the free-form re-cotized and diverged
+    // (the quoted ≠ booked bug, e.g. Gama LU $3.100.399 said vs $3.316.049 booked).
+    const q = state.lastQuote;
+    const cop = (n: number) => `$${new Intl.NumberFormat("es-CO").format(n)}`;
+    const quoteCtx = q
+      ? `\nCotización vigente (${q.dias} días, todo incluido): ${q.filas
+          .map((f) => `Gama ${f.categoria} (${f.descripcion}) ${cop(f.precioTotal)}`)
+          .join("; ")}. Usa EXACTAMENTE estos precios; no recotices.`
+      : "";
     const prompt = `Datos conocidos del cliente: ${JSON.stringify(
       state.slots,
-    )}\nMensaje actual: "${userMessage}"${guidance ? `\n\n${guidance}` : ""}`;
+    )}${quoteCtx}\nMensaje actual: "${userMessage}"${
+      guidance ? `\n\n${guidance}` : ""
+    }`;
     return streamText({ ...cfg, prompt });
   };
   const freeForm = async (guidance?: string) => {

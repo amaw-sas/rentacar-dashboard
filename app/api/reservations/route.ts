@@ -4,6 +4,7 @@ import {
   type CreateReservationInput,
 } from "@/lib/api/reservation-service";
 import { serviceErrorToResponse } from "@/lib/api/service-error";
+import { getClientIp } from "@/lib/api/reservation-guards";
 
 // Fail fast and cleanly instead of hanging into Vercel's hard 504 (issue #99).
 // PROXY_TIMEOUT_MS (28s) sits below this so createLocalizaReservation aborts and
@@ -53,6 +54,10 @@ export async function POST(request: Request) {
   // proxy. createReservation threads it into createLocalizaReservation.
   const idempotencyKey = request.headers.get("x-idempotency-key");
   if (idempotencyKey) body.idempotency_key = idempotencyKey;
+
+  // Supply the client IP so the service can rate-limit per IP (synthetic-wave
+  // fix). The in-process MCP funnel omits it; per-doc limit + dedup still apply.
+  body.client_ip = getClientIp(request);
 
   try {
     return NextResponse.json(await createReservation(body));

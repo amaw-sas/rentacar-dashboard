@@ -22,6 +22,11 @@ import {
   type AttributionInput,
 } from "@/lib/attribution/derive-channel";
 import { ServiceError } from "@/lib/api/service-error";
+import {
+  loadRateLimitConfig,
+  checkRateLimit,
+  findRecentDuplicate,
+} from "@/lib/api/reservation-guards";
 import type { ReservationStatus } from "@/lib/schemas/reservation";
 
 /**
@@ -65,6 +70,7 @@ export interface CreateReservationInput {
   user?: string;
   attribution?: AttributionInput;
   idempotency_key?: string; // issue #99: forwarded to the proxy to dedupe resubmits
+  client_ip?: string; // set by the public route for per-IP rate limiting; the in-process MCP funnel omits it
   // — extras (affect booking_type / notification_required) —
   total_insurance?: boolean | number;
   extra_driver?: boolean | number;
@@ -118,6 +124,33 @@ export async function createReservation(
   input: CreateReservationInput,
 ): Promise<CreateReservationResult> {
   try {
+    // 0. Anti-abuse guards (synthetic-reservations wave, jun 2026). Run IN THE
+    // SERVICE so BOTH funnels are covered — the public route AND the in-process
+    // MCP/chat path. The admin client is created ONCE here and reused for the
+    // dedup check + insert below. Every guard fails open, so a DB hiccup never
+    // blocks a booking; only a genuine over-limit / duplicate short-circuits.
+    const supabase = createAdminClient();
+    const guardCfg = loadRateLimitConfig();
+
+    const rateChecks = [
+      checkRateLimit(supabase, `resv:doc:${input.identification}`, guardCfg.docPerHour, 3600),
+    ];
+    // Per-IP limit only when the caller supplied an IP (public route). The MCP
+    // funnel omits it — its per-doc limit + dedup still apply.
+    if (input.client_ip) {
+      rateChecks.push(
+        checkRateLimit(supabase, `resv:ip:${input.client_ip}`, guardCfg.ipPerHour, 3600),
+      );
+    }
+    if ((await Promise.all(rateChecks)).some((allowed) => !allowed)) {
+      console.warn(
+        `[reservation] Rate limit hit (ip=${input.client_ip ?? "n/a"} doc=${input.identification})`,
+      );
+      throw new ServiceError(429, {
+        error: "Demasiadas solicitudes. Intenta de nuevo más tarde.",
+      });
+    }
+
     // 1. Resolve pickup location
     const pickupLocation = await resolveLocationByCode(input.pickup_location);
     if (!pickupLocation) {
@@ -161,6 +194,28 @@ export async function createReservation(
       if (!referralId) {
         referralRaw = input.user;
       }
+    }
+
+    // 4b. Reject identical re-submits within the dedup window — BEFORE the
+    // Localiza proxy so a duplicate never creates a real upstream reservation.
+    // Cancelled twins are ignored (re-booking allowed).
+    const duplicate = await findRecentDuplicate(supabase, {
+      customerId,
+      pickupDate: input.pickup_date,
+      returnDate: input.return_date,
+      categoryCode: input.category,
+      franchise: input.franchise,
+      withinSeconds: guardCfg.dedupWindowSeconds,
+    });
+    if (duplicate) {
+      console.warn(
+        `[reservation] Duplicate within ${guardCfg.dedupWindowSeconds}s for customer ${customerId} → ${duplicate.id}`,
+      );
+      throw new ServiceError(409, {
+        error: "Reserva duplicada. Ya existe una reserva idéntica reciente.",
+        reserveCode: duplicate.reservation_code ?? duplicate.id,
+        reservationStatus: duplicate.status,
+      });
     }
 
     // 5. Determine reservation flow
@@ -278,8 +333,7 @@ export async function createReservation(
       toBoolean(input.wash);
     const notificationRequired = hasTotalInsurance || hasExtras || isMonthly;
 
-    // 8. Save reservation to DB
-    const supabase = createAdminClient();
+    // 8. Save reservation to DB (admin client created in step 0 for guards).
 
     // Freeze the booker's identity from the STORED customer row the FK points
     // to (issue #26). Sourced from customer_id, never the raw body, so a #25

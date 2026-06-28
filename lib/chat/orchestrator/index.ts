@@ -209,6 +209,11 @@ export async function runTurn(
         });
     state = applyExtraction(state, ext);
     intent = ext.intent;
+    // TEMP DEBUG (Controller activation): raw flag value + path + resolution. Remove after A/B.
+    const dbg = ext as Partial<{ action: string; gamaCode: string | null }>;
+    console.log(
+      `[ctrl-debug] flag=${JSON.stringify(process.env.CHAT_CONTROLLER)} useController=${useController} intent=${ext.intent} action=${dbg.action ?? "-"} gama=${dbg.gamaCode ?? "-"} committed=${state.slots.gama_elegida ?? "-"}`,
+    );
   } catch (e) {
     console.error("[orchestrator] extract failed", e);
   }

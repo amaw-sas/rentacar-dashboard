@@ -122,6 +122,25 @@ describe("Controller — slot passthrough + context", () => {
     expect(res.updates.tipo_vehiculo).toBe("camioneta");
   });
 
+  it("injects the recently-discussed gamas as the deixis anchor (incl. free-form mentions)", async () => {
+    mockController({ action: "COMMIT_GAMA", gama_code: "F" });
+    // Valeria surfaced C then F in free-form text (never committed); 'esa me sirve' should anchor to F.
+    await runController({
+      todayYMD: "2026-06-27",
+      state: quotedState(),
+      recentContext: [
+        "assistant: La Gama C (económico mecánico) te queda en $300.000.",
+        "user: y tiene maletero grande?",
+        "assistant: te recomiendo la Gama F, SUV automática.",
+      ],
+      userMessage: "esa me sirve",
+    });
+    const prompt = generateObject.mock.calls[0][0].prompt as string;
+    expect(prompt).toContain("Gamas discutidas recientemente");
+    expect(prompt).toContain("C, F"); // order oldest→newest
+    expect(prompt).toContain("La más reciente es F");
+  });
+
   it("feeds the model a context with numbered rows, prices and model names", async () => {
     mockController({ action: "ANSWER", gama_code: null });
     await runController(

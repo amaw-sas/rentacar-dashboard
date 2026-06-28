@@ -63,7 +63,8 @@ const SYSTEM = [
   "- Por posición: 'el primero'/'la primera' = fila 1; 'el segundo' = fila 2; 'el de la mitad'/'el del medio'/'el intermedio' = la fila central por precio; 'el último' = la última.",
   "- Por etiqueta: 'el más económico'/'el más barato' = la fila de menor precio (respeta transmisión/tipo si los pidió); 'la intermedia' = la del medio.",
   "- Por nombre de modelo: usa la lista de modelos de cada fila ('el Picanto'→la gama que lo lista; 'el Sandero'→su gama; 'la Duster'/'el Logan' igual).",
-  "- Por deixis/contexto: 'ese'/'esa'/'ese mismo'/'perfecto esa'/'ese me sirve'/'el blanco'/'el de la foto' = la gama EN FOCO (la última mencionada/preguntada/recomendada en la conversación reciente). Si además dice 'el automático'/'la mecánica'/'la camioneta', usa esa preferencia para desambiguar entre filas.",
+  "- Por deixis/contexto: 'ese'/'esa'/'ese mismo'/'perfecto esa'/'ese me sirve'/'esa me sirve'/'el blanco'/'el de la foto' = la gama EN FOCO. Te doy abajo las 'Gamas discutidas recientemente' (incluye lo que dijo Valeria en texto libre, p. ej. cuando cotizó 'la Gama LU' o 'la Gama CX'): el referente de 'ese/esa' es, por defecto, la MÁS RECIENTE de esa lista. Si el cliente nombró antes una gama específica y nunca la cambió (solo hizo preguntas), prefiere ESA. Si además dice 'el automático'/'la mecánica'/'la camioneta', úsalo para desambiguar.",
+  "  SÉ DECISIVO: si el cliente AFIRMA sobre una gama discutida ('esa me sirve', 'esa está bien', 'resérvamela', 'me quedo con esa', 'listo esa') y hay una gama reciente clara, devuelve COMMIT_GAMA con su código — NO la dejes en null ni pidas que elija de nuevo. Solo deja gama_code=null si de verdad no se ha discutido ninguna gama.",
   "- Por categoría/transmisión: 'la camioneta'/'la SUV'/'un sedán automático' = la fila que cumpla esa clase y caja (la más barata si hay varias).",
   "gama_code SIEMPRE debe ser uno de los códigos de la cotización mostrada; si no puedes resolverla con confianza, pon null (NO inventes un código).",
   "",
@@ -83,6 +84,38 @@ const SYSTEM = [
 ].join("\n");
 
 const COP = new Intl.NumberFormat("es-CO");
+
+/**
+ * Gama codes DISCUSSED in the recent turns, oldest→newest, deduped to last mention. Scans the
+ * raw turn text (incl. Valeria's free-form, which surfaces gamas like "la Gama LU" that were never
+ * committed to state) for "Gama <code>" matching the live quote. This is the deixis anchor: the
+ * referent of a bare "ese/esa me sirve" is normally the most-recent of these — without it the
+ * Controller was too conservative and left the pick unresolved, so the silent default booked C.
+ */
+function recentlyDiscussedGamas(
+  recentContext: string[],
+  userMessage: string,
+  lastQuote: ConversationState["lastQuote"],
+): string[] {
+  if (!lastQuote) return [];
+  const valid = new Map(
+    lastQuote.filas.map((f) => [f.categoria.toLowerCase(), f.categoria]),
+  );
+  const order: string[] = [];
+  const re = /\bgama\s+([a-z0-9]{1,3})\b/gi;
+  for (const line of [...recentContext, `actual: ${userMessage}`]) {
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(line)) !== null) {
+      const code = valid.get(m[1].toLowerCase());
+      if (code) {
+        const i = order.indexOf(code);
+        if (i !== -1) order.splice(i, 1); // keep only the LATEST mention position
+        order.push(code);
+      }
+    }
+  }
+  return order;
+}
 
 /** Build the Controller's context: phase + slots + numbered quote rows (price + models) +
  * focus gama + recent turns + today. This full picture is what the rigid extractor lacked. */
@@ -111,6 +144,18 @@ function buildContext(input: ExtractInput): string {
     );
     if (s.gama_elegida) {
       parts.push(`Gama en foco / elegida hasta ahora: ${s.gama_elegida}.`);
+    }
+    const recent = recentlyDiscussedGamas(
+      recentContext,
+      userMessage,
+      state.lastQuote,
+    );
+    if (recent.length) {
+      parts.push(
+        `Gamas discutidas recientemente (antiguo→reciente): ${recent.join(
+          ", ",
+        )}. La más reciente es ${recent[recent.length - 1]} (referente probable de "ese/esa").`,
+      );
     }
   } else {
     parts.push("Aún no se ha mostrado ninguna cotización.");

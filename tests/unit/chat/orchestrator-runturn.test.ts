@@ -46,7 +46,7 @@ const { buildOnDemandLinks } = vi.hoisted(() => ({ buildOnDemandLinks: vi.fn() }
 vi.mock("@/lib/chat/reserva-link", () => ({ buildOnDemandLinks }));
 
 const { getLocationDirectory } = vi.hoisted(() => ({
-  getLocationDirectory: vi.fn(async () => []),
+  getLocationDirectory: vi.fn(async (): Promise<unknown[]> => []),
 }));
 vi.mock("@/lib/api/location-directory", () => ({ getLocationDirectory }));
 

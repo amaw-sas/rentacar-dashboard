@@ -21,6 +21,7 @@ import {
   type PersistedMessage,
 } from "@/lib/chat/persistence";
 import { hashClientIp } from "@/lib/chat/client-ip";
+import { isDuplicateUserMessage } from "@/lib/chat/input-hygiene";
 import { recordTurnError } from "@/lib/chat/turn-error";
 import { runShadowExtraction } from "@/lib/chat/orchestrator/extract";
 import { runTurn } from "@/lib/chat/orchestrator";
@@ -237,8 +238,20 @@ export async function POST(request: Request) {
     }
   }
 
+  // Input hygiene (P1): drop an exact consecutive duplicate of the last user message —
+  // a network re-send / double submit / WhatsApp relay — BEFORE any side effect, so it
+  // can't fire a second greeting/quote or race the state. Pure decision from `history`
+  // (loaded above, excludes the incoming turn). Gated by CHAT_INPUT_DEDUP; off → no-op.
+  // When true we skip the persist, the shadow extraction, and the turn, and return an
+  // empty stream below (the response still gets the conversation-id + CORS headers).
+  const isDuplicate =
+    process.env.CHAT_INPUT_DEDUP === "on" &&
+    Boolean(conversationId) &&
+    lastUser?.role === "user" &&
+    isDuplicateUserMessage(history ?? [], extractText(lastUser));
+
   // Persist the incoming user message before streaming (best-effort).
-  if (conversationId && lastUser?.role === "user") {
+  if (conversationId && lastUser?.role === "user" && !isDuplicate) {
     appendMessages(conversationId, [
       { role: "user", content: extractText(lastUser), parts: lastUser.parts },
     ]).catch((e) => console.error("[chat] persist user failed", e));
@@ -251,6 +264,7 @@ export async function POST(request: Request) {
   if (
     conversationId &&
     lastUser?.role === "user" &&
+    !isDuplicate &&
     process.env.CHAT_ORCHESTRATOR === "shadow"
   ) {
     const recentContext = (history ?? [])
@@ -305,7 +319,13 @@ export async function POST(request: Request) {
   // failure + a thread marker, then return a clean CORS-clean 500.
   let response: Response;
   try {
-  if (process.env.CHAT_ORCHESTRATOR === "on" && conversationId) {
+  if (isDuplicate) {
+    // Duplicate (P1): emit nothing — no second greeting/quote. Empty UI stream so the
+    // client resolves cleanly; the conversation-id + CORS headers are layered on below.
+    response = createUIMessageStreamResponse({
+      stream: createUIMessageStream({ execute: async () => {} }),
+    });
+  } else if (process.env.CHAT_ORCHESTRATOR === "on" && conversationId) {
     // HYBRID ORCHESTRATOR (Etapa 2): code composes the turn; the LLM only extracts
     // slots + phrases off-funnel replies. The fixed blocks (greeting, requisitos,
     // quote table) are code-emitted once → repetition is structurally impossible.

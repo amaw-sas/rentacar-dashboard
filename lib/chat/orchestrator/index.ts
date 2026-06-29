@@ -17,7 +17,8 @@ import {
 } from "./slots";
 import { findGama, getQuoteTable, type QuoteRow } from "./quote-service";
 import { getGamaCards } from "./gama-cards";
-import { freeFormConfig } from "./prompts";
+import { freeFormConfig, freeFormSedeContext } from "./prompts";
+import { runInfoSedes } from "@/lib/chat/knowledge-tools";
 import {
   groundSlots,
   hasBookingHours,
@@ -175,9 +176,25 @@ export async function runTurn(
           .map((f) => `Gama ${f.categoria} (${f.descripcion}) ${cop(f.precioTotal)}`)
           .join("; ")}. Usa EXACTAMENTE estos precios; no recotices.`
       : "";
+    // Inject the KNOWN city's sedes (P2): when the city is already a slot, resolve the sedes
+    // deterministically (one code call) and hand them to the free-form so it names them from
+    // context instead of re-calling info_sedes 4× for a city the state already has. Best-effort
+    // — on failure we fall back to the (still available) tool. Gated by CHAT_FREEFORM_STRICT.
+    let sedeCtx = "";
+    if (process.env.CHAT_FREEFORM_STRICT === "on" && state.slots.ciudad) {
+      try {
+        const r = await runInfoSedes({
+          ciudad: state.slots.ciudad,
+          sede: state.slots.sede,
+        });
+        sedeCtx = freeFormSedeContext(state.slots.ciudad, r);
+      } catch (e) {
+        console.error("[orchestrator] free-form sede inject failed", e);
+      }
+    }
     const prompt = `Datos conocidos del cliente: ${JSON.stringify(
       state.slots,
-    )}${quoteCtx}\nMensaje actual: "${userMessage}"${
+    )}${quoteCtx}${sedeCtx}\nMensaje actual: "${userMessage}"${
       guidance ? `\n\n${guidance}` : ""
     }`;
     return streamText({ ...cfg, prompt });

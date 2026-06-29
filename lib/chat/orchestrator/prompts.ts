@@ -45,6 +45,37 @@ export async function freeFormSystem(brand: string): Promise<string> {
   ].join("\n");
 }
 
+/**
+ * Context line that injects the KNOWN city's sedes into the free-form prompt (P2 ·
+ * CHAT_FREEFORM_STRICT), so the model names them from memory instead of re-calling
+ * `info_sedes` 4× for a city the state already has. Pure: takes the raw `runInfoSedes`
+ * result and returns "" when it carries an error or no sedes (best-effort → the tool stays).
+ */
+export function freeFormSedeContext(
+  ciudad: string,
+  infoSedesResult: unknown,
+): string {
+  if (!infoSedesResult || typeof infoSedesResult !== "object") return "";
+  const sedes = (
+    infoSedesResult as { sedes?: Array<{ nombre?: string; horario?: string }> }
+  ).sedes;
+  if (!Array.isArray(sedes) || sedes.length === 0) return "";
+  const list = sedes
+    .map((s) => (s.horario ? `${s.nombre} (${s.horario})` : `${s.nombre}`))
+    .join("; ");
+  return `\nSedes de ${ciudad} (ya resueltas, NO uses info_sedes para esta ciudad): ${list}.`;
+}
+
+/** Softer `info_sedes` description used in STRICT mode: the current city's sedes are already
+ * in the prompt, so the tool is only for a DIFFERENT city. Replaces the default "LLÁMALA
+ * SIEMPRE" that otherwise forces a redundant re-call for the already-known city. */
+const INFO_SEDES_STRICT_DESCRIPTION =
+  "Devuelve las sedes (puntos de recogida) de una ciudad: nombre de referencia y " +
+  "horario (NO entrega dirección exacta ni mapa). Las sedes de la ciudad ACTUAL ya " +
+  "están en tu contexto: usa esta herramienta SOLO si necesitas sedes de OTRA ciudad " +
+  "distinta a la de los datos conocidos. Si la ciudad no existe, trae la lista de " +
+  "ciudades válidas.";
+
 /** streamText config for a free-form reply: short prompt + the knowledge tools (no booking). */
 export async function freeFormConfig(brand: string) {
   // Knowledge tools only. Booking (crear_reserva) is the orchestrator's job (Etapa 3). Quoting
@@ -55,11 +86,23 @@ export async function freeFormConfig(brand: string) {
     buildChatTools(brand);
   void _omitBooking;
   void _omitQuote;
+
+  // STRICT (P2): the known city's sedes are injected into the prompt deterministically, so
+  // soften info_sedes to "only for a different city" and cap the tool-step budget — together
+  // these stop the redundant info_sedes loop for the already-known city. Off → unchanged.
+  const strict = process.env.CHAT_FREEFORM_STRICT === "on";
+  if (strict && tools.info_sedes) {
+    tools.info_sedes = {
+      ...tools.info_sedes,
+      description: INFO_SEDES_STRICT_DESCRIPTION,
+    };
+  }
+
   return {
     model: chatModel(),
     system: await freeFormSystem(brand),
     tools,
-    stopWhen: stepCountIs(4),
+    stopWhen: stepCountIs(strict ? 2 : 4),
     providerOptions: chatProviderOptions(),
   };
 }

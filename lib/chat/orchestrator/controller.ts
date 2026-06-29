@@ -75,6 +75,7 @@ const SYSTEM = [
   "Distingue COMMIT_GAMA de BOOK: COMMIT_GAMA es escoger qué carro; BOOK es dar el sí final ya con gama y datos.",
   "",
   "EXTRACCIÓN DE SLOTS (en updates):",
+  "- ciudad vs sede: `ciudad` es la CIUDAD de recogida; `sede` es SOLO el punto/sucursal dentro de esa ciudad (ej. 'aeropuerto', 'norte', 'chipichape', 'sur'), NUNCA una ciudad. CRÍTICO: si el cliente cambia el lugar de recogida a OTRA ciudad —o nombra un punto que está en otra ciudad (típico cuando la ciudad pedida no tiene sede y elige una cercana)— ACTUALIZA `ciudad` a esa nueva ciudad, AUNQUE ya hubiera una ciudad conocida (es algo nuevo, no lo dejes en null). ciudad y sede deben quedar coherentes. Ejemplo: si ya se conocía ciudad='tulua' y el cliente dice 'en palmira aeropuerto', devuelve ciudad='palmira' y sede='aeropuerto' (NUNCA dejes ciudad='tulua').",
   "- Fechas relativas ('mañana', 'el 27', 'este fin de semana') → YYYY-MM-DD usando la fecha de hoy dada. Horas en HH:mm 24h ('2pm'→'14:00').",
   "- transmision: 'mecanico' (mecánico/manual/sincrónico) o 'automatico'; si no la menciona, null.",
   "- tipo_vehiculo: 'camioneta' (camioneta/SUV/4x4/campero/todoterreno o 6+ personas/7 puestos) o 'auto' (sedán/hatchback/carro pequeño); si no, null.",

@@ -1,6 +1,11 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { ConversationState } from "@/lib/chat/orchestrator/slots";
+import {
+  withSupabaseRetry,
+  withTimeout,
+  CHAT_DB_READ_TIMEOUT_MS,
+} from "@/lib/chat/db-resilience";
 
 /**
  * Chatbot persistence (V1). Writes anonymous web-chat conversations to Supabase
@@ -50,11 +55,16 @@ export async function countConversationsByIp(
   sinceISO: string,
   client: SupabaseClient = createAdminClient(),
 ): Promise<number> {
-  const { count, error } = await client
-    .from("chat_conversations")
-    .select("id", { count: "exact", head: true })
-    .eq("ip_hash", ipHash)
-    .gte("created_at", sinceISO);
+  const { count, error } = await withTimeout(
+    () =>
+      client
+        .from("chat_conversations")
+        .select("id", { count: "exact", head: true })
+        .eq("ip_hash", ipHash)
+        .gte("created_at", sinceISO),
+    CHAT_DB_READ_TIMEOUT_MS,
+    "countConversationsByIp",
+  );
 
   if (error) throw error;
   return count ?? 0;
@@ -75,7 +85,12 @@ export async function appendMessages(
     parts: m.parts ?? null,
   }));
 
-  const { error } = await client.from("chat_messages").insert(rows);
+  // Retry transient socket failures: a dropped keep-alive otherwise loses the
+  // assistant reply (or the turn-error marker) silently. Real PostgREST errors
+  // (constraint/RLS) are NOT retried — they surface on the first attempt.
+  const { error } = await withSupabaseRetry(() =>
+    client.from("chat_messages").insert(rows),
+  );
   if (error) throw error;
 }
 
@@ -91,12 +106,20 @@ export async function loadMessages(
   conversationId: string,
   client: SupabaseClient = createAdminClient(),
 ): Promise<PersistedMessage[]> {
-  const { data, error } = await client
-    .from("chat_messages")
-    .select("role, content, parts, created_at")
-    .eq("conversation_id", conversationId)
-    .order("created_at", { ascending: true })
-    .order("id", { ascending: true });
+  // Pre-stream read → bounded by a deadline so a dead socket fails fast and the
+  // route degrades to the request messages, instead of hanging the turn (and
+  // stalling the response to the browser → client "network error").
+  const { data, error } = await withTimeout(
+    () =>
+      client
+        .from("chat_messages")
+        .select("role, content, parts, created_at")
+        .eq("conversation_id", conversationId)
+        .order("created_at", { ascending: true })
+        .order("id", { ascending: true }),
+    CHAT_DB_READ_TIMEOUT_MS,
+    "loadMessages",
+  );
 
   if (error) throw error;
   return (data ?? []) as PersistedMessage[];
@@ -111,11 +134,16 @@ export async function loadConversationState(
   conversationId: string,
   client: SupabaseClient = createAdminClient(),
 ): Promise<ConversationState | null> {
-  const { data, error } = await client
-    .from("chat_conversations")
-    .select("state")
-    .eq("id", conversationId)
-    .single();
+  const { data, error } = await withTimeout(
+    () =>
+      client
+        .from("chat_conversations")
+        .select("state")
+        .eq("id", conversationId)
+        .single(),
+    CHAT_DB_READ_TIMEOUT_MS,
+    "loadConversationState",
+  );
 
   if (error || !data?.state) return null;
   return data.state as ConversationState;
@@ -148,11 +176,16 @@ export async function countRecentMessages(
   sinceISO: string,
   client: SupabaseClient = createAdminClient(),
 ): Promise<number> {
-  const { count, error } = await client
-    .from("chat_messages")
-    .select("id", { count: "exact", head: true })
-    .eq("conversation_id", conversationId)
-    .gte("created_at", sinceISO);
+  const { count, error } = await withTimeout(
+    () =>
+      client
+        .from("chat_messages")
+        .select("id", { count: "exact", head: true })
+        .eq("conversation_id", conversationId)
+        .gte("created_at", sinceISO),
+    CHAT_DB_READ_TIMEOUT_MS,
+    "countRecentMessages",
+  );
 
   if (error) throw error;
   return count ?? 0;

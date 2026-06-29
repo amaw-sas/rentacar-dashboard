@@ -1,5 +1,10 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createAdminClient } from "@/lib/supabase/admin";
+import {
+  withSupabaseRetry,
+  withTimeout,
+  CHAT_DB_READ_TIMEOUT_MS,
+} from "@/lib/chat/db-resilience";
 
 /**
  * Tool-event telemetry for the chat (Inc. 4 "Escudo"). Every `cotizar` /
@@ -35,15 +40,19 @@ export interface ToolEvent {
 export async function recordToolEvent(event: ToolEvent): Promise<void> {
   try {
     const client = createAdminClient();
-    const { error } = await client.from("chat_tool_events").insert({
-      tool: event.tool,
-      ok: event.ok,
-      error_code: event.errorCode ?? null,
-      brand: event.brand ?? null,
-      conversation_id: event.conversationId ?? null,
-      ip_hash: event.ipHash ?? null,
-      latency_ms: event.latencyMs ?? null,
-    });
+    // Retry transient socket failures so a dropped keep-alive doesn't silently
+    // drop telemetry (incl. the turn-error count that powers the health banner).
+    const { error } = await withSupabaseRetry(() =>
+      client.from("chat_tool_events").insert({
+        tool: event.tool,
+        ok: event.ok,
+        error_code: event.errorCode ?? null,
+        brand: event.brand ?? null,
+        conversation_id: event.conversationId ?? null,
+        ip_hash: event.ipHash ?? null,
+        latency_ms: event.latencyMs ?? null,
+      }),
+    );
     if (error) console.error("[chat] recordToolEvent insert failed", error);
   } catch (e) {
     console.error("[chat] recordToolEvent failed", e);
@@ -56,12 +65,17 @@ export async function countSuccessfulBookingsForConversation(
   client: SupabaseClient = createAdminClient(),
 ): Promise<number> {
   try {
-    const { count, error } = await client
-      .from("chat_tool_events")
-      .select("id", { count: "exact", head: true })
-      .eq("conversation_id", conversationId)
-      .eq("tool", "crear_reserva")
-      .eq("ok", true);
+    const { count, error } = await withTimeout(
+      () =>
+        client
+          .from("chat_tool_events")
+          .select("id", { count: "exact", head: true })
+          .eq("conversation_id", conversationId)
+          .eq("tool", "crear_reserva")
+          .eq("ok", true),
+      CHAT_DB_READ_TIMEOUT_MS,
+      "countSuccessfulBookingsForConversation",
+    );
     if (error) throw error;
     return count ?? 0;
   } catch (e) {
@@ -77,13 +91,18 @@ export async function countSuccessfulBookingsForIp(
   client: SupabaseClient = createAdminClient(),
 ): Promise<number> {
   try {
-    const { count, error } = await client
-      .from("chat_tool_events")
-      .select("id", { count: "exact", head: true })
-      .eq("ip_hash", ipHash)
-      .eq("tool", "crear_reserva")
-      .eq("ok", true)
-      .gte("created_at", sinceISO);
+    const { count, error } = await withTimeout(
+      () =>
+        client
+          .from("chat_tool_events")
+          .select("id", { count: "exact", head: true })
+          .eq("ip_hash", ipHash)
+          .eq("tool", "crear_reserva")
+          .eq("ok", true)
+          .gte("created_at", sinceISO),
+      CHAT_DB_READ_TIMEOUT_MS,
+      "countSuccessfulBookingsForIp",
+    );
     if (error) throw error;
     return count ?? 0;
   } catch (e) {

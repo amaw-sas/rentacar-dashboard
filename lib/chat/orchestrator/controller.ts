@@ -104,7 +104,15 @@ function recentlyDiscussedGamas(
   );
   const order: string[] = [];
   const re = /\bgama\s+([a-z0-9]{1,3})\b/gi;
-  for (const line of [...recentContext, `actual: ${userMessage}`]) {
+  // R1 · Bug 1: by default the anchor scans EVERY recent line incl. the bot's own
+  // recommendation ("la Gama GC"), which then becomes the deixis target and books the wrong
+  // gama. With CHAT_GAMA_INTEGRITY on, anchor only on what the CLIENT said (lines prefixed
+  // `user:`) so "esa" refers to the customer's mention, not Valeria's suggestion.
+  const lines =
+    process.env.CHAT_GAMA_INTEGRITY === "on"
+      ? recentContext.filter((l) => /^user:/i.test(l.trim()))
+      : recentContext;
+  for (const line of [...lines, `actual: ${userMessage}`]) {
     let m: RegExpExecArray | null;
     while ((m = re.exec(line)) !== null) {
       const code = valid.get(m[1].toLowerCase());

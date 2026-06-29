@@ -36,6 +36,9 @@ import {
   gamaRecommendationLine,
   greetingBlock,
   horaExtraLine,
+  hourChangePriceLine,
+  explicitGamaCode,
+  isCamioneta,
   multiVehicleNoticeLine,
   unsupportedVehicleLine,
   nextCustomerField,
@@ -270,6 +273,32 @@ export async function runTurn(
     state = { ...state, slots: { ...state.slots, gama_elegida: undefined } };
   }
 
+  // Explicit gama override (R1): when the customer names a gama by code ("la gama c") AND it's a
+  // CHOICE (not a question), that wins outright over the LLM's deixis resolution — which got
+  // contaminated by the bot's own "Gama GC" recommendation and booked the wrong product. Also
+  // reconcile tipo_vehiculo to the chosen class so a stale "camioneta" stops steering the
+  // recommendation back to GC. Gated by CHAT_GAMA_INTEGRITY; off → unchanged.
+  if (process.env.CHAT_GAMA_INTEGRITY === "on" && state.lastQuote) {
+    const isChoice =
+      intent === "elige_gama" ||
+      intent === "confirma_reserva" ||
+      isAffirmative(userMessage);
+    if (isChoice) {
+      const code = explicitGamaCode(userMessage, state.lastQuote);
+      const row = code ? findGama(state.lastQuote, code) : undefined;
+      if (row && row.categoria !== state.slots.gama_elegida) {
+        state = {
+          ...state,
+          slots: {
+            ...state.slots,
+            gama_elegida: row.categoria,
+            tipo_vehiculo: isCamioneta(row.descripcion) ? "camioneta" : "auto",
+          },
+        };
+      }
+    }
+  }
+
   // 2. Greeting — code, once.
   if (!state.flags.greeted) {
     writeText(greetingBlock(brand, now));
@@ -406,6 +435,31 @@ export async function runTurn(
     if (qr.ok && prevQuote && quotesPriceEqual(prevQuote, qr.table)) {
       // Same prices for this sede → DON'T re-paste the table; refresh the blobs and keep
       // the booking funnel moving (advanceBooking re-asks the current phase's question).
+      state = {
+        ...state,
+        lastQuote: qr.table,
+        flags: {
+          ...state.flags,
+          last_quote_signature: sig,
+          last_quote_core_signature: coreSig,
+          last_attempt_signature: sig,
+        },
+      };
+      state = await continueBooking();
+    } else if (
+      qr.ok &&
+      process.env.CHAT_GAMA_INTEGRITY === "on" &&
+      prevQuote &&
+      prevQuote.sede === qr.table.sede &&
+      state.slots.gama_elegida &&
+      findGama(qr.table, state.slots.gama_elegida)
+    ) {
+      // HOUR-only change that moved the price (R1 · Bug 3): the sede is unchanged, so this is
+      // NOT a sede switch — an hour crossed into a different day-count. KEEP the chosen gama,
+      // refresh the blobs, and explain the new total in one line instead of re-pasting the whole
+      // table and dropping the pick (the repetition + lost-gama bug that re-defaulted to GC).
+      const row = findGama(qr.table, state.slots.gama_elegida)!;
+      writeText(hourChangePriceLine(row, qr.table.dias));
       state = {
         ...state,
         lastQuote: qr.table,

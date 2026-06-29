@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // Mock the model call so these stay unit-scoped. The Controller's VALUE-ADD that we can test
 // deterministically is the commit gate + context building; real reference resolution is the
@@ -61,6 +61,7 @@ function mockController(obj: {
 }
 
 beforeEach(() => generateObject.mockReset());
+afterEach(() => delete process.env.CHAT_GAMA_INTEGRITY);
 
 describe("Controller — commit gate (the wrong-gama fix)", () => {
   it("COMMIT_GAMA with a valid resolved code SETS gama_elegida", async () => {
@@ -139,6 +140,24 @@ describe("Controller — slot passthrough + context", () => {
     expect(prompt).toContain("Gamas discutidas recientemente");
     expect(prompt).toContain("C, F"); // order oldest→newest
     expect(prompt).toContain("La más reciente es F");
+  });
+
+  it("with CHAT_GAMA_INTEGRITY on, the anchor ignores the bot's own gama mentions", async () => {
+    process.env.CHAT_GAMA_INTEGRITY = "on";
+    mockController({ action: "ANSWER", gama_code: null });
+    await runController({
+      todayYMD: "2026-06-27",
+      state: quotedState(),
+      recentContext: [
+        "assistant: te recomiendo la Gama F, SUV automática.",
+        "user: me interesa la gama c",
+      ],
+      userMessage: "esa me sirve",
+    });
+    const prompt = generateObject.mock.calls[0][0].prompt as string;
+    // Anchored to the CLIENT's mention (C), NOT the bot's recommended F.
+    expect(prompt).toContain("La más reciente es C");
+    expect(prompt).not.toContain("La más reciente es F");
   });
 
   it("feeds the model a context with numbered rows, prices and model names", async () => {

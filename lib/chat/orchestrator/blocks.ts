@@ -242,7 +242,7 @@ export function askHoursBlock(): string {
 }
 
 /** Camioneta/SUV gamas (vs cars), told apart by the words Localiza puts in the descripción. */
-function isCamioneta(descripcion: string): boolean {
+export function isCamioneta(descripcion: string): boolean {
   return /camioneta|suv|4\s?x\s?4|campero|todoterreno/i.test(descripcion);
 }
 
@@ -308,6 +308,46 @@ export function gamaByLabel(
     return rows.length ? rows[Math.floor((rows.length - 1) / 2)] : null;
   }
   return null;
+}
+
+/**
+ * The gama code the customer named EXPLICITLY by code in this message ("gama c", "la gama c"),
+ * validated against the shown quote — or null. Only the strong "gama X" pattern (R1 · gama
+ * integrity): a bare "la c" is too ambiguous (false positives like "la cotización"). Used to
+ * let an explicit pick deterministically OVERRIDE the LLM's deixis resolution, which contaminated
+ * with the bot's own recommendation (booked GC when the customer said "gama c").
+ */
+export function explicitGamaCode(
+  message: string,
+  table: QuoteTable,
+): string | null {
+  const valid = new Map(
+    table.filas.map((f) => [f.categoria.toLowerCase(), f.categoria]),
+  );
+  const re = /\bgama\s+([a-z0-9]{1,3})\b/gi;
+  let last: string | null = null;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(message)) !== null) {
+    const code = valid.get(m[1].toLowerCase());
+    if (code) last = code; // last explicit, valid mention wins within the message
+  }
+  return last;
+}
+
+/**
+ * One-line explanation when a pickup/return HOUR change moves the quote into a different
+ * day-count (R1 · Bug 3): keep the chosen gama and tell the customer the new total instead of
+ * silently re-pasting the whole table and dropping their pick.
+ */
+export function hourChangePriceLine(
+  row: QuoteTable["filas"][number],
+  dias: number,
+): string {
+  return (
+    `Con esas horas el alquiler queda en ${dias} día${dias === 1 ? "" : "s"}: ` +
+    `tu Gama ${row.categoria} (${row.descripcion}) total **$${COP.format(row.precioTotal)}** ` +
+    `(todo incluido). Si te sirve, seguimos.`
+  );
 }
 
 export function gamaRecommendationLine(

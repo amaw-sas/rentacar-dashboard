@@ -1584,6 +1584,123 @@ describe("orchestrator runTurn — slot grounding (CHAT_SLOT_GROUNDING)", () => 
 });
 
 // ---------------------------------------------------------------------------
+// Gama integrity (R1 · CHAT_GAMA_INTEGRITY): an explicit "gama X" choice overrides the LLM's
+// resolution; an hour-only re-quote keeps the chosen gama instead of wiping it.
+// ---------------------------------------------------------------------------
+
+describe("orchestrator runTurn — gama integrity (CHAT_GAMA_INTEGRITY)", () => {
+  beforeEach(() => {
+    process.env.CHAT_GAMA_INTEGRITY = "on";
+  });
+  afterEach(() => {
+    delete process.env.CHAT_GAMA_INTEGRITY;
+  });
+
+  it("overrides a mis-resolved gama when the customer names one explicitly", async () => {
+    extractSlots.mockResolvedValue({ intent: "elige_gama", updates: {} });
+    const { chunks, writer } = fakeWriter();
+    await runTurn(writer, {
+      brand: "alquilatucarro",
+      conversationId: "c1",
+      state: quotedState({
+        slots: {
+          ciudad: "bogota",
+          fecha_recogida: "2026-07-01",
+          fecha_devolucion: "2026-07-04",
+          gama_elegida: "F", // the LLM had committed F (the "SUV")
+          tipo_vehiculo: "camioneta",
+          cliente: {},
+        },
+      }),
+      userMessage: "me gusta la gama c",
+      recentContext: [],
+      now: NOW,
+    });
+    void chunks;
+    expect(lastSaved().slots.gama_elegida).toBe("C");
+    // tipo reconciled to the chosen class so the recommendation stops pushing a camioneta.
+    expect(lastSaved().slots.tipo_vehiculo).toBe("auto");
+  });
+
+  it("does NOT override on a question about a gama (not a choice)", async () => {
+    extractSlots.mockResolvedValue({ intent: "pregunta_gama", updates: {} });
+    const { chunks, writer } = fakeWriter();
+    await runTurn(writer, {
+      brand: "alquilatucarro",
+      conversationId: "c1",
+      state: quotedState({
+        slots: {
+          ciudad: "bogota",
+          fecha_recogida: "2026-07-01",
+          fecha_devolucion: "2026-07-04",
+          gama_elegida: "F",
+          cliente: {},
+        },
+      }),
+      userMessage: "¿cuánto vale la gama c?",
+      recentContext: [],
+      now: NOW,
+    });
+    void chunks;
+    expect(lastSaved().slots.gama_elegida).toBe("F"); // unchanged — it was only a question
+  });
+
+  it("on an hour-only re-quote that moves the price, keeps the gama and explains (no re-paste)", async () => {
+    extractSlots.mockResolvedValue({
+      intent: "cotizar",
+      updates: { hora_recogida: "06:00", hora_devolucion: "20:00" },
+    });
+    // Re-quote: same sede, different total + day-count (the hour crossed a billing day).
+    getQuoteTable.mockResolvedValue({
+      ok: true,
+      table: {
+        sede: "AABOG01",
+        dias: 6,
+        filas: [
+          { categoria: "C", descripcion: "Económico", dias: 6, precioTotal: 1043377, horasExtra: 0, precioHoraExtra: 0, quote: "blob-c2" },
+          { categoria: "F", descripcion: "SUV", dias: 6, precioTotal: 1500000, horasExtra: 0, precioHoraExtra: 0, quote: "blob-f2" },
+        ],
+      },
+    });
+    const state: ConversationState = {
+      phase: "quoted",
+      slots: {
+        ciudad: "bogota",
+        fecha_recogida: "2026-07-01",
+        fecha_devolucion: "2026-07-04",
+        hora_recogida: "10:00",
+        hora_devolucion: "10:00",
+        gama_elegida: "C",
+        cliente: {},
+      },
+      lastQuote: QUOTE_TABLE, // sede AABOG01
+      flags: {
+        greeted: true,
+        requisitos_shown: true,
+        quote_shown: true,
+        last_quote_signature: "bogota||2026-07-01|2026-07-04|10:00|10:00",
+        last_quote_core_signature: "bogota|2026-07-01|2026-07-04",
+        summary_shown: false,
+      },
+    };
+    const { chunks, writer } = fakeWriter();
+    await runTurn(writer, {
+      brand: "alquilatucarro",
+      conversationId: "c1",
+      state,
+      userMessage: "recojo a las 6am y devuelvo a las 8pm",
+      recentContext: [],
+      now: NOW,
+    });
+
+    // Kept the pick, did NOT re-paste the whole table, explained the new total.
+    expect(lastSaved().slots.gama_elegida).toBe("C");
+    expect(dataParts(chunks, "data-quoteTable")).toHaveLength(0);
+    expect(textOf(chunks)).toContain("6 días");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Proactive self-serve link (P3 · CHAT_SELFSERVE_LINK). On a deferral objection AFTER a
 // quote, offer the web deep-link + a shareable WhatsApp quote, once. buildSelfServeLinks is
 // mocked (its real output is pinned in reserva-link.test.ts); here we test the FSM wiring.

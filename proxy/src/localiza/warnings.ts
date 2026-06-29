@@ -15,7 +15,17 @@ interface WarningEntry {
   httpStatus?: number;
 }
 
+// Unmapped warnings are genuinely unexpected (a ShortText we don't recognize) →
+// 500 so they stay visible as "needs attention / grow the map", distinct from the
+// known business validations below.
 const DEFAULT_HTTP_STATUS = 500;
+// Mapped Localiza warnings are user-input business validations (past date, hour out
+// of schedule, no availability, same hour, holiday, cancelled): the request was
+// well-formed but can't be processed → 422 Unprocessable Entity, NOT 500. Returning
+// 500 for these inflated the error rate and masked real outages. The structured body
+// (error/message/shortText) is unchanged, so funnels — which key off the `error`
+// code, never the status — render the same toast.
+const BUSINESS_HTTP_STATUS = 422;
 
 export const LOCALIZA_WARNING_MAP: Record<string, WarningEntry> = {
   LLNRRE002: {
@@ -184,7 +194,8 @@ export function buildLocalizaWarning(
     {
       code: entry.code,
       message: entry.message,
-      httpStatus: entry.httpStatus ?? DEFAULT_HTTP_STATUS,
+      // Known business validation → 422 by default (an entry may still pin its own).
+      httpStatus: entry.httpStatus ?? BUSINESS_HTTP_STATUS,
     },
     shortText,
   );

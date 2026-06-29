@@ -161,7 +161,8 @@ describe("extractAvailability — defensive parsing", () => {
       const err = e as LocalizaWarningError;
       expect(err.code).toBe("out_of_schedule_return_date_error");
       expect(err.shortText).toBe("LLNRAG017");
-      expect(err.httpStatus).toBe(500);
+      // Business validation → 422 (Unprocessable Entity), not 500.
+      expect(err.httpStatus).toBe(422);
     }
   });
 

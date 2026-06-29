@@ -82,11 +82,24 @@ export function ChatThread({ messages }: { messages: ConversationMessage[] }) {
       </p>
     );
   }
+  // Kill-proof failed-turn signal: the user message is persisted BEFORE the reply
+  // streams, so a turn that crashed/timed out (even a hard function kill that no
+  // try/catch can catch) leaves the last message as the customer's with no answer.
+  // This catches what recordTurnError can't (e.g. a 90s timeout), without any extra
+  // write — it's derived from the messages already on screen.
+  const last = messages[messages.length - 1];
+  const botDidNotReply = last.role === "user";
   return (
     <div className="space-y-4">
       {messages.map((m) => (
         <MessageBubble key={m.id} message={m} />
       ))}
+      {botDidNotReply && (
+        <p className="text-sm text-destructive">
+          ⚠️ El bot no respondió a este último mensaje (el turno falló: se cayó o
+          expiró). Revisa los Runtime Logs de Vercel para el detalle.
+        </p>
+      )}
     </div>
   );
 }

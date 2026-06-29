@@ -361,7 +361,10 @@ export async function POST(request: Request) {
     });
   }
   } catch (e) {
-    void recordTurnError({ error: e, conversationId, ipHash, brand });
+    // AWAIT: the function freezes once we return below, so the error must be
+    // recorded BEFORE the return or it never flushes (the gap that left "Que paso"
+    // with no trace). recordTurnError never throws.
+    await recordTurnError({ error: e, conversationId, ipHash, brand });
     return jsonError(
       "Tuvimos un problema procesando tu mensaje. Intenta de nuevo.",
       500,

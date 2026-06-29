@@ -28,21 +28,32 @@ export async function recordTurnError(params: {
   const message = error instanceof Error ? error.message : String(error);
   console.error("[chat] turn failed", error);
 
-  // Telemetry (fire-and-forget; recordToolEvent already swallows its own errors).
-  void recordToolEvent({
-    tool: "turn",
-    ok: false,
-    errorCode: message.slice(0, 300),
-    brand: brand ?? null,
-    conversationId: conversationId ?? null,
-    ipHash: ipHash ?? null,
-  });
+  // AWAIT both writes — do NOT fire-and-forget. The outer-catch caller returns a
+  // non-streamed response right after; on Vercel the function FREEZES once it
+  // returns, so an unawaited write never flushes (the bug that left a failed turn
+  // with no trace). The caller awaits this so the writes complete first. Each write
+  // is guarded so a failure in one never blocks the other, and this never throws.
+  try {
+    await recordToolEvent({
+      tool: "turn",
+      ok: false,
+      errorCode: message.slice(0, 300),
+      brand: brand ?? null,
+      conversationId: conversationId ?? null,
+      ipHash: ipHash ?? null,
+    });
+  } catch (e) {
+    console.error("[chat] recordTurnError telemetry failed", e);
+  }
 
-  // Operator-visible marker in the thread. Fire-and-forget: a persist failure must
-  // not throw on top of the turn failure.
+  // Operator-visible marker in the thread.
   if (conversationId) {
-    appendMessages(conversationId, [
-      { role: "system", content: `⚠️ Error del turno: ${message}`, parts: null },
-    ]).catch((e) => console.error("[chat] persist turn-error failed", e));
+    try {
+      await appendMessages(conversationId, [
+        { role: "system", content: `⚠️ Error del turno: ${message}`, parts: null },
+      ]);
+    } catch (e) {
+      console.error("[chat] persist turn-error failed", e);
+    }
   }
 }

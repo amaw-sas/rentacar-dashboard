@@ -71,6 +71,36 @@ export function aggregateToolEvents(
   });
 }
 
+/**
+ * Count turn-level failures (tool='turn', ok=false) over the trailing window. These
+ * are whole-turn crashes/timeouts recorded by lib/chat/turn-error.ts — surfaced as a
+ * raw COUNT, not a fail-rate, because only failures are recorded (no ok=true 'turn'
+ * rows exist, so a rate would always be 100%). Fails OPEN to 0 so a stats hiccup or a
+ * missing migration never breaks the conversations page.
+ */
+export async function getChatTurnErrorCount(): Promise<number> {
+  try {
+    const supabase = await createClient();
+    const sinceISO = new Date(
+      Date.now() - HEALTH_WINDOW_HOURS * 60 * 60 * 1000,
+    ).toISOString();
+    const { count, error } = await supabase
+      .from("chat_tool_events")
+      .select("id", { count: "exact", head: true })
+      .eq("tool", "turn")
+      .eq("ok", false)
+      .gte("created_at", sinceISO);
+    if (error) throw error;
+    return count ?? 0;
+  } catch (e) {
+    console.warn(
+      "getChatTurnErrorCount failed:",
+      e instanceof Error ? e.message : e,
+    );
+    return 0;
+  }
+}
+
 /** Per-tool health over the trailing window. Returns only the alerting tools. */
 export async function getChatToolHealth(): Promise<ToolHealth[]> {
   try {

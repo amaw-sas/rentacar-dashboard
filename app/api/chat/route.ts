@@ -21,6 +21,7 @@ import {
   type PersistedMessage,
 } from "@/lib/chat/persistence";
 import { hashClientIp } from "@/lib/chat/client-ip";
+import { recordTurnError } from "@/lib/chat/turn-error";
 import { runShadowExtraction } from "@/lib/chat/orchestrator/extract";
 import { runTurn } from "@/lib/chat/orchestrator";
 import { initialState } from "@/lib/chat/orchestrator/slots";
@@ -109,7 +110,11 @@ function jsonError(message: string, status: number) {
  * are never persisted today — drop them defensively (UIMessage has no tool role).
  */
 function toUIMessage(row: PersistedMessage): Omit<UIMessage, "id"> | null {
-  if (row.role !== "user" && row.role !== "assistant" && row.role !== "system") {
+  // Only user/assistant turns reload into the model context. `tool` rows are never
+  // persisted; `system` rows are operator-facing turn-error markers (turn-error.ts)
+  // and must NEVER re-enter the prompt — dropping them here keeps a persisted error
+  // marker from polluting the next turn's context.
+  if (row.role !== "user" && row.role !== "assistant") {
     return null;
   }
   const parts = Array.isArray(row.parts)
@@ -249,6 +254,8 @@ export async function POST(request: Request) {
     process.env.CHAT_ORCHESTRATOR === "shadow"
   ) {
     const recentContext = (history ?? [])
+      // Drop operator-facing turn-error markers (role 'system') from the context.
+      .filter((m) => m.role !== "system")
       .slice(-6)
       .map((m) => `${m.role}: ${typeof m.content === "string" ? m.content : ""}`);
     runShadowExtraction({
@@ -292,7 +299,12 @@ export async function POST(request: Request) {
     );
   };
 
+  // Build the streamed response. Any throw here (knowledge build, model/gateway
+  // init, stream setup) used to escape uncaught → a connection-dropping 500 with no
+  // trace ("TypeError: Failed to fetch" client-side). Capture it: record the turn
+  // failure + a thread marker, then return a clean CORS-clean 500.
   let response: Response;
+  try {
   if (process.env.CHAT_ORCHESTRATOR === "on" && conversationId) {
     // HYBRID ORCHESTRATOR (Etapa 2): code composes the turn; the LLM only extracts
     // slots + phrases off-funnel replies. The fixed blocks (greeting, requisitos,
@@ -301,6 +313,8 @@ export async function POST(request: Request) {
     const orchState =
       (await loadConversationState(conversationId)) ?? initialState();
     const recentContext = (history ?? [])
+      // Drop operator-facing turn-error markers (role 'system') from the context.
+      .filter((m) => m.role !== "system")
       .slice(-6)
       .map(
         (m) => `${m.role}: ${typeof m.content === "string" ? m.content : ""}`,
@@ -319,7 +333,7 @@ export async function POST(request: Request) {
         });
       },
       onError: (e) => {
-        console.error("[chat] orchestrator stream error", e);
+        void recordTurnError({ error: e, conversationId, ipHash, brand });
         return "Tuvimos un problema procesando tu mensaje. Intenta de nuevo.";
       },
       onFinish: ({ responseMessage }) => persistAssistant(responseMessage),
@@ -338,7 +352,20 @@ export async function POST(request: Request) {
       originalMessages: messages,
       onFinish: ({ messages: finalMessages }) =>
         persistAssistant(finalMessages[finalMessages.length - 1]),
+      // Mid-stream model/gateway error (legacy path had no handler → the stream tore
+      // the connection with no trace). Record it; emit a friendly in-stream message.
+      onError: (e) => {
+        void recordTurnError({ error: e, conversationId, ipHash, brand });
+        return "Tuvimos un problema procesando tu mensaje. Intenta de nuevo.";
+      },
     });
+  }
+  } catch (e) {
+    void recordTurnError({ error: e, conversationId, ipHash, brand });
+    return jsonError(
+      "Tuvimos un problema procesando tu mensaje. Intenta de nuevo.",
+      500,
+    );
   }
 
   // Layer CORS + the conversation id onto the streamed response so the widget

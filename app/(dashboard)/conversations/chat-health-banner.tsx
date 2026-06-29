@@ -11,8 +11,15 @@ const TOOL_LABEL: Record<string, string> = {
   crear_reserva: "la creación de reservas",
 };
 
-export function ChatHealthBanner({ health }: { health: ToolHealth[] }) {
-  if (health.length === 0) return null;
+export function ChatHealthBanner({
+  health,
+  turnErrors = 0,
+}: {
+  health: ToolHealth[];
+  /** Whole-turn crashes/timeouts in the last 24h (lib/chat/turn-error.ts). */
+  turnErrors?: number;
+}) {
+  if (health.length === 0 && turnErrors === 0) return null;
 
   return (
     <div
@@ -25,6 +32,12 @@ export function ChatHealthBanner({ health }: { health: ToolHealth[] }) {
           El chat está fallando seguido en las últimas 24 horas
         </p>
         <ul className="space-y-0.5 text-destructive/90">
+          {turnErrors > 0 && (
+            <li>
+              Turnos que se cayeron (el chat no respondió): {turnErrors} en 24h.
+              Ábrelos en la lista para ver el error del turno.
+            </li>
+          )}
           {health.map((h) => (
             <li key={h.tool}>
               {TOOL_LABEL[h.tool] ?? h.tool}: {Math.round(h.failRate * 100)}% de

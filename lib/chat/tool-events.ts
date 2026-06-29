@@ -16,7 +16,10 @@ import { createAdminClient } from "@/lib/supabase/admin";
  * on error) so a DB hiccup never blocks a legitimate booking.
  */
 
-export type ChatToolName = "cotizar" | "crear_reserva";
+// 'turn' is NOT a tool — it's the per-request turn-failure marker (chat crashed/
+// timed out). Recorded ok=false only, so it surfaces as an outage COUNT, never a
+// fail-rate (there are no ok=true 'turn' rows). See lib/chat/turn-error.ts.
+export type ChatToolName = "cotizar" | "crear_reserva" | "turn";
 
 export interface ToolEvent {
   tool: ChatToolName;

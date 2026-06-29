@@ -26,6 +26,9 @@ function formatTime(value: string): string {
 // safety net the column exists for).
 function MessageBubble({ message }: { message: ConversationMessage }) {
   const isUser = message.role === "user";
+  // 'system' rows are turn-error markers (lib/chat/turn-error.ts) — render them as
+  // an error so a failed turn jumps out when reading the thread.
+  const isError = message.role === "system";
   const parts = Array.isArray(message.parts) ? message.parts : null;
   const renderedParts = parts
     ? parts.map((part, i) => <MessagePart key={i} part={part} />)
@@ -50,9 +53,11 @@ function MessageBubble({ message }: { message: ConversationMessage }) {
       <div
         className={cn(
           "max-w-[80%] space-y-2 rounded-2xl border px-4 py-3",
-          isUser
-            ? "border-primary/30 bg-primary/5"
-            : "border-border bg-card",
+          isError
+            ? "border-destructive/30 bg-destructive/10 text-destructive"
+            : isUser
+              ? "border-primary/30 bg-primary/5"
+              : "border-border bg-card",
         )}
       >
         {hasParts ? (

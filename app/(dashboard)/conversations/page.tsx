@@ -3,7 +3,10 @@ import {
   getConversationMetrics,
   getDetectedCities,
 } from "@/lib/queries/chat-conversations";
-import { getChatToolHealth } from "@/lib/queries/chat-tool-health";
+import {
+  getChatToolHealth,
+  getChatTurnErrorCount,
+} from "@/lib/queries/chat-tool-health";
 import { parseListParams } from "@/lib/chat/list-params";
 import { ConversationsTable } from "./conversations-table";
 import { ConversationMetricsCards } from "./conversation-metrics";
@@ -32,11 +35,12 @@ export default async function ConversationsPage({
 }) {
   const params = parseListParams(toSearchParams(await searchParams));
 
-  const [page, metrics, cities, toolHealth] = await Promise.all([
+  const [page, metrics, cities, toolHealth, turnErrors] = await Promise.all([
     getConversationsPage(params),
     getConversationMetrics(params),
     getDetectedCities(),
     getChatToolHealth(),
+    getChatTurnErrorCount(),
   ]);
 
   const pageCount = Math.max(1, Math.ceil(page.total / params.pageSize));
@@ -52,7 +56,7 @@ export default async function ConversationsPage({
         </p>
       </div>
 
-      <ChatHealthBanner health={toolHealth} />
+      <ChatHealthBanner health={toolHealth} turnErrors={turnErrors} />
 
       <ConversationMetricsCards metrics={metrics} />
 

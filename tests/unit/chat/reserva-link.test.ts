@@ -1,6 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { encodeQuote } from "@/lib/api/mcp/quote";
-import { buildFallbackLinks, buildOnDemandLinks } from "@/lib/chat/reserva-link";
+import {
+  buildFallbackLinks,
+  buildOnDemandLinks,
+  buildSelfServeLinks,
+} from "@/lib/chat/reserva-link";
 import type { LocationDirectoryItem } from "@/lib/api/location-directory";
 
 // The fallback links must match the website's deep-link contract EXACTLY (the
@@ -153,6 +157,48 @@ describe("buildOnDemandLinks", () => {
   it("returns null when the quote cannot be decoded", () => {
     expect(
       buildOnDemandLinks({ brand: "alquilatucarro", quote: "nope", customer }, directory),
+    ).toBeNull();
+  });
+});
+
+describe("buildSelfServeLinks (P3)", () => {
+  it("reuses the SAME webUrl and a numberless share wa.me with the quote + deep-link", () => {
+    const onDemand = buildOnDemandLinks(
+      { brand: "alquilatucarro", quote, gamaDescripcion: "económico", customer },
+      directory,
+    );
+    const self = buildSelfServeLinks(
+      {
+        brand: "alquilatucarro",
+        quote,
+        gamaDescripcion: "económico",
+        precioTotal: 1261569,
+        customer,
+      },
+      directory,
+    );
+    expect(self?.webUrl).toBe(onDemand?.webUrl);
+    // Numberless share → WhatsApp opens the contact picker.
+    expect(self?.shareUrl.startsWith("https://wa.me/?text=")).toBe(true);
+    const text = decodeURIComponent(self!.shareUrl.split("?text=")[1]);
+    expect(text).toContain("FX (económico)");
+    expect(text).toContain("Armenia Aeropuerto");
+    expect(text).toContain("$1.261.569");
+    expect(text).toContain(self!.webUrl); // recipient can book straight from the message
+  });
+
+  it("omits the price line when no precioTotal is given", () => {
+    const self = buildSelfServeLinks(
+      { brand: "alquilatucarro", quote, gamaDescripcion: "económico", customer },
+      directory,
+    );
+    const text = decodeURIComponent(self!.shareUrl.split("?text=")[1]);
+    expect(text).not.toContain("Total:");
+  });
+
+  it("returns null when the quote cannot be decoded", () => {
+    expect(
+      buildSelfServeLinks({ brand: "alquilatucarro", quote: "nope", customer }, directory),
     ).toBeNull();
   });
 });

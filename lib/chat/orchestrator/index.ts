@@ -3,7 +3,7 @@ import { bogotaTodayYMD } from "@/lib/date/bogota";
 import { saveConversationState } from "@/lib/chat/persistence";
 import { validateCustomerData } from "@/lib/chat/customer-validation";
 import { executeBooking } from "@/lib/chat/booking-core";
-import { buildOnDemandLinks } from "@/lib/chat/reserva-link";
+import { buildOnDemandLinks, buildSelfServeLinks } from "@/lib/chat/reserva-link";
 import { getLocationDirectory } from "@/lib/api/location-directory";
 import { getFranchiseBranding } from "@/lib/constants/franchises";
 import { extractSlots } from "./extract";
@@ -525,6 +525,43 @@ export async function runTurn(
     await freeForm();
   }
 
+  // Self-serve link (P3): on the FIRST deferral objection AFTER a quote ("déjame pensarlo"),
+  // offer the website deep-link + a shareable WhatsApp quote — a graceful exit that captures the
+  // lead instead of losing it. Runs after the free-form sales reframe above (objeción is
+  // OFF_FUNNEL), so the order is reframe → buttons. Once per conversation; never before a quote
+  // (no prices/gama to link) and never on a price objection (those stay in the reframe). Flag off
+  // → nothing changes. Uses the chosen gama, or the recommended one when none is picked yet.
+  if (
+    process.env.CHAT_SELFSERVE_LINK === "on" &&
+    intent === "objecion" &&
+    DEFERRAL_RE.test(userMessage) &&
+    state.lastQuote &&
+    state.flags.quote_shown &&
+    !state.flags.selfserve_link_shown
+  ) {
+    const row = state.slots.gama_elegida
+      ? findGama(state.lastQuote, state.slots.gama_elegida)
+      : recommendedGama(
+          state.lastQuote,
+          state.slots.transmision,
+          state.slots.tipo_vehiculo,
+        );
+    const links = row ? await selfServeLinksFor(row, state, brand) : null;
+    if (links) {
+      writeText(
+        "Sin problema, tómate tu tiempo. Te dejo todo listo: puedes reservar tú mismo cuando quieras o compartir la cotización 👇",
+      );
+      writer.write({
+        type: "data-buttons",
+        data: { web: links.webUrl, share: links.shareUrl },
+      });
+      state = {
+        ...state,
+        flags: { ...state.flags, selfserve_link_shown: true },
+      };
+    }
+  }
+
   // 3. Persist state (best-effort; the message itself is persisted by the route's onFinish).
   if (conversationId) {
     try {
@@ -540,6 +577,11 @@ export async function runTurn(
 // All code-owned; the LLM is never asked to format these. Each helper emits its
 // data part(s) + ONE short code line and returns whether it handled the message.
 // ---------------------------------------------------------------------------
+
+/** Deferral signals ("déjame pensarlo", "lo consulto") — distinguishes a "soft no" from a
+ * price objection, so P3 offers the self-serve exit only when the customer is postponing. */
+const DEFERRAL_RE =
+  /pensar|p[ie]nsa|consultar|consulto|m[aá]s tarde|despu[eé]s|luego|ma[nñ]ana|lo hablo|lo habl|me lo pienso|avisar[eé]|te aviso|m[aá]s adelante|por ahora no|a[uú]n no/i;
 
 /** Customer asks to see the vehicles/photos/models of a gama. */
 const VEHICLE_RE =
@@ -693,6 +735,32 @@ async function onDemandLinksFor(
     );
   } catch (e) {
     console.error("[orchestrator] onDemandLinksFor failed", e);
+    return null;
+  }
+}
+
+/** Build the self-serve (web deep-link + shareable WhatsApp quote) links for a chosen gama
+ * row; null on any failure (P3). Mirrors onDemandLinksFor but also passes the gama's price so
+ * the share message carries the total. */
+async function selfServeLinksFor(
+  row: QuoteRow,
+  state: ConversationState,
+  brand: string,
+) {
+  try {
+    const directory = await getLocationDirectory();
+    return buildSelfServeLinks(
+      {
+        brand,
+        quote: row.quote,
+        gamaDescripcion: row.descripcion,
+        precioTotal: row.precioTotal,
+        customer: customerFromSlots(state),
+      },
+      directory,
+    );
+  } catch (e) {
+    console.error("[orchestrator] selfServeLinksFor failed", e);
     return null;
   }
 }

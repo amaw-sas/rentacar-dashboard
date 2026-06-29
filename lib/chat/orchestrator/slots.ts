@@ -89,6 +89,8 @@ export interface ConversationFlags {
   multi_vehicle_notice_shown?: boolean;
   /** The "we don't offer diésel/van/estacas…" notice emitted once (P0c) — guards repeating it. */
   unsupported_vehicle_notice_shown?: boolean;
+  /** The proactive self-serve link (web + share) emitted once on a deferral objection (P3). */
+  selfserve_link_shown?: boolean;
   /** The quote slot we asked for last turn ("ciudad"/"fecha_recogida"/"fecha_devolucion").
    * Lets the funnel VARY a repeated question instead of asking it verbatim again. */
   last_slot_asked?: string;

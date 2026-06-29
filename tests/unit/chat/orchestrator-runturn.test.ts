@@ -42,8 +42,14 @@ vi.mock("ai", () => ({ streamText }));
 const { getGamaCards } = vi.hoisted(() => ({ getGamaCards: vi.fn() }));
 vi.mock("@/lib/chat/orchestrator/gama-cards", () => ({ getGamaCards }));
 
-const { buildOnDemandLinks } = vi.hoisted(() => ({ buildOnDemandLinks: vi.fn() }));
-vi.mock("@/lib/chat/reserva-link", () => ({ buildOnDemandLinks }));
+const { buildOnDemandLinks, buildSelfServeLinks } = vi.hoisted(() => ({
+  buildOnDemandLinks: vi.fn(),
+  buildSelfServeLinks: vi.fn(),
+}));
+vi.mock("@/lib/chat/reserva-link", () => ({
+  buildOnDemandLinks,
+  buildSelfServeLinks,
+}));
 
 const { getLocationDirectory } = vi.hoisted(() => ({
   getLocationDirectory: vi.fn(async (): Promise<unknown[]> => []),
@@ -1574,5 +1580,107 @@ describe("orchestrator runTurn — slot grounding (CHAT_SLOT_GROUNDING)", () => 
 
     expect(textOf(chunks).toLowerCase()).toContain("nombre completo");
     expect(lastSaved().phase).toBe("collecting_customer");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Proactive self-serve link (P3 · CHAT_SELFSERVE_LINK). On a deferral objection AFTER a
+// quote, offer the web deep-link + a shareable WhatsApp quote, once. buildSelfServeLinks is
+// mocked (its real output is pinned in reserva-link.test.ts); here we test the FSM wiring.
+// ---------------------------------------------------------------------------
+
+describe("orchestrator runTurn — proactive self-serve link (CHAT_SELFSERVE_LINK)", () => {
+  beforeEach(() => {
+    process.env.CHAT_SELFSERVE_LINK = "on";
+    buildSelfServeLinks.mockReturnValue({
+      webUrl: "https://alquilatucarro.com/deep-link",
+      shareUrl: "https://wa.me/?text=cotizacion",
+    });
+  });
+  afterEach(() => {
+    delete process.env.CHAT_SELFSERVE_LINK;
+  });
+
+  const buttons = (chunks: Chunk[]) => dataParts(chunks, "data-buttons");
+
+  it("offers web + share buttons once on a deferral objection after a quote", async () => {
+    extractSlots.mockResolvedValue({ intent: "objecion", updates: {} });
+    const { chunks, writer } = fakeWriter();
+    await runTurn(writer, {
+      brand: "alquilatucarro",
+      conversationId: "c1",
+      state: quotedState(),
+      userMessage: "déjame pensarlo y te aviso",
+      recentContext: [],
+      now: NOW,
+    });
+
+    const b = buttons(chunks);
+    expect(b).toHaveLength(1);
+    const data = b[0].data as { web?: string; share?: string };
+    expect(data.web).toBe("https://alquilatucarro.com/deep-link");
+    expect(data.share).toBe("https://wa.me/?text=cotizacion");
+    expect(lastSaved().flags.selfserve_link_shown).toBe(true);
+  });
+
+  it("does NOT re-offer once the link was already shown", async () => {
+    extractSlots.mockResolvedValue({ intent: "objecion", updates: {} });
+    const { chunks, writer } = fakeWriter();
+    await runTurn(writer, {
+      brand: "alquilatucarro",
+      conversationId: "c1",
+      state: quotedState({ flags: { selfserve_link_shown: true } }),
+      userMessage: "déjame pensarlo",
+      recentContext: [],
+      now: NOW,
+    });
+    expect(buttons(chunks)).toHaveLength(0);
+  });
+
+  it("does NOT offer on a price objection (no deferral signal)", async () => {
+    extractSlots.mockResolvedValue({ intent: "objecion", updates: {} });
+    const { chunks, writer } = fakeWriter();
+    await runTurn(writer, {
+      brand: "alquilatucarro",
+      conversationId: "c1",
+      state: quotedState(),
+      userMessage: "está muy caro",
+      recentContext: [],
+      now: NOW,
+    });
+    expect(buttons(chunks)).toHaveLength(0);
+  });
+
+  it("does NOT offer before any quote exists", async () => {
+    extractSlots.mockResolvedValue({ intent: "objecion", updates: {} });
+    const noQuote: ConversationState = {
+      ...initialState(),
+      flags: { greeted: true, requisitos_shown: false, quote_shown: false },
+    };
+    const { chunks, writer } = fakeWriter();
+    await runTurn(writer, {
+      brand: "alquilatucarro",
+      conversationId: "c1",
+      state: noQuote,
+      userMessage: "déjame pensarlo",
+      recentContext: [],
+      now: NOW,
+    });
+    expect(buttons(chunks)).toHaveLength(0);
+  });
+
+  it("is a no-op when the flag is off", async () => {
+    delete process.env.CHAT_SELFSERVE_LINK;
+    extractSlots.mockResolvedValue({ intent: "objecion", updates: {} });
+    const { chunks, writer } = fakeWriter();
+    await runTurn(writer, {
+      brand: "alquilatucarro",
+      conversationId: "c1",
+      state: quotedState(),
+      userMessage: "déjame pensarlo",
+      recentContext: [],
+      now: NOW,
+    });
+    expect(buttons(chunks)).toHaveLength(0);
   });
 });

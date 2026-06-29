@@ -7,7 +7,7 @@
 import { useRef, useState } from "react";
 
 type Part = { type: "text"; text: string };
-type FallbackLinks = { web: string; whatsapp: string };
+type FallbackLinks = { web: string; whatsapp: string; share?: string };
 type QuoteTablePart = {
   sede: string;
   dias: number;
@@ -130,12 +130,17 @@ export default function ChatTestPage() {
           // Orchestrator fallback buttons (code-emitted data part). Same shape the
           // page already renders, so reuse the FallbackLinks state.
           if (e.type === "data-buttons" && e.data) {
-            const b = e.data as { web?: string; whatsapp?: string };
-            // Either button may come alone (e.g. hablar_asesor → whatsapp only).
-            if (typeof b.web === "string" || typeof b.whatsapp === "string") {
+            const b = e.data as { web?: string; whatsapp?: string; share?: string };
+            // Any button may come alone (advisor → whatsapp only; self-serve → web + share).
+            if (
+              typeof b.web === "string" ||
+              typeof b.whatsapp === "string" ||
+              typeof b.share === "string"
+            ) {
               links = {
                 web: typeof b.web === "string" ? b.web : "",
                 whatsapp: typeof b.whatsapp === "string" ? b.whatsapp : "",
+                share: typeof b.share === "string" ? b.share : "",
               };
             }
           }
@@ -387,6 +392,23 @@ export default function ChatTestPage() {
                     }}
                   >
                     Escribir a un asesor
+                  </a>
+                )}
+                {m.links.share && (
+                  <a
+                    href={m.links.share}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{
+                      background: "#0d9488",
+                      color: "#fff",
+                      padding: "8px 12px",
+                      borderRadius: 8,
+                      fontSize: 13,
+                      textDecoration: "none",
+                    }}
+                  >
+                    Compartir cotización
                   </a>
                 )}
               </div>

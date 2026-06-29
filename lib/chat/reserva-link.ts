@@ -19,6 +19,8 @@ export interface FallbackLinkInput {
   brand: string;
   quote: string;
   gamaDescripcion?: string;
+  /** All-in total of the chosen gama (COP) — only the self-serve SHARE message uses it. */
+  precioTotal?: number;
   customer: {
     fullname: string;
     identification_type: string;
@@ -32,6 +34,15 @@ export interface FallbackLinks {
   webUrl: string;
   whatsappUrl: string;
 }
+
+export interface SelfServeLinks {
+  webUrl: string;
+  /** wa.me WITHOUT a number → WhatsApp opens the contact picker so the customer can
+   * forward the quote to anyone (or save it to themselves). Pre-filled with the quote. */
+  shareUrl: string;
+}
+
+const COP = new Intl.NumberFormat("es-CO");
 
 /** date = YYYY-MM-DD, hour = HH:mm (24h) — same split the booking input uses. */
 function splitDateTime(dt: string): { date: string; hour: string } {
@@ -146,4 +157,34 @@ export function buildOnDemandLinks(
   const msg = lines.join("\n");
   const whatsappUrl = `https://wa.me/${link.whatsapp}?text=${encodeURIComponent(msg)}`;
   return { webUrl: link.webUrl, whatsappUrl };
+}
+
+/**
+ * Self-serve links (P3 · CHAT_SELFSERVE_LINK) for when the customer defers after a quote
+ * ("déjame pensarlo"): the same website deep-link PLUS a SHARE message. The share uses a
+ * numberless `wa.me/?text=` so WhatsApp opens the contact picker — the customer forwards the
+ * quote to whoever decides with them, or keeps it. The message carries the quote summary AND
+ * the deep-link, so the recipient can book straight from it. Null on the same conditions as
+ * the other builders (undecodable quote / unknown sede).
+ */
+export function buildSelfServeLinks(
+  input: FallbackLinkInput,
+  directory: LocationDirectoryItem[],
+): SelfServeLinks | null {
+  const link = buildLinkContext(input, directory);
+  if (!link) return null;
+
+  const precio =
+    typeof input.precioTotal === "number" && input.precioTotal > 0
+      ? `\n• Total: $${COP.format(input.precioTotal)} (todo incluido)`
+      : "";
+  const msg =
+    `Mira esta cotización de alquiler de carro:\n` +
+    `• Gama: ${link.gama}\n` +
+    `• Sede: ${link.sedeName}\n` +
+    `• Fechas: ${link.periodo}${precio}\n` +
+    `Resérvala aquí: ${link.webUrl}`;
+
+  const shareUrl = `https://wa.me/?text=${encodeURIComponent(msg)}`;
+  return { webUrl: link.webUrl, shareUrl };
 }

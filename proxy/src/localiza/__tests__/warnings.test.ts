@@ -76,11 +76,12 @@ describe("buildLocalizaWarning", () => {
     ["LLNRAG016", "holiday_return_date_error"],
     ["LLNRAG017", "out_of_schedule_return_date_error"],
     ["LLNRRE045", "reservation_cancelled_error"],
-  ])("maps %s → %s with status 500 and preserves shortText", (shortText, code) => {
+  ])("maps %s → %s with status 422 and preserves shortText", (shortText, code) => {
     const err = buildLocalizaWarning(shortText);
     expect(err).toBeInstanceOf(LocalizaWarningError);
     expect(err.code).toBe(code);
-    expect(err.httpStatus).toBe(500);
+    // Business validations are 422 (Unprocessable Entity), not 500.
+    expect(err.httpStatus).toBe(422);
     expect(err.shortText).toBe(shortText);
     expect(err.message).toBe(LOCALIZA_WARNING_MAP[shortText].message);
   });

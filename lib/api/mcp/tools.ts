@@ -125,7 +125,7 @@ export function computeSelectedDays(
  * hyphens to a single space lets a typed "Santa Marta" match it (otherwise a served city
  * is wrongly rejected as "no encuentro una sede").
  */
-function norm(s: string): string {
+export function norm(s: string): string {
   return s
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")

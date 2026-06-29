@@ -19,9 +19,16 @@ import { findGama, getQuoteTable, type QuoteRow } from "./quote-service";
 import { getGamaCards } from "./gama-cards";
 import { freeFormConfig } from "./prompts";
 import {
+  groundSlots,
+  hasBookingHours,
+  type GroundingNote,
+} from "./ground";
+import {
+  askHoursBlock,
   bookingConfirmedLine,
   bookingSummaryBlock,
   canQuote,
+  cityNotServiceableBlock,
   gamaByLabel,
   gamaNudgeLine,
   gamaOptionsLine,
@@ -29,6 +36,7 @@ import {
   greetingBlock,
   horaExtraLine,
   multiVehicleNoticeLine,
+  unsupportedVehicleLine,
   nextCustomerField,
   nextCustomerQuestion,
   nextQuoteSlot,
@@ -213,6 +221,26 @@ export async function runTurn(
     console.error("[orchestrator] extract failed", e);
   }
 
+  // 1b. Deterministic slot grounding (P0). Validate/correct the just-extracted slots
+  // against the real catalog BEFORE the FSM acts: drop an unserved ciudad, reconcile
+  // ciudad from a named sede, and flag a vehicle class/fuel we don't offer. Pure code,
+  // no LLM — gated by CHAT_SLOT_GROUNDING (off → byte-identical to today). The notes
+  // feed the deterministic branches below.
+  let groundingNotes: GroundingNote[] = [];
+  if (process.env.CHAT_SLOT_GROUNDING === "on") {
+    try {
+      const directory = await getLocationDirectory();
+      const g = groundSlots({ slots: state.slots, userMessage, directory });
+      state = { ...state, slots: g.slots };
+      groundingNotes = g.notes;
+    } catch (e) {
+      console.error("[orchestrator] grounding failed", e);
+    }
+  }
+  const cityBlockNote = groundingNotes.find(
+    (n) => n.kind === "city_not_serviceable",
+  );
+
   // Guard the gama choice: the extractor sometimes reads a "choice" from a preference
   // in the initial REQUEST ("quiero un económico") before any quote exists, or
   // hallucinates an invalid code (e.g. "E" from "económico"). A real choice needs a
@@ -239,6 +267,20 @@ export async function runTurn(
     state = {
       ...state,
       flags: { ...state.flags, multi_vehicle_notice_shown: true },
+    };
+  }
+
+  // Unsupported vehicle (P0c): the customer asked for diésel/van/estacas/etc. Warn ONCE
+  // (guarded like the multi-vehicle notice) so we set the expectation before the quote
+  // shows gasolina options, instead of passing one off as what they asked for.
+  const unsupportedNote = groundingNotes.find(
+    (n) => n.kind === "unsupported_vehicle",
+  );
+  if (unsupportedNote && !state.flags.unsupported_vehicle_notice_shown) {
+    writeText(unsupportedVehicleLine(unsupportedNote.term));
+    state = {
+      ...state,
+      flags: { ...state.flags, unsupported_vehicle_notice_shown: true },
     };
   }
 
@@ -318,7 +360,7 @@ export async function runTurn(
   // not a real re-quote, so an explicit on-demand request that also names a sede ("el enlace
   // en el aeropuerto") is still honored instead of being swallowed by the silent refresh.
   let onDemandHandled = false;
-  if (!freshQuotePending || minorChange) {
+  if ((!freshQuotePending || minorChange) && !cityBlockNote) {
     onDemandHandled = await handleOnDemand({
       writer,
       writeText,
@@ -334,7 +376,12 @@ export async function runTurn(
     }
   }
 
-  if (onDemandHandled) {
+  if (cityBlockNote) {
+    // Unserved city (P0a): grounding already dropped the bad ciudad, so canQuote is false
+    // and freshQuotePending can't fire. Offer the served cities deterministically instead
+    // of the generic "¿en qué ciudad?" or a cryptic provider error.
+    writeText(cityNotServiceableBlock(cityBlockNote.attempted, cityBlockNote.valid));
+  } else if (onDemandHandled) {
     // On-demand already emitted its part(s) + any phase re-prompt; nothing else.
   } else if (minorChange) {
     const prevQuote = state.lastQuote;
@@ -741,6 +788,20 @@ async function advanceBooking(
   const lastQuote = state.lastQuote;
   if (!lastQuote) return state; // unreachable (guarded by hasQuote)
 
+  // P0d gate: never advance from the gama choice to customer data (which immediately
+  // offers to book) without confirmed pickup/return hours. The quote silently defaults to
+  // 10:00 when hours are absent, so this is what stops "ofrece reservar sin horas". Gated by
+  // CHAT_SLOT_GROUNDING; off → progresses exactly as before. Keeps the chosen gama so the
+  // next turn (once hours are given) resumes straight into customer collection.
+  const groundingOn = process.env.CHAT_SLOT_GROUNDING === "on";
+  const proceedToCustomer = (next: ConversationState): ConversationState => {
+    if (groundingOn && !hasBookingHours(next.slots)) {
+      writeText(askHoursBlock());
+      return { ...next, phase: "choosing_gama" };
+    }
+    return progressCustomer(next, writeText);
+  };
+
   switch (state.phase) {
     case "quoted":
     case "choosing_gama": {
@@ -755,10 +816,7 @@ async function advanceBooking(
           const ans = await freeFormText();
           if (ans) writeText(ans);
         }
-        return progressCustomer(
-          { ...state, phase: "collecting_customer" },
-          writeText,
-        );
+        return proceedToCustomer({ ...state, phase: "collecting_customer" });
       }
       // Label pick ("el más económico", "el intermedio") → resolve deterministically and commit
       // instead of re-pasting the whole gama list (the gama_not_committed that lost a buyer).
@@ -772,14 +830,11 @@ async function advanceBooking(
         writeText(
           `Perfecto, seguimos con la **Gama ${byLabel.categoria}** (${byLabel.descripcion}); si prefieres otra, dímelo.`,
         );
-        return progressCustomer(
-          {
-            ...state,
-            phase: "collecting_customer",
-            slots: { ...state.slots, gama_elegida: byLabel.categoria },
-          },
-          writeText,
-        );
+        return proceedToCustomer({
+          ...state,
+          phase: "collecting_customer",
+          slots: { ...state.slots, gama_elegida: byLabel.categoria },
+        });
       }
       // A clear BUY signal — an affirmative ("reservemos", "dale") or the customer handed over
       // data (da_datos) — but no gama resolved. The recommendation (respects stated transmission/
@@ -803,14 +858,11 @@ async function advanceBooking(
           writeText(
             `Perfecto, seguimos con la **Gama ${rec.categoria}** (${rec.descripcion}); si prefieres otra, dímelo.`,
           );
-          return progressCustomer(
-            {
-              ...state,
-              phase: "collecting_customer",
-              slots: { ...state.slots, gama_elegida: rec.categoria },
-            },
-            writeText,
-          );
+          return proceedToCustomer({
+            ...state,
+            phase: "collecting_customer",
+            slots: { ...state.slots, gama_elegida: rec.categoria },
+          });
         }
         writeText(gamaOptionsLine(lastQuote));
         return { ...state, phase: "choosing_gama" };

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // Mock the LLM-bearing and DB-bearing collaborators so the orchestrator's
 // deterministic control flow is tested in isolation. blocks.ts and slots.ts run
@@ -1443,5 +1443,136 @@ describe("orchestrator runTurn — on-demand (Etapa 4)", () => {
     const wa = (buttons[0].data as { whatsapp?: string }).whatsapp ?? "";
     expect(wa.startsWith("https://wa.me/573016729250?text=")).toBe(true);
     expect((buttons[0].data as { web?: string }).web).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Slot grounding (P0 · CHAT_SLOT_GROUNDING). Verifies the FSM WIRING of the pure
+// grounding layer — the unit behavior of groundSlots lives in orchestrator-ground.test.ts.
+// ---------------------------------------------------------------------------
+
+const SERVED_DIRECTORY = [
+  { slug: "bogota-aeropuerto", code: "BOG", city: "bogota", name: "Bogotá Aeropuerto", status: "active", pickup_address: "", pickup_map: "", schedule: {} },
+  { slug: "palmira-centro", code: "PAL", city: "palmira", name: "Palmira Centro", status: "active", pickup_address: "", pickup_map: "", schedule: {} },
+];
+
+describe("orchestrator runTurn — slot grounding (CHAT_SLOT_GROUNDING)", () => {
+  beforeEach(() => {
+    process.env.CHAT_SLOT_GROUNDING = "on";
+    getLocationDirectory.mockResolvedValue(SERVED_DIRECTORY);
+  });
+  afterEach(() => {
+    delete process.env.CHAT_SLOT_GROUNDING;
+  });
+
+  it("(a) drops an unserved city, offers the served ones, and does NOT quote", async () => {
+    extractSlots.mockResolvedValue({
+      intent: "cotizar",
+      updates: {
+        ciudad: "Tuluá",
+        fecha_recogida: "2026-07-01",
+        fecha_devolucion: "2026-07-04",
+      },
+    });
+    const greeted: ConversationState = {
+      ...initialState(),
+      flags: { greeted: true, requisitos_shown: false, quote_shown: false },
+    };
+    const { chunks, writer } = fakeWriter();
+    await runTurn(writer, {
+      brand: "alquilatucarro",
+      conversationId: "c1",
+      state: greeted,
+      userMessage: "en Tuluá del 1 al 4",
+      recentContext: [],
+      now: NOW,
+    });
+
+    const text = textOf(chunks);
+    expect(text).toContain("no tenemos sede en Tuluá");
+    expect(text).toContain("Palmira");
+    expect(getQuoteTable).not.toHaveBeenCalled();
+    expect(dataParts(chunks, "data-quoteTable")).toHaveLength(0);
+    expect(lastSaved().slots.ciudad).toBeUndefined();
+  });
+
+  it("(c) warns about an unsupported vehicle ONCE, then still quotes the served city", async () => {
+    extractSlots.mockResolvedValue({
+      intent: "cotizar",
+      updates: {
+        ciudad: "bogota",
+        fecha_recogida: "2026-07-01",
+        fecha_devolucion: "2026-07-04",
+      },
+    });
+    getQuoteTable.mockResolvedValue({ ok: true, table: QUOTE_TABLE });
+    const greeted: ConversationState = {
+      ...initialState(),
+      flags: { greeted: true, requisitos_shown: false, quote_shown: false },
+    };
+    const { chunks, writer } = fakeWriter();
+    await runTurn(writer, {
+      brand: "alquilatucarro",
+      conversationId: "c1",
+      state: greeted,
+      userMessage: "algo diésel en bogota del 1 al 4",
+      recentContext: [],
+      now: NOW,
+    });
+
+    expect(textOf(chunks)).toContain("no contamos con diésel");
+    expect(dataParts(chunks, "data-quoteTable")).toHaveLength(1);
+    expect(lastSaved().flags.unsupported_vehicle_notice_shown).toBe(true);
+  });
+
+  it("(d) gates the booking on hours: choosing a gama without hours asks for them", async () => {
+    extractSlots.mockResolvedValue({
+      intent: "elige_gama",
+      updates: { gama_elegida: "C" },
+    });
+    const { chunks, writer } = fakeWriter();
+    await runTurn(writer, {
+      brand: "alquilatucarro",
+      conversationId: "c1",
+      state: quotedState(), // no hours set
+      userMessage: "la C",
+      recentContext: [],
+      now: NOW,
+    });
+
+    const text = textOf(chunks);
+    expect(text.toLowerCase()).toContain("hora");
+    expect(text.toLowerCase()).not.toContain("nombre completo");
+    expect(lastSaved().phase).toBe("choosing_gama");
+  });
+
+  it("(d) lets the booking proceed once hours are present", async () => {
+    extractSlots.mockResolvedValue({
+      intent: "elige_gama",
+      updates: { gama_elegida: "C" },
+    });
+    const { chunks, writer } = fakeWriter();
+    await runTurn(writer, {
+      brand: "alquilatucarro",
+      conversationId: "c1",
+      state: quotedState({
+        slots: {
+          ciudad: "bogota",
+          fecha_recogida: "2026-07-01",
+          fecha_devolucion: "2026-07-04",
+          hora_recogida: "09:00",
+          hora_devolucion: "09:00",
+          cliente: {},
+        },
+        // Signature includes the hours so this isn't treated as a stale re-quote.
+        flags: { last_quote_signature: "bogota||2026-07-01|2026-07-04|09:00|09:00" },
+      }),
+      userMessage: "la C",
+      recentContext: [],
+      now: NOW,
+    });
+
+    expect(textOf(chunks).toLowerCase()).toContain("nombre completo");
+    expect(lastSaved().phase).toBe("collecting_customer");
   });
 });

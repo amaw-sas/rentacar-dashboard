@@ -196,6 +196,51 @@ export function quoteClosingLine(): string {
   return "Reservar hoy te asegura este precio y el cupo —la disponibilidad cambia a diario. ¿Con cuál gama te gustaría seguir?";
 }
 
+// ---------------------------------------------------------------------------
+// Grounding blocks (P0 · CHAT_SLOT_GROUNDING). Deterministic replies for the slot
+// corrections `groundSlots` makes — code-owned so the LLM can't garble them.
+// ---------------------------------------------------------------------------
+
+/**
+ * Offered when the customer named a city we don't serve. Drops the bad city (done in
+ * grounding) and lists the served cities so they re-pick — instead of the cryptic
+ * provider "no encuentro sede" the quote would otherwise throw.
+ */
+export function cityNotServiceableBlock(
+  attempted: string,
+  validCities: string[],
+): string {
+  const list = validCities.join(", ");
+  return (
+    `Por ahora no tenemos sede en ${capitalize(attempted)}. ` +
+    `Sí operamos en: ${list}. ¿En cuál ciudad te cotizo?`
+  );
+}
+
+/**
+ * Warning when the customer asks for a vehicle class/fuel we don't offer (diésel,
+ * van, estacas, eléctrico…). Said BEFORE the quote so we don't pass off an económico
+ * a gasolina as if it answered their request.
+ */
+export function unsupportedVehicleLine(term: string): string {
+  return (
+    `Una aclaración: por este medio manejo autos y camionetas a gasolina, ` +
+    `no contamos con ${term}. Te muestro las opciones que sí tenemos 👇`
+  );
+}
+
+/**
+ * Asked before moving to customer data when the booking hours aren't set (P0d). The
+ * quote defaults to 10:00 when hours are absent, so without this the bot would book a
+ * time the customer never confirmed.
+ */
+export function askHoursBlock(): string {
+  return (
+    `Para dejar la reserva necesito las horas: ¿a qué hora recoges y a qué hora ` +
+    `devuelves el vehículo? (por ejemplo: recoger 9 am, devolver 9 am)`
+  );
+}
+
 /** Camioneta/SUV gamas (vs cars), told apart by the words Localiza puts in the descripción. */
 function isCamioneta(descripcion: string): boolean {
   return /camioneta|suv|4\s?x\s?4|campero|todoterreno/i.test(descripcion);

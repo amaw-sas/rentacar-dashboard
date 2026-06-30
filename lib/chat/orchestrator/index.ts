@@ -213,6 +213,25 @@ export async function runTurn(
       return "";
     }
   };
+  // Surface a failed quote (R2): an OUT-OF-HOURS failure gets a warm reply that states the sede's
+  // schedule and proposes a valid time — the free-form already has the schedule (P2 injection +
+  // info_sedes) — instead of the bare provider line. Everything else passes through safeQuoteError.
+  // Gated by CHAT_FUNNEL_ROBUSTNESS; off → the plain error as before.
+  const surfaceQuoteError = async (message: string) => {
+    const outOfHours = /fuera del horario|horario de atenci[oó]n/i.test(
+      message ?? "",
+    );
+    if (process.env.CHAT_FUNNEL_ROBUSTNESS === "on" && outOfHours) {
+      const ans = await freeFormText(
+        "La hora que pidió el cliente quedó FUERA del horario de la sede. Dile con calidez cuál es el horario de esa sede y propón una hora válida (la de apertura si la sede ya cerró ese día), sin tecnicismos ni mencionar al proveedor. NO inventes el horario: úsalo del contexto.",
+      );
+      if (ans) {
+        writeText(ans);
+        return;
+      }
+    }
+    writeText(safeQuoteError(message));
+  };
 
   // 1. The one narrow LLM read. CHAT_CONTROLLER=on swaps the context-blind extractor for the
   // Controller — a context-aware read that also RESOLVES the gama reference (deixis, model name,
@@ -295,6 +314,21 @@ export async function runTurn(
             tipo_vehiculo: isCamioneta(row.descripcion) ? "camioneta" : "auto",
           },
         };
+      }
+    }
+  }
+
+  // Reconcile tipo_vehiculo to the CHOSEN gama's class (R2, leftover of R1): once a gama is
+  // committed it is the source of truth, so a stale "camioneta" from earlier must not linger and
+  // trip the "pediste camioneta y esta gama es un auto" warning on a gama the customer picked.
+  // Runs no matter HOW the gama was set (Controller commit or the R1 override). Flag-gated.
+  if (process.env.CHAT_FUNNEL_ROBUSTNESS === "on" && state.slots.gama_elegida) {
+    const chosenRow =
+      state.lastQuote && findGama(state.lastQuote, state.slots.gama_elegida);
+    if (chosenRow) {
+      const tipo = isCamioneta(chosenRow.descripcion) ? "camioneta" : "auto";
+      if (state.slots.tipo_vehiculo !== tipo) {
+        state = { ...state, slots: { ...state.slots, tipo_vehiculo: tipo } };
       }
     }
   }
@@ -495,7 +529,7 @@ export async function runTurn(
     } else {
       // Re-quote for the new sede FAILED. Surface the error once and record the attempt so
       // we don't repeat it every turn; don't advance on a stale, old-sede quote.
-      writeText(safeQuoteError(qr.message));
+      await surfaceQuoteError(qr.message);
       state = {
         ...state,
         flags: { ...state.flags, last_attempt_signature: sig },
@@ -539,7 +573,7 @@ export async function runTurn(
       // Quote FAILED (no availability / out of hours / past date / city not found). Surface
       // the error ONCE and record the attempt, so the next turn isn't another identical retry
       // — the free-form then answers the customer instead of repeating the error forever.
-      writeText(safeQuoteError(qr.message));
+      await surfaceQuoteError(qr.message);
       state = {
         ...state,
         flags: { ...state.flags, last_attempt_signature: sig },
@@ -631,6 +665,15 @@ export async function runTurn(
 // All code-owned; the LLM is never asked to format these. Each helper emits its
 // data part(s) + ONE short code line and returns whether it handled the message.
 // ---------------------------------------------------------------------------
+
+/** A side question, detected WITHOUT relying on a literal "?" (R2 · Bug 2): interrogative words,
+ * "tienes/hay/puedo", and "pregunt/no respond". Lets collecting_customer answer "que horario
+ * tienes" / "no tienes C" before re-asking the datum, instead of steamrolling them. */
+const QUESTION_RE =
+  /\?|\b(qu[eé]|cu[aá]l(es)?|c[oó]mo|cu[aá]nto|cu[aá]ndo|d[oó]nde|por qu[eé]|para qu[eé]|tienen?|tienes|hay|puedo|se puede|acaso|cu[aá]nt)\b|pregunt|no respond/i;
+export function looksLikeQuestion(message: string): boolean {
+  return QUESTION_RE.test(message);
+}
 
 /** Deferral signals ("déjame pensarlo", "lo consulto") — distinguishes a "soft no" from a
  * price objection, so P3 offers the self-serve exit only when the customer is postponing. */
@@ -1032,7 +1075,14 @@ async function advanceBooking(
       // A side question mid-collection — an OFF_FUNNEL intent OR any "?" the extractor
       // mis-tagged (e.g. "¿cuánto el total?" as cotizar). Answer it FIRST so we don't ignore
       // it and re-fire the data prompt, then re-ask the current gap WITH escalating phrasing.
-      if (OFF_FUNNEL.has(intent) || userMessage.includes("?")) {
+      // R2: also catch questions WITHOUT a literal "?" ("que horario tienes") — the dominant
+      // steamroll bug — when CHAT_FUNNEL_ROBUSTNESS is on.
+      const sideQuestion =
+        OFF_FUNNEL.has(intent) ||
+        userMessage.includes("?") ||
+        (process.env.CHAT_FUNNEL_ROBUSTNESS === "on" &&
+          looksLikeQuestion(userMessage));
+      if (sideQuestion) {
         const ans = await freeFormText();
         if (ans) writeText(ans);
         return askCustomerField(state, writeText);
@@ -1063,8 +1113,13 @@ async function advanceBooking(
       }
 
       // Not a confirmation. Answer any side question, then re-prompt (NOT the full
-      // summary again — it was already shown when we entered `confirming`).
-      if (OFF_FUNNEL.has(intent)) {
+      // summary again — it was already shown when we entered `confirming`). R2: also a
+      // question without a literal "?" when CHAT_FUNNEL_ROBUSTNESS is on.
+      if (
+        OFF_FUNNEL.has(intent) ||
+        (process.env.CHAT_FUNNEL_ROBUSTNESS === "on" &&
+          looksLikeQuestion(userMessage))
+      ) {
         const ans = await freeFormText();
         if (ans) writeText(ans);
       }

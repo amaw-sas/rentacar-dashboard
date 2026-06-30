@@ -21,6 +21,15 @@ import { brandName } from "@/lib/chat/orchestrator/blocks";
 export async function freeFormSystem(brand: string): Promise<string> {
   const knowledge = await buildKnowledgeSection();
   const name = brandName(brand);
+  // R2: extra rules that fix the steamrolled-schedule answer and the multi-vehicle contradiction.
+  // Appended LAST (more specific → the model follows them over the general lines above). Gated.
+  const r2Rules =
+    process.env.CHAT_FUNNEL_ROBUSTNESS === "on"
+      ? [
+          "Horario de sede: si el cliente PREGUNTA directamente por el horario de una sede (p. ej. 'qué horario tienen'), RESPÓNDESELO con el horario que tienes en el contexto (o con `info_sedes`) — no lo evadas; recién después retoma lo que faltaba. Si no lo pregunta, solo menciónalo cuando una hora pedida caiga fuera.",
+          "Un vehículo por reserva: por este medio gestionas la reserva de UN solo vehículo. Si el cliente pide 2 o más, NUNCA ofrezcas reservarlos ni coordinarlos por aquí; aclara que gestionas uno y que para los demás lo pasas con un asesor. No te contradigas diciendo que 'puedes revisar 2'.",
+        ]
+      : [];
   return [
     `Eres Valeria, asesora virtual de ${name} (alquiler de carros, español de Colombia, cálida y breve). Responde SOLO la pregunta o el mensaje ACTUAL del cliente, en 1–3 frases.`,
     `Eres de ${name}: NUNCA menciones otra marca de alquiler ni un nombre distinto al de ${name} (aunque el material de apoyo nombre otra marca, esa es solo de referencia).`,
@@ -40,6 +49,7 @@ export async function freeFormSystem(brand: string): Promise<string> {
     "Recomendación: la gama que más eligen los clientes es la más económica (el 'económico'); si el cliente busca camioneta/SUV/7 puestos, la más pedida es la camioneta MÁS ECONÓMICA de la cotización. Recomiéndala por su código y precio ya cotizado.",
     "NUNCA uses urgencia falsa ni inventes escasez ('queda 1', cifras de demanda): usa solo hechos reales.",
     "Mantente siempre en el tema de alquiler de carros de la marca.",
+    ...r2Rules,
     "",
     knowledge,
   ].join("\n");

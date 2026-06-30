@@ -56,7 +56,7 @@ const { getLocationDirectory } = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/api/location-directory", () => ({ getLocationDirectory }));
 
-import { runTurn } from "@/lib/chat/orchestrator";
+import { runTurn, looksLikeQuestion } from "@/lib/chat/orchestrator";
 import { initialState, type ConversationState } from "@/lib/chat/orchestrator/slots";
 
 interface Chunk {
@@ -1799,5 +1799,149 @@ describe("orchestrator runTurn — proactive self-serve link (CHAT_SELFSERVE_LIN
       now: NOW,
     });
     expect(buttons(chunks)).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Funnel robustness (R2 · CHAT_FUNNEL_ROBUSTNESS): answer a side question without "?" during
+// data collection; reconcile tipo_vehiculo to the chosen gama.
+// ---------------------------------------------------------------------------
+
+describe("looksLikeQuestion", () => {
+  it("detects questions with and without a literal '?'", () => {
+    expect(looksLikeQuestion("que horario tienes")).toBe(true);
+    expect(looksLikeQuestion("no tienes C")).toBe(true);
+    expect(looksLikeQuestion("¿cuánto vale?")).toBe(true);
+    expect(looksLikeQuestion("NO RESPONDISTE MI PREGUNTA")).toBe(true);
+  });
+  it("does not flag plain data answers", () => {
+    expect(looksLikeQuestion("Cristo Redentor")).toBe(false);
+    expect(looksLikeQuestion("CC 94494358")).toBe(false);
+    expect(looksLikeQuestion("test@artesyweb.com")).toBe(false);
+  });
+});
+
+describe("orchestrator runTurn — funnel robustness (CHAT_FUNNEL_ROBUSTNESS)", () => {
+  afterEach(() => {
+    delete process.env.CHAT_FUNNEL_ROBUSTNESS;
+  });
+
+  const collectingState = () =>
+    quotedState({
+      phase: "collecting_customer",
+      slots: {
+        ciudad: "bogota",
+        fecha_recogida: "2026-07-01",
+        fecha_devolucion: "2026-07-04",
+        gama_elegida: "C",
+        cliente: {},
+      },
+    });
+
+  it("answers a side question without '?' during data collection (flag on)", async () => {
+    process.env.CHAT_FUNNEL_ROBUSTNESS = "on";
+    extractSlots.mockResolvedValue({ intent: "da_datos", updates: {} });
+    const { writer } = fakeWriter();
+    await runTurn(writer, {
+      brand: "alquilatucarro",
+      conversationId: "c1",
+      state: collectingState(),
+      userMessage: "que horario tienes",
+      recentContext: [],
+      now: NOW,
+    });
+    expect(streamText).toHaveBeenCalled(); // free-form answered before re-asking
+  });
+
+  it("steamrolls the same question when the flag is off (no free-form)", async () => {
+    extractSlots.mockResolvedValue({ intent: "da_datos", updates: {} });
+    const { writer } = fakeWriter();
+    await runTurn(writer, {
+      brand: "alquilatucarro",
+      conversationId: "c1",
+      state: collectingState(),
+      userMessage: "que horario tienes",
+      recentContext: [],
+      now: NOW,
+    });
+    expect(streamText).not.toHaveBeenCalled();
+  });
+
+  const outOfHoursQuote = () => ({
+    intent: "cotizar" as const,
+    updates: {
+      ciudad: "bogota",
+      fecha_recogida: "2026-08-01",
+      fecha_devolucion: "2026-08-06",
+      hora_recogida: "04:00",
+    },
+  });
+  const greetedNoQuote = (): ConversationState => ({
+    ...initialState(),
+    flags: { greeted: true, requisitos_shown: false, quote_shown: false },
+  });
+
+  it("answers an out-of-hours quote failure with the schedule (flag on)", async () => {
+    process.env.CHAT_FUNNEL_ROBUSTNESS = "on";
+    extractSlots.mockResolvedValue(outOfHoursQuote());
+    getQuoteTable.mockResolvedValue({
+      ok: false,
+      message:
+        "La hora de recogida está por fuera del horario de atención de la sede seleccionada",
+    });
+    const { writer } = fakeWriter();
+    await runTurn(writer, {
+      brand: "alquilatucarro",
+      conversationId: "c1",
+      state: greetedNoQuote(),
+      userMessage: "recojo a las 4am",
+      recentContext: [],
+      now: NOW,
+    });
+    expect(streamText).toHaveBeenCalled(); // free-form proposes a valid time
+  });
+
+  it("falls back to the plain error when the flag is off", async () => {
+    extractSlots.mockResolvedValue(outOfHoursQuote());
+    getQuoteTable.mockResolvedValue({
+      ok: false,
+      message:
+        "La hora de recogida está por fuera del horario de atención de la sede seleccionada",
+    });
+    const { chunks, writer } = fakeWriter();
+    await runTurn(writer, {
+      brand: "alquilatucarro",
+      conversationId: "c1",
+      state: greetedNoQuote(),
+      userMessage: "recojo a las 4am",
+      recentContext: [],
+      now: NOW,
+    });
+    expect(streamText).not.toHaveBeenCalled();
+    expect(textOf(chunks).toLowerCase()).toContain("horario");
+  });
+
+  it("reconciles tipo_vehiculo to the chosen gama's class", async () => {
+    process.env.CHAT_FUNNEL_ROBUSTNESS = "on";
+    extractSlots.mockResolvedValue({ intent: "tangencial", updates: {} });
+    const { writer } = fakeWriter();
+    await runTurn(writer, {
+      brand: "alquilatucarro",
+      conversationId: "c1",
+      state: quotedState({
+        slots: {
+          ciudad: "bogota",
+          fecha_recogida: "2026-07-01",
+          fecha_devolucion: "2026-07-04",
+          gama_elegida: "C", // an "Económico" → auto
+          tipo_vehiculo: "camioneta", // stale
+          cliente: {},
+        },
+      }),
+      userMessage: "gracias",
+      recentContext: [],
+      now: NOW,
+    });
+    expect(lastSaved().slots.tipo_vehiculo).toBe("auto");
   });
 });

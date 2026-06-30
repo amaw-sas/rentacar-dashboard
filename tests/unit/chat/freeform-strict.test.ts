@@ -14,6 +14,7 @@ vi.mock("@/lib/chat/model-config", () => ({
 import {
   freeFormConfig,
   freeFormSedeContext,
+  freeFormSystem,
 } from "@/lib/chat/orchestrator/prompts";
 
 const steps = (n: number) => ({ steps: Array.from({ length: n }) });
@@ -73,5 +74,23 @@ describe("freeFormConfig — strict border (CHAT_FREEFORM_STRICT)", () => {
     expect(cfg.tools).not.toHaveProperty("crear_reserva");
     expect(cfg.tools).not.toHaveProperty("cotizar");
     expect(cfg.tools).toHaveProperty("info_sedes");
+  });
+});
+
+describe("freeFormSystem — R2 rules (CHAT_FUNNEL_ROBUSTNESS)", () => {
+  afterEach(() => {
+    delete process.env.CHAT_FUNNEL_ROBUSTNESS;
+  });
+
+  it("on: adds the answer-the-schedule and one-vehicle rules", async () => {
+    process.env.CHAT_FUNNEL_ROBUSTNESS = "on";
+    const sys = await freeFormSystem("alquilatucarro");
+    expect(sys).toContain("UN solo vehículo");
+    expect(sys).toMatch(/horario.*RESP[OÓ]NDESELO/i);
+  });
+
+  it("off: those rules are absent (unchanged prompt)", async () => {
+    const sys = await freeFormSystem("alquilatucarro");
+    expect(sys).not.toContain("UN solo vehículo");
   });
 });

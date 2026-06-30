@@ -60,6 +60,7 @@ describe("buildFallbackLinks", () => {
     );
     expect(links?.webUrl).toBe(
       "https://alquilatucarro.com/armenia/buscar-vehiculos" +
+        "/referido/valeria-bot" +
         "/lugar-recogida/armenia-aeropuerto/lugar-devolucion/armenia-aeropuerto" +
         "/fecha-recogida/2026-08-01/fecha-devolucion/2026-08-08" +
         "/hora-recogida/12:00/hora-devolucion/12:00/categoria/fx",

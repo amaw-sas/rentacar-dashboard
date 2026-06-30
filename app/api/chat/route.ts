@@ -23,6 +23,7 @@ import {
 import { hashClientIp } from "@/lib/chat/client-ip";
 import { isChatEnabledForBrand } from "@/lib/chat/brand-status";
 import { getFranchiseBranding } from "@/lib/constants/franchises";
+import type { AttributionInput } from "@/lib/attribution/derive-channel";
 import { isDuplicateUserMessage } from "@/lib/chat/input-hygiene";
 import { recordTurnError } from "@/lib/chat/turn-error";
 import { runShadowExtraction } from "@/lib/chat/orchestrator/extract";
@@ -77,6 +78,9 @@ interface ChatBody {
   messages: UIMessage[];
   conversationId?: string;
   brand: string;
+  /** Customer's marketing origin (utm/click-ids/referrer) captured by the widget. Raw
+   * + untrusted (anonymous public body) → sanitized via `sanitizeAttribution` before use. */
+  attribution?: unknown;
   /** TEST ONLY: override "now" for date resolution during replay/eval. Honored ONLY when
    * CHAT_ALLOW_TEST_NOW=1 (set on preview, NEVER production) so real customers are unaffected
    * and replays of past chats stop hitting phantom "fecha ya pasó" gates. */
@@ -103,6 +107,37 @@ function extractText(message: UIMessage): string {
 
 function jsonError(message: string, status: number) {
   return NextResponse.json({ error: message }, { status, headers: CORS_HEADERS });
+}
+
+/** The marketing-attribution keys the widget may forward (mirror of AttributionInput). */
+const ATTRIBUTION_KEYS = [
+  "utm_source",
+  "utm_medium",
+  "gclid",
+  "gad_source",
+  "fbclid",
+  "ttclid",
+  "msclkid",
+  "referrer",
+] as const;
+const MAX_ATTRIBUTION_CHARS = 512;
+
+/**
+ * Sanitize the widget-supplied attribution: keep ONLY the known string keys, each
+ * length-capped. The chat body is anonymous/public, so its shape is never trusted.
+ * Returns undefined when absent/non-object (→ derived channel "Desconocido"); an object
+ * with no valid keys passes through as {} (→ "Directo"). Only affects reporting, never
+ * the booking itself.
+ */
+function sanitizeAttribution(raw: unknown): AttributionInput | undefined {
+  if (raw === null || typeof raw !== "object") return undefined;
+  const src = raw as Record<string, unknown>;
+  const out: AttributionInput = {};
+  for (const k of ATTRIBUTION_KEYS) {
+    const v = src[k];
+    if (typeof v === "string" && v) out[k] = v.slice(0, MAX_ATTRIBUTION_CHARS);
+  }
+  return out;
 }
 
 /**
@@ -373,6 +408,7 @@ export async function POST(request: Request) {
           recentContext,
           now: resolveNow(body),
           ipHash: ipHash ?? undefined,
+          attribution: sanitizeAttribution(body.attribution),
         });
       },
       onError: (e) => {

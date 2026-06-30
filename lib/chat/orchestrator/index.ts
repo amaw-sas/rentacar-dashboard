@@ -21,6 +21,7 @@ import { getGamaCards } from "./gama-cards";
 import { freeFormConfig, freeFormSedeContext } from "./prompts";
 import { runInfoSedes } from "@/lib/chat/knowledge-tools";
 import { chatAbortSignal } from "@/lib/chat/model-config";
+import type { AttributionInput } from "@/lib/attribution/derive-channel";
 import {
   groundSlots,
   hasBookingHours,
@@ -85,6 +86,8 @@ export interface RunTurnInput {
   now: Date;
   /** Salted client-IP hash for the booking rate cap (threaded by the route). */
   ipHash?: string;
+  /** Customer's real marketing origin (utm/click-ids/referrer) from the widget; drives "Origen". */
+  attribution?: AttributionInput;
 }
 
 /**
@@ -153,8 +156,15 @@ export async function runTurn(
   writer: UIMessageStreamWriter,
   input: RunTurnInput,
 ): Promise<void> {
-  const { brand, conversationId, userMessage, recentContext, now, ipHash } =
-    input;
+  const {
+    brand,
+    conversationId,
+    userMessage,
+    recentContext,
+    now,
+    ipHash,
+    attribution,
+  } = input;
   let state = input.state;
 
   let blockId = 0;
@@ -459,6 +469,7 @@ export async function runTurn(
       brand,
       conversationId,
       ipHash,
+      attribution,
     });
   const emitQuoteTable = (table: NonNullable<ConversationState["lastQuote"]>) => {
     writer.write({ type: "data-quoteTable", data: quoteTableData(table) });
@@ -1012,6 +1023,8 @@ interface BookingStepInput {
   brand: string;
   conversationId: string | null;
   ipHash?: string;
+  /** Customer's real marketing origin (utm/click-ids/referrer) from the widget. */
+  attribution?: AttributionInput;
 }
 
 /**
@@ -1350,7 +1363,8 @@ async function bookNow(
   input: BookingStepInput,
   lastQuote: NonNullable<ConversationState["lastQuote"]>,
 ): Promise<ConversationState> {
-  const { writer, writeText, state, brand, conversationId, ipHash } = input;
+  const { writer, writeText, state, brand, conversationId, ipHash, attribution } =
+    input;
 
   const chosen = state.slots.gama_elegida
     ? findGama(lastQuote, state.slots.gama_elegida)
@@ -1373,6 +1387,7 @@ async function bookNow(
       phone: c.phone ?? "",
     },
     gamaDescripcion: chosen.descripcion,
+    attribution,
     ctx: { conversationId, ipHash },
   });
 

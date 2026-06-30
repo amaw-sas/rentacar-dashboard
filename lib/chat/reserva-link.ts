@@ -1,5 +1,6 @@
 import { decodeQuote } from "@/lib/api/mcp/quote";
 import { getFranchiseBranding } from "@/lib/constants/franchises";
+import { botReferralCode } from "@/lib/chat/bot-referral";
 import type { LocationDirectoryItem } from "@/lib/api/location-directory";
 
 /**
@@ -85,8 +86,16 @@ function buildLinkContext(
   const r = splitDateTime(ctx.returnDateTime);
   const categoria = ctx.categoryCode.toLowerCase();
 
+  // Stamp the bot's referido in the deep-link (the site's `/referido/<code>/` route
+  // sets the referente → "Referido" column), so a customer who finishes on the web
+  // via the BOT's link is credited to the bot — but one who uses an advisor's own
+  // link keeps that advisor. The code is the bot's identity, so the link always
+  // carries it (the CHAT_ATTRIBUTION_BOT flag gates the in-chat booking, not the link).
+  const referralCode = botReferralCode(input.brand);
+  const referralSeg = referralCode ? `/referido/${referralCode}` : "";
+
   const webUrl =
-    `${branding.website}/${pickup.city}/buscar-vehiculos` +
+    `${branding.website}/${pickup.city}/buscar-vehiculos${referralSeg}` +
     `/lugar-recogida/${pickup.slug}/lugar-devolucion/${ret.slug}` +
     `/fecha-recogida/${p.date}/fecha-devolucion/${r.date}` +
     `/hora-recogida/${p.hour}/hora-devolucion/${r.hour}` +

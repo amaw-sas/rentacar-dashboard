@@ -1,6 +1,9 @@
 import { z } from "zod";
 import { crearSolicitudReserva } from "@/lib/api/mcp/tools";
-import type { AttributionChannel } from "@/lib/attribution/derive-channel";
+import type {
+  AttributionChannel,
+  AttributionInput,
+} from "@/lib/attribution/derive-channel";
 
 /**
  * Chat tool layer for creating a reservation (Chat Fase 2 · Incremento 3). Wraps
@@ -53,10 +56,15 @@ export interface RunCrearReservaInput {
   email: string;
   phone: string;
   franchise: string;
-  // Issue #199 (Fase 0): channel override forwarded to the service. Set by
-  // booking-core to 'chat-bot' (behind CHAT_ATTRIBUTION_BOT) so the reservation
-  // is stamped as bot-created. Undefined → service derives from utm (none here).
+  // Channel override forwarded to the service. The orchestrator no longer sets this
+  // (the bot is an advisor, not a channel); kept for any caller that still overrides.
   attribution_channel?: AttributionChannel;
+  // Referido (advisor) code → fills the "Referido" column. booking-core sets the
+  // brand's bot code (valeria-bot/…) behind CHAT_ATTRIBUTION_BOT. Server-side only.
+  user?: string;
+  // Real marketing origin (utm/click-ids/referrer) forwarded from the widget →
+  // drives the derived "Origen" channel. Undefined → "Desconocido"; {} → "Directo".
+  attribution?: AttributionInput;
 }
 
 export type CrearReservaResult =
@@ -76,6 +84,8 @@ export async function runCrearReserva(
     phone: args.phone,
     franchise: args.franchise,
     attribution_channel: args.attribution_channel,
+    user: args.user,
+    attribution: args.attribution,
   });
 
   const text =

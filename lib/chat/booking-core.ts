@@ -4,6 +4,8 @@ import {
   normalizeIdentification,
   type CustomerData,
 } from "@/lib/chat/customer-validation";
+import { botReferralCode } from "@/lib/chat/bot-referral";
+import type { AttributionInput } from "@/lib/attribution/derive-channel";
 import { runCrearReserva } from "@/lib/chat/reserva-tool";
 import { buildFallbackLinks } from "@/lib/chat/reserva-link";
 import { getLocationDirectory } from "@/lib/api/location-directory";
@@ -76,6 +78,14 @@ export function reservationsEnabled(): boolean {
  * dashboard. Off by default so it never changes the recorded channel until
  * enabled per environment (matches the issue's "everything behind a flag").
  */
+/**
+ * When on (CHAT_ATTRIBUTION_BOT=true), a bot-closed reservation is stamped with the
+ * brand's bot REFERIDO (Valeria/Vanesa/Elisa Bot) in the "Referido" column — the bot
+ * acts as a virtual advisor. It does NOT touch "Origen": the real marketing channel
+ * is derived from the customer's UTM/click-ids (forwarded by the widget). Off → no
+ * referido stamped (the prior 'chat-bot' channel override is gone — the bot is an
+ * advisor, not a channel).
+ */
 function attributionBotEnabled(): boolean {
   return process.env.CHAT_ATTRIBUTION_BOT === "true";
 }
@@ -128,9 +138,11 @@ export async function executeBooking(params: {
   quote: string;
   customer: CustomerData;
   gamaDescripcion?: string;
+  /** Real marketing origin (utm/click-ids/referrer) forwarded by the widget; drives "Origen". */
+  attribution?: AttributionInput;
   ctx?: BookingContext;
 }): Promise<BookingOutcome> {
-  const { brand, quote, customer, gamaDescripcion, ctx } = params;
+  const { brand, quote, customer, gamaDescripcion, attribution, ctx } = params;
 
   // Gated: off by default so the public endpoint never books until enabled per
   // brand. Degrades to "finish on the site".
@@ -195,7 +207,11 @@ export async function executeBooking(params: {
     email: customer.email,
     phone: customer.phone,
     franchise: brand,
-    attribution_channel: attributionBotEnabled() ? "chat-bot" : undefined,
+    // Referido = the brand's bot advisor (Valeria/Vanesa/Elisa Bot), gated. Origen is
+    // left to derive from the real customer attribution below — the bot no longer
+    // overrides the channel to 'chat-bot'.
+    user: attributionBotEnabled() ? botReferralCode(brand) : undefined,
+    attribution,
   });
   // Telemetry for the real provider attempt (drives the dashboard health alert AND
   // the booking caps above). Fire-and-forget — never await, never block the turn.

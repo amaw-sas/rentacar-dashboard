@@ -211,6 +211,28 @@ export function quoteClosingLine(): string {
   return "Reservar hoy te asegura este precio y el cupo —la disponibilidad cambia a diario. ¿Con cuál gama te gustaría seguir?";
 }
 
+/**
+ * Suggestion under a LONG quote when the monthly rate (LIMITED km, national) undercuts the
+ * day-by-day total (UNLIMITED km). The caller only emits this once it confirmed the cross-over
+ * (monthly < daily total). Honest trade-off: cheaper BUT km-capped (compares the cheapest plan,
+ * 1.000 km, and says there are higher-km plans). COP is defined later in the file but read at
+ * call time, so the forward reference is fine.
+ */
+export function monthlySuggestionLine(
+  gamaCode: string,
+  dias: number,
+  totalDiario: number,
+  mensual1000: number,
+): string {
+  const ahorro = totalDiario - mensual1000;
+  return (
+    `💡 Para una estadía tan larga te conviene nuestra tarifa MENSUAL: la Gama ${gamaCode} ` +
+    `sale **$${COP.format(mensual1000)}/mes** con 1.000 km incluidos (hay planes de más km por ` +
+    `un poco más) — más económica que los **$${COP.format(totalDiario)}** de tus ${dias} días ` +
+    `sueltos con km ilimitado: te ahorras ~**$${COP.format(ahorro)}**. ¿Te muestro la opción mensual?`
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Grounding blocks (P0 · CHAT_SLOT_GROUNDING). Deterministic replies for the slot
 // corrections `groundSlots` makes — code-owned so the LLM can't garble them.

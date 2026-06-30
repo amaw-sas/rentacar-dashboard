@@ -19,7 +19,7 @@ import {
 import { findGama, getQuoteTable, type QuoteRow } from "./quote-service";
 import { getGamaCards } from "./gama-cards";
 import { freeFormConfig, freeFormSedeContext } from "./prompts";
-import { runInfoSedes } from "@/lib/chat/knowledge-tools";
+import { runInfoSedes, runTarifaMensual } from "@/lib/chat/knowledge-tools";
 import { chatAbortSignal } from "@/lib/chat/model-config";
 import type { AttributionInput } from "@/lib/attribution/derive-channel";
 import {
@@ -55,6 +55,7 @@ import {
   quoteSlotQuestion,
   recommendedGama,
   quoteClosingLine,
+  monthlySuggestionLine,
   quoteCoreSignature,
   quoteSignature,
   quotesPriceEqual,
@@ -529,6 +530,38 @@ export async function runTurn(
     writeText(quoteClosingLine());
   };
 
+  // For a LONG stay, the daily total (unlimited km) can beat the monthly rate (limited km).
+  // When it does, surface the monthly option with the honest trade-off so the customer doesn't
+  // overpay. Best-effort (a DB hiccup never breaks the quote); gated by CHAT_MONTHLY_SUGGEST.
+  const maybeSuggestMonthly = async (
+    table: NonNullable<ConversationState["lastQuote"]>,
+  ) => {
+    if (process.env.CHAT_MONTHLY_SUGGEST !== "on") return;
+    const minDias = Number(process.env.CHAT_MONTHLY_SUGGEST_MIN_DIAS) || 25;
+    if (table.dias < minDias || !state.slots.fecha_recogida) return;
+    const rec = recommendedGama(
+      table,
+      state.slots.transmision,
+      state.slots.tipo_vehiculo,
+    );
+    if (!rec) return;
+    try {
+      const r = (await runTarifaMensual({
+        gama: rec.categoria,
+        fecha_recogida: state.slots.fecha_recogida,
+      })) as { mensual_1000km?: unknown };
+      const mensual = r?.mensual_1000km;
+      // CROSS-OVER: only when the monthly (limited km) is genuinely cheaper than the days.
+      if (typeof mensual === "number" && mensual > 0 && mensual < rec.precioTotal) {
+        writeText(
+          monthlySuggestionLine(rec.categoria, table.dias, rec.precioTotal, mensual),
+        );
+      }
+    } catch (e) {
+      console.error("[orchestrator] maybeSuggestMonthly failed", e);
+    }
+  };
+
   // On-demand intercept (Etapa 4): vehicle cards, the self-serve reservation link, or the
   // advisor WhatsApp. Runs unless a REAL fresh quote is pending — but a sede-only change is
   // not a real re-quote, so an explicit on-demand request that also names a sede ("el enlace
@@ -648,6 +681,7 @@ export async function runTurn(
       }
       const modelsByGama = await modelsForTable(state, qr.table);
       emitQuoteTable(qr.table);
+      await maybeSuggestMonthly(qr.table);
       state = {
         ...state,
         phase: "quoted",

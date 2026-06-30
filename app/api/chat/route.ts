@@ -21,6 +21,7 @@ import {
   type PersistedMessage,
 } from "@/lib/chat/persistence";
 import { hashClientIp } from "@/lib/chat/client-ip";
+import { isChatEnabledForBrand } from "@/lib/chat/brand-status";
 import { isDuplicateUserMessage } from "@/lib/chat/input-hygiene";
 import { recordTurnError } from "@/lib/chat/turn-error";
 import { runShadowExtraction } from "@/lib/chat/orchestrator/extract";
@@ -153,6 +154,13 @@ export async function POST(request: Request) {
   }
   if (!brand || typeof brand !== "string") {
     return jsonError("Campo 'brand' requerido", 400);
+  }
+
+  // Per-brand on/off switch (launch gate). Inert unless CHAT_BRAND_SWITCH=on; then a
+  // brand toggled off in the dashboard (chat_brand_settings) stops serving. Defense in
+  // depth — the widget already hides via /api/chat/status — returning a clean 403.
+  if (!(await isChatEnabledForBrand(brand))) {
+    return jsonError("El chat no está disponible en este momento.", 403);
   }
 
   // Input-size caps (anti-stuffing / anti-injection). Reject oversized payloads

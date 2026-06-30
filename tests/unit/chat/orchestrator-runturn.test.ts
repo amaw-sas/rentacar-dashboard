@@ -1698,6 +1698,115 @@ describe("orchestrator runTurn — gama integrity (CHAT_GAMA_INTEGRITY)", () => 
     expect(dataParts(chunks, "data-quoteTable")).toHaveLength(0);
     expect(textOf(chunks)).toContain("6 días");
   });
+
+  it("(S1) showing cards: an explicit 'gama C' in the message wins over a contaminated gama_elegida", async () => {
+    // The live bug: gama_elegida got stuck on the camioneta (GC) from the bot's own recommendation;
+    // every later "muéstrame los de gama C" re-showed the camioneta. The explicit code must win.
+    getGamaCards.mockResolvedValue({
+      gama: "C",
+      descripcion: "Económico",
+      modelos: [{ nombre: "Renault Kwid", imagen: "https://img/kwid.png" }],
+    });
+    extractSlots.mockResolvedValue({ intent: "pregunta_gama", updates: {} });
+    const { chunks, writer } = fakeWriter();
+    await runTurn(writer, {
+      brand: "alquilatucarro",
+      conversationId: "c1",
+      state: quotedState({
+        slots: {
+          ciudad: "bogota",
+          fecha_recogida: "2026-07-01",
+          fecha_devolucion: "2026-07-04",
+          gama_elegida: "F", // contaminated with the camioneta (GC analog)
+          tipo_vehiculo: "camioneta",
+          cliente: {},
+        },
+      }),
+      userMessage: "dime que vehiculos son los de gama C",
+      recentContext: [],
+      now: NOW,
+    });
+    expect(getGamaCards).toHaveBeenCalledWith("C", "Económico"); // C, not the stuck F
+    expect(dataParts(chunks, "data-gamaCards")).toHaveLength(1);
+  });
+
+  it("(S2) a question carrying 'si' (if) is NOT a buy signal and does not commit the recommended camioneta", async () => {
+    // "que vehiculo me entregan si escogo la C": isAffirmative matches the conjunction "si", so the
+    // buy-signal branch fired and committed the recommended camioneta (GC) over the real question.
+    extractSlots.mockResolvedValue({ intent: "pregunta_gama", updates: {} });
+    const { chunks, writer } = fakeWriter();
+    await runTurn(writer, {
+      brand: "alquilatucarro",
+      conversationId: "c1",
+      state: quotedState({
+        phase: "choosing_gama",
+        slots: { tipo_vehiculo: "camioneta", cliente: {} },
+      }),
+      userMessage: "que vehiculo me entregan si escogo la C",
+      recentContext: [],
+      now: NOW,
+    });
+    expect(lastSaved().slots.gama_elegida).toBeUndefined(); // did NOT commit the camioneta
+    expect(textOf(chunks)).not.toContain("seguimos con la **Gama F**");
+  });
+
+  it("(S2-off) with the flag OFF the same question still mis-commits the camioneta (gate proof)", async () => {
+    delete process.env.CHAT_GAMA_INTEGRITY;
+    extractSlots.mockResolvedValue({ intent: "pregunta_gama", updates: {} });
+    const { chunks, writer } = fakeWriter();
+    await runTurn(writer, {
+      brand: "alquilatucarro",
+      conversationId: "c1",
+      state: quotedState({
+        phase: "choosing_gama",
+        slots: { tipo_vehiculo: "camioneta", cliente: {} },
+      }),
+      userMessage: "que vehiculo me entregan si escogo la C",
+      recentContext: [],
+      now: NOW,
+    });
+    expect(lastSaved().slots.gama_elegida).toBe("F"); // old behavior: stuck on the camioneta
+    void chunks;
+  });
+
+  it("(S3) a real affirmative (no question) still commits the recommended gama with the flag on", async () => {
+    extractSlots.mockResolvedValue({ intent: "confirma_reserva", updates: {} });
+    const { chunks, writer } = fakeWriter();
+    await runTurn(writer, {
+      brand: "alquilatucarro",
+      conversationId: "c1",
+      state: quotedState({
+        phase: "choosing_gama",
+        slots: { tipo_vehiculo: "camioneta", cliente: {} },
+      }),
+      userMessage: "resérvamelo",
+      recentContext: [],
+      now: NOW,
+    });
+    expect(lastSaved().slots.gama_elegida).toBe("F"); // recommended camioneta still committed
+    expect(textOf(chunks)).toContain("Gama F");
+  });
+
+  it("(S4) a da_datos buy signal that names a gama explicitly commits that gama (Fix B-ii path), not the camioneta", async () => {
+    // da_datos is the one buy-signal intent the R1 override (index.ts:337) does NOT cover, so this
+    // exercises the explicit-gama commit inside the buy-signal branch itself, not R1.
+    extractSlots.mockResolvedValue({ intent: "da_datos", updates: {} });
+    const { writer } = fakeWriter();
+    await runTurn(writer, {
+      brand: "alquilatucarro",
+      conversationId: "c1",
+      state: quotedState({
+        phase: "choosing_gama",
+        slots: { tipo_vehiculo: "camioneta", cliente: {} },
+      }),
+      userMessage: "ya te di mis datos, dejémoslo en la gama c",
+      recentContext: [],
+      now: NOW,
+    });
+    expect(lastSaved().slots.gama_elegida).toBe("C"); // the named C, not the recommended camioneta
+    expect(lastSaved().slots.tipo_vehiculo).toBe("auto"); // tipo reconciled to the chosen class
+    expect(lastSaved().phase).toBe("collecting_customer");
+  });
 });
 
 // ---------------------------------------------------------------------------

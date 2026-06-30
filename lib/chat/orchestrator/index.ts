@@ -754,6 +754,14 @@ function resolveOnDemandGama(
 ): QuoteRow | undefined {
   const lastQuote = state.lastQuote;
   if (!lastQuote) return undefined;
+  // An explicit gama named in THIS message ("gama c") wins over the stored pick (R1 · gama
+  // integrity): otherwise a gama_elegida contaminated with the bot's own recommendation (GC)
+  // keeps re-showing GC when the customer asks again and again for "gama c". Flag-gated.
+  if (process.env.CHAT_GAMA_INTEGRITY === "on") {
+    const code = explicitGamaCode(userMessage, lastQuote);
+    const explicit = code ? findGama(lastQuote, code) : undefined;
+    if (explicit) return explicit;
+  }
   if (state.slots.gama_elegida) {
     const r = findGama(lastQuote, state.slots.gama_elegida);
     if (r) return r;
@@ -1057,12 +1065,40 @@ async function advanceBooking(
       }
       // A clear BUY signal — an affirmative ("reservemos", "dale") or the customer handed over
       // data (da_datos) — but no gama resolved. The recommendation (respects stated transmission/
-      // class; null when nothing matches, so we never offer the wrong product).
+      // class; null when nothing matches, so we never offer the wrong product). An affirmative that
+      // is also a QUESTION is NOT a buy signal: "si escogo la C" carries the conjunction "si" (if),
+      // not "sí" (yes), and must not commit the recommended gama (GC) over the real question
+      // (R1 · gama integrity). Flag-gated; off → previous behavior.
+      const gamaIntegrity = process.env.CHAT_GAMA_INTEGRITY === "on";
       if (
         intent === "da_datos" ||
         intent === "confirma_reserva" ||
-        isAffirmative(userMessage)
+        (isAffirmative(userMessage) &&
+          !(gamaIntegrity && looksLikeQuestion(userMessage)))
       ) {
+        // An explicit gama named in the buy signal ("reservemos la gama f") wins over the default
+        // recommendation, so a contaminated "camioneta" tipo never steers a named pick back to GC
+        // (R1 · gama integrity). Flag-gated.
+        if (gamaIntegrity) {
+          const code = explicitGamaCode(userMessage, lastQuote);
+          const picked = code ? findGama(lastQuote, code) : undefined;
+          if (picked) {
+            writeText(
+              `Perfecto, seguimos con la **Gama ${picked.categoria}** (${picked.descripcion}); si prefieres otra, dímelo.`,
+            );
+            return proceedToCustomer({
+              ...state,
+              phase: "collecting_customer",
+              slots: {
+                ...state.slots,
+                gama_elegida: picked.categoria,
+                // Reconcile tipo to the chosen class (matches the R1 override) so a stale
+                // "camioneta" doesn't trip the vehicle-class mismatch warning on a gama they named.
+                tipo_vehiculo: isCamioneta(picked.descripcion) ? "camioneta" : "auto",
+              },
+            });
+          }
+        }
         // Default to the recommended gama that MATCHES the stated transmission/class. If none
         // matches, DON'T commit the wrong product — ask which gama. (The "ask-first instead of
         // committing" experiment REGRESSED hard: the bot's own "la más elegida es la Gama C"

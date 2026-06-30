@@ -104,7 +104,11 @@ function ButtonsCard({ data }: { data: AnyPart }) {
   const web = typeof data.web === "string" && data.web ? data.web : undefined;
   const whatsapp =
     typeof data.whatsapp === "string" && data.whatsapp ? data.whatsapp : undefined;
-  if (!web && !whatsapp) return null;
+  // The self-serve path emits `share` (WhatsApp quote share) alongside `web`; render it too so
+  // the dashboard mirrors exactly what the customer saw — otherwise the share button vanishes.
+  const share =
+    typeof data.share === "string" && data.share ? data.share : undefined;
+  if (!web && !whatsapp && !share) return null;
   return (
     <div className="rounded-lg border border-border bg-card/50 p-3 text-sm">
       <Badge variant="secondary">botones</Badge>
@@ -116,7 +120,7 @@ function ButtonsCard({ data }: { data: AnyPart }) {
             rel="noreferrer"
             className="break-all text-primary underline"
           >
-            Reservar en la web
+            Terminar mi reserva en la web
           </a>
         )}
         {whatsapp && (
@@ -127,6 +131,16 @@ function ButtonsCard({ data }: { data: AnyPart }) {
             className="break-all text-primary underline"
           >
             Escribir a un asesor
+          </a>
+        )}
+        {share && (
+          <a
+            href={share}
+            target="_blank"
+            rel="noreferrer"
+            className="break-all text-primary underline"
+          >
+            Compartir cotización
           </a>
         )}
       </div>
@@ -142,6 +156,22 @@ function ToolCard({ part, type }: { part: AnyPart; type: string }) {
   const hasInput = "input" in part && part.input !== undefined;
   const hasOutput = "output" in part && part.output !== undefined;
 
+  // Legacy (non-orchestrator) path delivers the self-serve link as a field inside the tool
+  // output, not as a data-buttons part. Surface it as a clickable link so the dashboard shows
+  // the same "Terminar mi reserva en la web" / advisor link the customer got, not buried JSON.
+  const output =
+    hasOutput && part.output && typeof part.output === "object"
+      ? (part.output as AnyPart)
+      : undefined;
+  const webLink =
+    output && typeof output.completar_en_web === "string"
+      ? output.completar_en_web
+      : undefined;
+  const advisorLink =
+    output && typeof output.whatsapp_asesor === "string"
+      ? output.whatsapp_asesor
+      : undefined;
+
   return (
     <div className="rounded-lg border border-border bg-card/50 p-3 text-sm">
       <div className="flex items-center gap-2">
@@ -156,6 +186,31 @@ function ToolCard({ part, type }: { part: AnyPart; type: string }) {
 
       {errorText && (
         <p className="mt-2 text-destructive">{errorText}</p>
+      )}
+
+      {(webLink || advisorLink) && (
+        <div className="mt-2 flex flex-col gap-1 text-xs">
+          {webLink && (
+            <a
+              href={webLink}
+              target="_blank"
+              rel="noreferrer"
+              className="break-all text-primary underline"
+            >
+              Terminar mi reserva en la web
+            </a>
+          )}
+          {advisorLink && (
+            <a
+              href={advisorLink}
+              target="_blank"
+              rel="noreferrer"
+              className="break-all text-primary underline"
+            >
+              Escribir a un asesor
+            </a>
+          )}
+        </div>
       )}
 
       {hasInput && (

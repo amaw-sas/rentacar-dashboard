@@ -110,20 +110,39 @@ describe("executeBooking", () => {
     );
   });
 
-  // Issue #199 (Fase 0): the bot stamps attribution only when CHAT_ATTRIBUTION_BOT
-  // is on; off (default) keeps the override undefined so the channel derives as today.
-  it("attribution: CHAT_ATTRIBUTION_BOT=true forwards attribution_channel 'chat-bot'", async () => {
+  // The bot stamps the brand's bot referido (Valeria/Vanesa/Elisa Bot) in the
+  // "Referido" column only when CHAT_ATTRIBUTION_BOT is on; off (default) leaves it
+  // undefined. It NO LONGER overrides "Origen" to 'chat-bot' — the bot is an advisor,
+  // not a channel; Origen is left to derive from the customer's real attribution.
+  it("attribution: CHAT_ATTRIBUTION_BOT=true stamps the brand's bot referido as `user`", async () => {
     process.env.CHAT_ATTRIBUTION_BOT = "true";
     await run();
     expect(runCrearReserva).toHaveBeenCalledWith(
+      expect.objectContaining({ user: "valeria-bot" }),
+    );
+    expect(runCrearReserva).not.toHaveBeenCalledWith(
       expect.objectContaining({ attribution_channel: "chat-bot" }),
     );
   });
 
-  it("attribution: flag off (default) leaves attribution_channel undefined", async () => {
+  it("attribution: flag off (default) leaves `user` undefined", async () => {
     await run();
     expect(runCrearReserva).toHaveBeenCalledWith(
-      expect.objectContaining({ attribution_channel: undefined }),
+      expect.objectContaining({ user: undefined }),
+    );
+  });
+
+  it("attribution: forwards the customer's real origin (utm/click-ids) verbatim", async () => {
+    await executeBooking({
+      brand: "alquilatucarro",
+      quote: "REAL_QUOTE",
+      customer: CUSTOMER,
+      gamaDescripcion: "económico",
+      attribution: { ttclid: "tt-123" },
+      ctx: CTX,
+    });
+    expect(runCrearReserva).toHaveBeenCalledWith(
+      expect.objectContaining({ attribution: { ttclid: "tt-123" } }),
     );
   });
 

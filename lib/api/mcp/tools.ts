@@ -9,7 +9,10 @@ import {
   createReservation,
   type CreateReservationInput,
 } from "@/lib/api/reservation-service";
-import type { AttributionChannel } from "@/lib/attribution/derive-channel";
+import type {
+  AttributionChannel,
+  AttributionInput,
+} from "@/lib/attribution/derive-channel";
 import { ServiceError } from "@/lib/api/service-error";
 import {
   encodeQuote,
@@ -534,6 +537,11 @@ interface CrearSolicitudReservaArgs {
   // (lib/chat/reserva-tool.ts). NOT in the public MCP input schema, so an external
   // MCP client can never forge the channel — same pattern as `total_insurance`.
   attribution_channel?: AttributionChannel;
+  // Server-only too (NOT in the public MCP schema). `user` = the bot's referido code
+  // (→ "Referido" column); `attribution` = the customer's real utm/click-ids from the
+  // widget (→ derived "Origen" channel). An external MCP client can't forge either.
+  user?: string;
+  attribution?: AttributionInput;
 }
 
 export async function crearSolicitudReserva(
@@ -591,6 +599,8 @@ export async function crearSolicitudReserva(
     aeroline: args.aeroline,
     flight_number: args.flight_number,
     attributionChannel: args.attribution_channel,
+    user: args.user,
+    attribution: args.attribution,
   };
 
   let result;

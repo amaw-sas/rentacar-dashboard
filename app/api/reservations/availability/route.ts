@@ -1,6 +1,10 @@
-import { NextResponse } from "next/server";
+import { NextResponse, after } from "next/server";
 import { searchAvailability } from "@/lib/api/availability-service";
 import { serviceErrorToResponse } from "@/lib/api/service-error";
+import {
+  searchLogContextSchema,
+  logAvailabilitySearch,
+} from "@/lib/api/search-log";
 
 // Public read endpoint (no API key): quoting has no side effects, so any AI
 // agent can fetch prices. Abuse is bounded by the Vercel WAF rate limit, not a
@@ -42,6 +46,14 @@ export async function POST(request: Request) {
     );
   }
 
+  // Optional logging context (issue #206) — backward-compatible: the funnels'
+  // current 4-field payloads parse to an empty context, so nothing changes for
+  // them. franchise/referralCode/sessionId/isMonthly arrive once the funnels are
+  // updated (follow-up). Malformed context never blocks quoting: on a parse miss
+  // we just log without it.
+  const ctx = searchLogContextSchema.safeParse(body);
+  const logContext = ctx.success ? ctx.data : {};
+
   try {
     const result = await searchAvailability({
       pickupLocation,
@@ -49,6 +61,27 @@ export async function POST(request: Request) {
       pickupDateTime,
       returnDateTime,
     });
+
+    // Fire-and-forget: log successful array responses (incl. 0 results) AFTER the
+    // response is sent. `logAvailabilitySearch` never throws; quoting is untouched.
+    if (Array.isArray(result)) {
+      const forwardedFor = request.headers.get("x-forwarded-for");
+      after(() =>
+        logAvailabilitySearch({
+          ...logContext,
+          pickupLocation,
+          returnLocation,
+          pickupDateTime,
+          returnDateTime,
+          availableCategories: result,
+          userAgent: request.headers.get("user-agent"),
+          ipAddress:
+            forwardedFor?.split(",")[0]?.trim() ??
+            request.headers.get("x-real-ip"),
+        })
+      );
+    }
+
     return NextResponse.json(result);
   } catch (e) {
     return serviceErrorToResponse(e);

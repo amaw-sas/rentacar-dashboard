@@ -10,6 +10,20 @@ vi.mock("@/lib/api/category-names", () => ({
   getCategoryNameMap: vi.fn(),
 }));
 
+// Keep the REAL NextResponse (tests rely on res.json()/res.status), but make
+// `after` inert: outside a request scope it throws, and its search_logs callback
+// (issue #206) is exercised by search-log.test.ts, not here.
+vi.mock("next/server", async (importActual) => {
+  const actual = await importActual<typeof import("next/server")>();
+  return { ...actual, after: vi.fn() };
+});
+
+// The route schedules logging via after() only on the success path (#206).
+vi.mock("@/lib/api/search-log", async (importActual) => {
+  const actual = await importActual<typeof import("@/lib/api/search-log")>();
+  return { ...actual, logAvailabilitySearch: vi.fn() };
+});
+
 // PT input as Localiza returns it; categoryCode is the join key into the ES map.
 const PT_ITEMS = [
   { categoryCode: "C", categoryDescription: "ECONÔMICO COM AR", price: 100 },
@@ -155,6 +169,54 @@ describe("POST /api/reservations/availability — category enrichment (issue #74
     expect(body.error).toBeTruthy();
     // NOT the proxy body.
     expect(body).not.toHaveProperty("__html");
+    errorSpy.mockRestore();
+  });
+
+  // SCEN-206-wiring-a — the route schedules search_logs logging on the success
+  // path. Proves POST calls after() and forwards the served array + request body
+  // to logAvailabilitySearch (the producer wiring, distinct from the producer's
+  // own unit tests).
+  it("SCEN-206a: schedules logging with the served array on a successful quote", async () => {
+    const { getCategoryNameMap } = await import("@/lib/api/category-names");
+    vi.mocked(getCategoryNameMap).mockResolvedValue(new Map());
+    vi.mocked(fetch).mockResolvedValue(
+      proxyResponse({ ok: true, status: 200, json: () => PT_ITEMS }) as Response,
+    );
+    const { after } = await import("next/server");
+    const { logAvailabilitySearch } = await import("@/lib/api/search-log");
+
+    const { POST } = await import("@/app/api/reservations/availability/route");
+    await POST(makeRequest({ ...VALID_BODY, franchise: "alquilatucarro" }));
+
+    // after() registers the deferred work; run the callback to assert the payload.
+    expect(after).toHaveBeenCalledOnce();
+    const deferred = vi.mocked(after).mock.calls[0][0] as () => unknown;
+    await deferred();
+    expect(logAvailabilitySearch).toHaveBeenCalledOnce();
+    expect(vi.mocked(logAvailabilitySearch).mock.calls[0][0]).toMatchObject({
+      franchise: "alquilatucarro",
+      pickupLocation: "BOG01",
+      availableCategories: PT_ITEMS,
+    });
+  });
+
+  // SCEN-206-wiring-b — logging is success-only: a proxy error path must NOT
+  // schedule any logging (errors are out of scope for v1).
+  it("SCEN-206b: does NOT schedule logging when the proxy errors", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.mocked(fetch).mockResolvedValue(
+      proxyResponse({
+        ok: false,
+        status: 500,
+        text: () => "<html>Bad Gateway</html>",
+      }) as Response,
+    );
+    const { after } = await import("next/server");
+
+    const { POST } = await import("@/app/api/reservations/availability/route");
+    await POST(makeRequest({ ...VALID_BODY, franchise: "alquilatucarro" }));
+
+    expect(after).not.toHaveBeenCalled();
     errorSpy.mockRestore();
   });
 });

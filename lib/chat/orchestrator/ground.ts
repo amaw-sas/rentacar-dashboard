@@ -1,5 +1,6 @@
 import type { LocationDirectoryItem } from "@/lib/api/location-directory";
 import { norm, resolveLocationCode } from "@/lib/api/mcp/tools";
+import { parseHoras } from "./hours";
 import type { Slots } from "./slots";
 
 /**
@@ -163,6 +164,18 @@ export function groundSlots(input: GroundingInput): GroundingResult {
   // BEFORE cotizando an económico that ignores what they asked for.
   const term = detectUnsupportedVehicle(userMessage);
   if (term) notes.push({ kind: "unsupported_vehicle", term });
+
+  // (d) Hours rescue. The LLM extractor intermittently drops "9am", jamming the hours
+  // gate (it re-asks forever). Parse the booking hours deterministically from the
+  // message and fill ONLY the blanks, consuming them in order for the missing slots
+  // ("9am y lo regreso 9am" → recogida 09:00, devolución 09:00). Never overwrites a
+  // good extraction; a bare number is never read as a time (see parseHoras).
+  if (!slots.hora_recogida || !slots.hora_devolucion) {
+    const horas = parseHoras(userMessage);
+    let i = 0;
+    if (!slots.hora_recogida && i < horas.length) slots.hora_recogida = horas[i++];
+    if (!slots.hora_devolucion && i < horas.length) slots.hora_devolucion = horas[i++];
+  }
 
   return { slots, notes };
 }

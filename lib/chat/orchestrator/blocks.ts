@@ -247,9 +247,16 @@ export function unsupportedVehicleLine(term: string): string {
 /**
  * Asked before moving to customer data when the booking hours aren't set (P0d). The
  * quote defaults to 10:00 when hours are absent, so without this the bot would book a
- * time the customer never confirmed.
+ * time the customer never confirmed. ESCALATES by `attempt` (1-based) so a customer
+ * whose hour we couldn't read doesn't get the SAME text on a loop (the repeated-question
+ * half of the "9am" bug) — attempt ≥2 gives an explicit format example.
  */
-export function askHoursBlock(): string {
+export function askHoursBlock(attempt = 1): string {
+  if (attempt >= 2)
+    return (
+      `No me quedó clara la hora 🙏 ¿Me la das así, recogida y devolución? ` +
+      `Por ejemplo: "recoger 9:00 am, devolver 9:00 am".`
+    );
   return (
     `Para dejar la reserva necesito las horas: ¿a qué hora recoges y a qué hora ` +
     `devuelves el vehículo? (por ejemplo: recoger 9 am, devolver 9 am)`

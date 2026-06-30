@@ -43,6 +43,7 @@ import {
   horaExtraLine,
   hourChangePriceLine,
   explicitGamaCode,
+  resolveGamaCode,
   isCamioneta,
   multiVehicleNoticeLine,
   nextBookingOfferLine,
@@ -372,6 +373,36 @@ export async function runTurn(
           },
         };
       }
+    }
+  }
+
+  // Deterministic gama-code grounding (groundGama). The LLM intermittently fails to set
+  // gama_elegida from a BARE code ("cx" — a 2-char token with no verb), so the funnel
+  // re-asked the gama list forever (the recurring "ya dio la gama y la vuelve a pedir"
+  // bug). Resolve the code against the shown quote with `resolveGamaCode` — INDEPENDENT
+  // of the model's intent tagging, the gama counterpart of the hours parser. Only fills a
+  // blank (never overrides a pick already resolved above); conservative against false
+  // positives ("la cotización"/"le doy…"). Flag-gated with the rest of gama integrity.
+  if (
+    process.env.CHAT_GAMA_INTEGRITY === "on" &&
+    state.lastQuote &&
+    state.flags.quote_shown &&
+    !state.slots.gama_elegida &&
+    // A QUESTION that names a gama ("¿qué entregan si escojo la C?") is NOT a pick — don't
+    // commit it; the free-form answers and the funnel keeps asking which gama.
+    !looksLikeQuestion(userMessage)
+  ) {
+    const code = resolveGamaCode(userMessage, state.lastQuote);
+    const row = code ? findGama(state.lastQuote, code) : undefined;
+    if (row) {
+      state = {
+        ...state,
+        slots: {
+          ...state.slots,
+          gama_elegida: row.categoria,
+          tipo_vehiculo: isCamioneta(row.descripcion) ? "camioneta" : "auto",
+        },
+      };
     }
   }
 

@@ -1773,6 +1773,23 @@ describe("orchestrator runTurn — gama integrity (CHAT_GAMA_INTEGRITY)", () => 
     expect(textOf(chunks)).not.toContain("seguimos con la **Gama F**");
   });
 
+  it("(S3) a BARE gama code the LLM didn't tag is resolved deterministically and advances", async () => {
+    // The recurring bug: the LLM leaves gama_elegida null for a lone code, so the funnel
+    // re-asks the list forever. groundGama (resolveGamaCode) resolves it against the quote.
+    extractSlots.mockResolvedValue({ intent: "tangencial", updates: {} });
+    const { chunks, writer } = fakeWriter();
+    await runTurn(writer, {
+      brand: "alquilatucarro",
+      conversationId: "c1",
+      state: quotedState({ phase: "choosing_gama" }),
+      userMessage: "quiero la f",
+      recentContext: [],
+      now: NOW,
+    });
+    expect(lastSaved().slots.gama_elegida).toBe("F"); // resolved without an LLM pick
+    expect(textOf(chunks)).not.toContain("¿Con cuál gama seguimos?"); // no list re-ask
+  });
+
   it("(S2-off) with the flag OFF the same question still mis-commits the camioneta (gate proof)", async () => {
     delete process.env.CHAT_GAMA_INTEGRITY;
     extractSlots.mockResolvedValue({ intent: "pregunta_gama", updates: {} });

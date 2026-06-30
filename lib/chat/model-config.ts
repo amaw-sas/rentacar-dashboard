@@ -60,3 +60,20 @@ export function chatProviderOptions(): ProviderOptions | undefined {
   }
   return { openai: { reasoningEffort: "low" } };
 }
+
+/**
+ * Hard wall-clock cap for a single model call. Without it a hung provider keeps the
+ * `await` pending until Vercel kills the function at `maxDuration` (90s) — too late for
+ * the route's catch to run, so the turn dies with NO reply and NO trace. ~30s sits well
+ * under that ceiling: a normal turn is ~5s, so this never bites a healthy call, but a
+ * hang aborts in time to degrade and still answer. Overridable via CHAT_LLM_TIMEOUT_MS.
+ */
+export function chatLlmTimeoutMs(): number {
+  const raw = Number(process.env.CHAT_LLM_TIMEOUT_MS);
+  return Number.isFinite(raw) && raw > 0 ? raw : 30_000;
+}
+
+/** AbortSignal that fires after {@link chatLlmTimeoutMs}, for every model call. */
+export function chatAbortSignal(): AbortSignal {
+  return AbortSignal.timeout(chatLlmTimeoutMs());
+}

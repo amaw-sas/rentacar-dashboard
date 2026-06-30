@@ -20,6 +20,7 @@ import { findGama, getQuoteTable, type QuoteRow } from "./quote-service";
 import { getGamaCards } from "./gama-cards";
 import { freeFormConfig, freeFormSedeContext } from "./prompts";
 import { runInfoSedes } from "@/lib/chat/knowledge-tools";
+import { chatAbortSignal } from "@/lib/chat/model-config";
 import {
   groundSlots,
   hasBookingHours,
@@ -204,7 +205,7 @@ export async function runTurn(
     )}${quoteCtx}${sedeCtx}\nMensaje actual: "${userMessage}"${
       guidance ? `\n\n${guidance}` : ""
     }`;
-    return streamText({ ...cfg, prompt });
+    return streamText({ ...cfg, prompt, abortSignal: chatAbortSignal() });
   };
   const freeForm = async (guidance?: string) => {
     writer.merge((await freeFormResult(guidance)).toUIMessageStream());
@@ -685,6 +686,18 @@ export async function runTurn(
         flags: { ...state.flags, selfserve_link_shown: true },
       };
     }
+  }
+
+  // Safety net: if the turn produced NO block at all (e.g. the model hung and the abort
+  // signal killed BOTH the extractor/controller and the free-form), the customer would be
+  // left mute — the exact "bot no respondió" failure. Emit one neutral, deterministic line
+  // so there is ALWAYS a reply. Never re-greets (greetingBlock owns its own flag); blockId
+  // is 0 only when nothing — text or data part (every data part is paired with a writeText) —
+  // was emitted this turn.
+  if (blockId === 0) {
+    writeText(
+      "Disculpa, se me trabó un momento 🙏 ¿Me repites lo último, por favor?",
+    );
   }
 
   // 3. Persist state (best-effort; the message itself is persisted by the route's onFinish).

@@ -1,6 +1,10 @@
 import { generateObject } from "ai";
 import { z } from "zod";
-import { chatModel, chatProviderOptions } from "@/lib/chat/model-config";
+import {
+  chatAbortSignal,
+  chatModel,
+  chatProviderOptions,
+} from "@/lib/chat/model-config";
 import { findGama } from "./quote-service";
 import {
   extractionUpdates,
@@ -202,6 +206,7 @@ export async function runController(
     system: SYSTEM,
     prompt: buildContext(input),
     providerOptions: chatProviderOptions(),
+    abortSignal: chatAbortSignal(),
   });
 
   const updates: ControllerObject["updates"] = { ...object.updates };

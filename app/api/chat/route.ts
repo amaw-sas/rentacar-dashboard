@@ -22,6 +22,7 @@ import {
 } from "@/lib/chat/persistence";
 import { hashClientIp } from "@/lib/chat/client-ip";
 import { isChatEnabledForBrand } from "@/lib/chat/brand-status";
+import { getFranchiseBranding } from "@/lib/constants/franchises";
 import { isDuplicateUserMessage } from "@/lib/chat/input-hygiene";
 import { recordTurnError } from "@/lib/chat/turn-error";
 import { runShadowExtraction } from "@/lib/chat/orchestrator/extract";
@@ -160,7 +161,21 @@ export async function POST(request: Request) {
   // brand toggled off in the dashboard (chat_brand_settings) stops serving. Defense in
   // depth — the widget already hides via /api/chat/status — returning a clean 403.
   if (!(await isChatEnabledForBrand(brand))) {
-    return jsonError("El chat no está disponible en este momento.", 403);
+    // Warm, useful offline message instead of a cold error: hand the customer the brand's
+    // WhatsApp so a mid-conversation shut-off doesn't lose them. The widget shows the text
+    // and renders `whatsapp` as a button (degrades to text-only on older widgets).
+    const number = getFranchiseBranding(brand).whatsapp;
+    const whatsapp = `https://wa.me/${number}?text=${encodeURIComponent(
+      "Hola, quiero información sobre alquiler de carros.",
+    )}`;
+    return NextResponse.json(
+      {
+        error:
+          "Por ahora estamos fuera de línea 🙌 Escríbenos por WhatsApp y te atendemos enseguida.",
+        whatsapp,
+      },
+      { status: 403, headers: CORS_HEADERS },
+    );
   }
 
   // Input-size caps (anti-stuffing / anti-injection). Reject oversized payloads

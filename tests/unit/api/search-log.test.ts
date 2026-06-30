@@ -42,6 +42,16 @@ describe("splitIsoDateTime", () => {
     expect(splitIsoDateTime(undefined)).toBeNull();
     expect(splitIsoDateTime(12345)).toBeNull();
   });
+
+  // Shape-valid but calendar/clock out of range → null (clean skip, not a row
+  // the Postgres date/time columns would reject).
+  it("returns null for out-of-range date/time components", () => {
+    expect(splitIsoDateTime("2026-13-01T10:00")).toBeNull(); // month 13
+    expect(splitIsoDateTime("2026-07-45T10:00")).toBeNull(); // day 45
+    expect(splitIsoDateTime("2026-00-10T10:00")).toBeNull(); // month 0
+    expect(splitIsoDateTime("2026-07-01T24:30")).toBeNull(); // hour 24
+    expect(splitIsoDateTime("2026-07-01T10:75")).toBeNull(); // minute 75
+  });
 });
 
 describe("buildSearchLogRow", () => {
@@ -153,7 +163,11 @@ describe("logAvailabilitySearch (fire-and-forget)", () => {
   });
 
   it("inserts the built row via the admin client on the happy path", async () => {
-    const insert = vi.fn().mockResolvedValue({ error: null });
+    // insert(row) is chained with .abortSignal(timeout) → return a builder whose
+    // abortSignal resolves to the PostgREST { error } shape.
+    const insert = vi
+      .fn()
+      .mockReturnValue({ abortSignal: () => Promise.resolve({ error: null }) });
     vi.doMock("@/lib/supabase/admin", () => ({
       createAdminClient: () => ({ from: () => ({ insert }) }),
     }));
@@ -184,7 +198,11 @@ describe("logAvailabilitySearch (fire-and-forget)", () => {
   it("swallows an insert error without throwing", async () => {
     vi.doMock("@/lib/supabase/admin", () => ({
       createAdminClient: () => ({
-        from: () => ({ insert: vi.fn().mockResolvedValue({ error: { message: "db down" } }) }),
+        from: () => ({
+          insert: () => ({
+            abortSignal: () => Promise.resolve({ error: { message: "db down" } }),
+          }),
+        }),
       }),
     }));
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});

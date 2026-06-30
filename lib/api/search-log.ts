@@ -69,9 +69,17 @@ export function splitIsoDateTime(
   const tIdx = iso.indexOf("T");
   if (tIdx < 0) return null;
   const date = iso.slice(0, tIdx);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+  const dm = date.match(/^\d{4}-(\d{2})-(\d{2})$/);
+  if (!dm) return null;
+  // Range-check so a shape-valid but calendar/clock-invalid value (e.g.
+  // "2026-13-45T24:30") is a clean skip here — not a row that the Postgres
+  // date/time columns reject, which would surface as a swallowed insert error.
+  const month = Number(dm[1]);
+  const day = Number(dm[2]);
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
   const time = iso.slice(tIdx + 1).match(/^(\d{2}):(\d{2})/);
   if (!time) return null;
+  if (Number(time[1]) > 23 || Number(time[2]) > 59) return null;
   return { date, hour: `${time[1]}:${time[2]}:00` };
 }
 
@@ -134,7 +142,14 @@ export async function logAvailabilitySearch(
     }
 
     const supabase = createAdminClient();
-    const { error } = await supabase.from("search_logs").insert(row);
+    // Bound the deferred write: `after()` keeps the serverless instance (and a
+    // PostgREST slot) alive until this resolves. A DB slowdown — likeliest under
+    // the same high traffic that produced the search — must fail fast, not pile
+    // up held-open instances. The try/catch already swallows the abort error.
+    const { error } = await supabase
+      .from("search_logs")
+      .insert(row)
+      .abortSignal(AbortSignal.timeout(5000));
     if (error) {
       console.error("[search-log] insert failed:", error.message);
     }

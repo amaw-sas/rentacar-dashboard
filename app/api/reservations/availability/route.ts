@@ -75,9 +75,12 @@ export async function POST(request: Request) {
           returnDateTime,
           availableCategories: result,
           userAgent: request.headers.get("user-agent"),
+          // `||` (not `??`): an empty/whitespace x-forwarded-for must fall through
+          // to x-real-ip and finally null, never persist "" as the ip_address.
           ipAddress:
-            forwardedFor?.split(",")[0]?.trim() ??
-            request.headers.get("x-real-ip"),
+            forwardedFor?.split(",")[0]?.trim() ||
+            request.headers.get("x-real-ip") ||
+            null,
         })
       );
     }

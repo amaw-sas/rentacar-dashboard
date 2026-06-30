@@ -1,5 +1,5 @@
 import { findGama, type QuoteTable } from "./quote-service";
-import type { ClienteSlots, ConversationState, Slots } from "./slots";
+import type { Booking, ClienteSlots, ConversationState, Slots } from "./slots";
 
 /**
  * Fixed conversation blocks (Rediseño híbrido · Etapa 2). PURE functions that build
@@ -368,8 +368,61 @@ export function gamaRecommendationLine(
  */
 export function multiVehicleNoticeLine(): string {
   return (
-    `Una nota: por este medio gestiono la reserva de **un vehículo** a la vez. ` +
-    `Sigo cotizándote uno; si necesitas más de uno, dime y te comparto el contacto de un asesor para coordinar el resto.`
+    `¡Claro que te ayudo con más de uno! Eso sí, cada vehículo es una reserva aparte, con su ` +
+    `propio responsable y su tarjeta de crédito. Si los necesitas para las **mismas fechas**, ` +
+    `cada carro debe ir a nombre de una persona distinta. A una misma persona le puedo tramitar ` +
+    `varias reservas, siempre que sean para **fechas diferentes que no se solapen**. En resumen: ` +
+    `un mismo cliente no puede tener dos carros a la vez —para eso se necesitan dos responsables—. ` +
+    `¿Arrancamos con el primero?`
+  );
+}
+
+/** Soft offer after a successful booking: invites the next reservation (R3, multi-booking). */
+export function nextBookingOfferLine(): string {
+  return "Si necesitas otro vehículo, dime y te tramito la siguiente reserva.";
+}
+
+/** Asked when a new reservation reuses a responsible whose dates overlap an existing one (R3). */
+export function anotherResponsibleLine(): string {
+  return (
+    "Ese responsable ya tiene una reserva en fechas que se cruzan; para este vehículo necesito " +
+    "otro responsable con su propia tarjeta de crédito. ¿A nombre de quién va este?"
+  );
+}
+
+/** Inclusive date overlap on YYYY-MM-DD strings (lexicographic compare is date-correct). */
+export function datesOverlap(
+  aStart: string,
+  aEnd: string,
+  bStart: string,
+  bEnd: string,
+): boolean {
+  return aStart <= bEnd && bStart <= aEnd;
+}
+
+/**
+ * True when a new reservation would put the SAME responsible (normalized id) on a vehicle whose
+ * dates OVERLAP an existing reservation (R3): the rule is one responsible can't hold two cars for
+ * the same period — they'd need a second responsible. Different dates (no overlap) are allowed.
+ */
+export function bookingConflict(
+  bookings: Booking[] | undefined,
+  identification: string,
+  fecha_recogida: string,
+  fecha_devolucion: string,
+): boolean {
+  if (!bookings?.length || !identification) return false;
+  const id = identification.trim().toLowerCase();
+  if (!fecha_recogida || !fecha_devolucion) return false;
+  return bookings.some(
+    (b) =>
+      b.identification.trim().toLowerCase() === id &&
+      datesOverlap(
+        fecha_recogida,
+        fecha_devolucion,
+        b.fecha_recogida,
+        b.fecha_devolucion,
+      ),
   );
 }
 

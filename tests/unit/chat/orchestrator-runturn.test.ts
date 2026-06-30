@@ -895,7 +895,7 @@ describe("orchestrator runTurn — on-demand (Etapa 4)", () => {
       now: NOW,
     });
 
-    expect(textOf(turn1.chunks)).toContain("un vehículo"); // the limit notice
+    expect(textOf(turn1.chunks)).toContain("responsable"); // the per-vehicle notice
     expect(dataParts(turn1.chunks, "data-quoteTable")).toHaveLength(1); // still quotes one
     const saved1 = lastSaved();
     expect(saved1.flags.multi_vehicle_notice_shown).toBe(true);
@@ -1818,6 +1818,119 @@ describe("looksLikeQuestion", () => {
     expect(looksLikeQuestion("Cristo Redentor")).toBe(false);
     expect(looksLikeQuestion("CC 94494358")).toBe(false);
     expect(looksLikeQuestion("test@artesyweb.com")).toBe(false);
+  });
+});
+
+describe("orchestrator runTurn — multi-booking (CHAT_MULTI_BOOKING)", () => {
+  afterEach(() => {
+    delete process.env.CHAT_MULTI_BOOKING;
+  });
+
+  const bookedState = (): ConversationState => ({
+    phase: "booked",
+    slots: {
+      ciudad: "bogota",
+      fecha_recogida: "2026-08-01",
+      fecha_devolucion: "2026-08-06",
+      gama_elegida: "C",
+      cliente: { fullname: "Diego", identification: "123" },
+    },
+    lastQuote: QUOTE_TABLE,
+    bookings: [
+      { identification: "123", fecha_recogida: "2026-08-01", fecha_devolucion: "2026-08-06" },
+    ],
+    flags: {
+      greeted: true,
+      requisitos_shown: true,
+      quote_shown: true,
+      another_offer_shown: true,
+    },
+  });
+
+  it("re-opens for another reservation on new dates (flag on)", async () => {
+    process.env.CHAT_MULTI_BOOKING = "on";
+    extractSlots.mockResolvedValue({
+      intent: "cotizar",
+      updates: { fecha_recogida: "2026-08-20", fecha_devolucion: "2026-08-25" },
+    });
+    getQuoteTable.mockResolvedValue({ ok: true, table: QUOTE_TABLE });
+    const { writer } = fakeWriter();
+    await runTurn(writer, {
+      brand: "alquilatucarro",
+      conversationId: "c1",
+      state: bookedState(),
+      userMessage: "quiero otro carro del 20 al 25",
+      recentContext: [],
+      now: NOW,
+    });
+    const saved = lastSaved();
+    expect(saved.phase).not.toBe("booked"); // re-opened
+    expect(saved.bookings).toHaveLength(1); // ledger preserved
+    expect(saved.slots.fecha_recogida).toBe("2026-08-20"); // new dates kept
+    expect(saved.slots.cliente.fullname).toBeUndefined(); // responsible cleared
+  });
+
+  it("blocks the same responsible on overlapping dates and asks for another", async () => {
+    process.env.CHAT_MULTI_BOOKING = "on";
+    extractSlots.mockResolvedValue({
+      intent: "da_datos",
+      updates: { cliente: { phone: "3001234567" } },
+    });
+    const { chunks, writer } = fakeWriter();
+    await runTurn(writer, {
+      brand: "alquilatucarro",
+      conversationId: "c1",
+      state: {
+        phase: "collecting_customer",
+        slots: {
+          ciudad: "bogota",
+          fecha_recogida: "2026-08-03", // overlaps the prior 08-01..08-06
+          fecha_devolucion: "2026-08-08",
+          hora_recogida: "09:00",
+          hora_devolucion: "09:00",
+          gama_elegida: "C",
+          cliente: {
+            fullname: "Diego Melo",
+            identification_type: "CC",
+            identification: "1020304050", // same responsible as the prior booking
+            email: "d@e.com",
+          },
+        },
+        lastQuote: QUOTE_TABLE,
+        bookings: [
+          { identification: "1020304050", fecha_recogida: "2026-08-01", fecha_devolucion: "2026-08-06" },
+        ],
+        flags: {
+          greeted: true,
+          requisitos_shown: true,
+          quote_shown: true,
+          last_quote_signature: "bogota||2026-08-03|2026-08-08|09:00|09:00",
+        },
+      },
+      userMessage: "3001234567",
+      recentContext: [],
+      now: NOW,
+    });
+    expect(textOf(chunks).toLowerCase()).toContain("otro responsable");
+    expect(lastSaved().slots.cliente.fullname).toBeUndefined(); // cleared to re-collect
+    expect(lastSaved().phase).toBe("collecting_customer"); // did NOT advance to confirming
+  });
+
+  it("keeps booked terminal when the flag is off", async () => {
+    extractSlots.mockResolvedValue({
+      intent: "cotizar",
+      updates: { fecha_recogida: "2026-08-20", fecha_devolucion: "2026-08-25" },
+    });
+    const { writer } = fakeWriter();
+    await runTurn(writer, {
+      brand: "alquilatucarro",
+      conversationId: "c1",
+      state: bookedState(),
+      userMessage: "quiero otro carro del 20 al 25",
+      recentContext: [],
+      now: NOW,
+    });
+    expect(lastSaved().phase).toBe("booked"); // terminal, no re-open
   });
 });
 

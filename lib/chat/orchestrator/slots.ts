@@ -91,6 +91,9 @@ export interface ConversationFlags {
   unsupported_vehicle_notice_shown?: boolean;
   /** The proactive self-serve link (web + share) emitted once on a deferral objection (P3). */
   selfserve_link_shown?: boolean;
+  /** The "need another vehicle?" offer emitted after a booking (R3 multi-booking) — lets a bare
+   * "sí" re-open the funnel for an additional reservation. */
+  another_offer_shown?: boolean;
   /** The quote slot we asked for last turn ("ciudad"/"fecha_recogida"/"fecha_devolucion").
    * Lets the funnel VARY a repeated question instead of asking it verbatim again. */
   last_slot_asked?: string;
@@ -107,10 +110,20 @@ export interface ConversationFlags {
   last_customer_field_ask_count?: number;
 }
 
+/** A reservation completed THIS conversation (R3 multi-booking) — feeds the same-responsible /
+ * overlapping-dates rule when the customer starts an additional reservation. */
+export interface Booking {
+  identification: string;
+  fecha_recogida: string;
+  fecha_devolucion: string;
+}
+
 export interface ConversationState {
   phase: Phase;
   slots: Slots;
   flags: ConversationFlags;
+  /** Reservations already made in this conversation (R3). Server-side only. */
+  bookings?: Booking[];
   /** Last quote table shown (incl. the opaque quote blobs) — the booking phase
    * (Etapa 3) resolves the chosen gama's quote from here. Server-side only. */
   lastQuote?: QuoteTable;

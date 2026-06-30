@@ -14,6 +14,7 @@ import {
   type ConversationState,
   type Intent,
   type Phase,
+  type SlotUpdates,
 } from "./slots";
 import { findGama, getQuoteTable, type QuoteRow } from "./quote-service";
 import { getGamaCards } from "./gama-cards";
@@ -25,7 +26,9 @@ import {
   type GroundingNote,
 } from "./ground";
 import {
+  anotherResponsibleLine,
   askHoursBlock,
+  bookingConflict,
   bookingConfirmedLine,
   bookingSummaryBlock,
   canQuote,
@@ -40,6 +43,7 @@ import {
   explicitGamaCode,
   isCamioneta,
   multiVehicleNoticeLine,
+  nextBookingOfferLine,
   unsupportedVehicleLine,
   nextCustomerField,
   nextCustomerQuestion,
@@ -240,6 +244,7 @@ export async function runTurn(
   // the extractor path (instant rollback). Degrade to a free-form reply if it fails.
   const useController = process.env.CHAT_CONTROLLER === "on";
   let intent: Intent = "tangencial";
+  let turnUpdates: SlotUpdates = {};
   try {
     const ext = useController
       ? await runController({
@@ -256,8 +261,40 @@ export async function runTurn(
         });
     state = applyExtraction(state, ext);
     intent = ext.intent;
+    turnUpdates = ext.updates ?? {};
   } catch (e) {
     console.error("[orchestrator] extract failed", e);
+  }
+
+  // Re-open for an ADDITIONAL reservation (R3 · CHAT_MULTI_BOOKING): the `booked` state is
+  // otherwise terminal. When the customer wants another vehicle, reset the booking-specific slots
+  // (keep ciudad + the `bookings` ledger) and re-apply THIS turn's extraction so freshly-given
+  // dates survive, then let the funnel quote/collect the new reservation. Corrections (da_datos)
+  // stay in the booked branch. Flag off → booked stays terminal.
+  if (
+    process.env.CHAT_MULTI_BOOKING === "on" &&
+    state.phase === "booked" &&
+    intent !== "da_datos" &&
+    (intent === "cotizar" ||
+      (state.flags.another_offer_shown && isAffirmative(userMessage)) ||
+      /\botro\b|\botra\s+(reserva|unidad)\b|segundo\s+(carro|veh)|adicional/i.test(
+        userMessage,
+      ))
+  ) {
+    const reset: ConversationState = {
+      ...state,
+      phase: "collecting",
+      slots: { ciudad: state.slots.ciudad, cliente: {} },
+      lastQuote: undefined,
+      modelsByGama: undefined,
+      flags: {
+        greeted: true,
+        requisitos_shown: state.flags.requisitos_shown,
+        quote_shown: false,
+      },
+    };
+    // Re-overlay the current turn's updates so "otro del 20 al 25" keeps its new dates.
+    state = applyExtraction(reset, { intent, updates: turnUpdates });
   }
 
   // 1b. Deterministic slot grounding (P0). Validate/correct the just-extracted slots
@@ -1227,6 +1264,25 @@ function progressCustomer(
     return { ...state, phase: "collecting_customer" };
   }
 
+  // R3: a responsible can't hold two cars for overlapping dates — needs a second responsible.
+  // If this new reservation reuses an id that already booked an overlapping period, ask for a
+  // different responsible (clear the customer data and re-collect). Gated.
+  if (
+    process.env.CHAT_MULTI_BOOKING === "on" &&
+    bookingConflict(
+      state.bookings,
+      c.identification ?? "",
+      state.slots.fecha_recogida ?? "",
+      state.slots.fecha_devolucion ?? "",
+    )
+  ) {
+    writeText(anotherResponsibleLine());
+    return askCustomerField(
+      { ...state, slots: { ...state.slots, cliente: {} } },
+      writeText,
+    );
+  }
+
   let next: ConversationState = { ...state, phase: "confirming" as Phase };
   if (!next.flags.summary_shown) {
     writeText(bookingSummaryBlock(next));
@@ -1272,9 +1328,28 @@ async function bookNow(
   });
 
   switch (outcome.kind) {
-    case "ok":
+    case "ok": {
       writeText(bookingConfirmedLine(outcome.data));
+      // R3: record the reservation (responsible + dates) and offer the next one, so the customer
+      // can book again in this chat. Gated → flag off keeps `booked` terminal and the state clean.
+      if (process.env.CHAT_MULTI_BOOKING === "on") {
+        writeText(nextBookingOfferLine());
+        return {
+          ...state,
+          phase: "booked",
+          bookings: [
+            ...(state.bookings ?? []),
+            {
+              identification: c.identification ?? "",
+              fecha_recogida: state.slots.fecha_recogida ?? "",
+              fecha_devolucion: state.slots.fecha_devolucion ?? "",
+            },
+          ],
+          flags: { ...state.flags, another_offer_shown: true },
+        };
+      }
       return { ...state, phase: "booked" };
+    }
 
     case "disabled":
       writeText(

@@ -22,6 +22,7 @@ const EXPECTED_LABELS: Record<AttributionChannel | "null", string> = {
   referral: "Referido web",
   direct: "Directo",
   other: "Otro",
+  "chat-bot": "Chat bot",
   null: "Desconocido",
 };
 
@@ -44,7 +45,7 @@ describe("channel-meta — SCEN-017: every channel has a complete presentation",
     });
   });
 
-  describe("exact label map (design §4), all 11 entries including Desconocido", () => {
+  describe("exact label map (design §4 + issue #199), all entries including Desconocido", () => {
     for (const channel of ATTRIBUTION_CHANNELS) {
       it(`${channel} → "${EXPECTED_LABELS[channel]}"`, () => {
         expect(channelMeta(channel).label).toBe(EXPECTED_LABELS[channel]);
@@ -56,7 +57,7 @@ describe("channel-meta — SCEN-017: every channel has a complete presentation",
     });
   });
 
-  describe("CHANNEL_META covers exactly the 10 channels", () => {
+  describe("CHANNEL_META covers exactly the channel list", () => {
     it("CHANNEL_META keys equal ATTRIBUTION_CHANNELS", () => {
       expect(Object.keys(CHANNEL_META).sort()).toEqual(
         [...ATTRIBUTION_CHANNELS].sort(),
@@ -65,8 +66,8 @@ describe("channel-meta — SCEN-017: every channel has a complete presentation",
   });
 
   describe("ATTRIBUTION_CHANNEL_SET — server-side filter validation", () => {
-    it("has exactly the 10 channel literals", () => {
-      expect(ATTRIBUTION_CHANNEL_SET.size).toBe(10);
+    it("has exactly the 11 channel literals", () => {
+      expect(ATTRIBUTION_CHANNEL_SET.size).toBe(11);
     });
 
     it("contains each channel literal", () => {
@@ -91,8 +92,8 @@ describe("channel-meta — SCEN-017: every channel has a complete presentation",
   });
 
   describe("ATTRIBUTION_CHANNELS shape", () => {
-    it("has length 10", () => {
-      expect(ATTRIBUTION_CHANNELS).toHaveLength(10);
+    it("has length 11", () => {
+      expect(ATTRIBUTION_CHANNELS).toHaveLength(11);
     });
 
     it("has no duplicates", () => {

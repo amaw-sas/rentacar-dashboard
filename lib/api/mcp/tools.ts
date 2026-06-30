@@ -9,12 +9,14 @@ import {
   createReservation,
   type CreateReservationInput,
 } from "@/lib/api/reservation-service";
+import type { AttributionChannel } from "@/lib/attribution/derive-channel";
 import { ServiceError } from "@/lib/api/service-error";
 import {
   encodeQuote,
   decodeQuote,
   assertQuoteSecretConfigured,
 } from "@/lib/api/mcp/quote";
+import { getHiddenCategoryCodesForCitySlug } from "@/lib/queries/category-city-visibility";
 import type { ReservationStatus } from "@/lib/schemas/reservation";
 
 /**
@@ -117,12 +119,18 @@ export function computeSelectedDays(
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Diacritic-insensitive, case-insensitive normalization for place matching. */
-function norm(s: string): string {
+/**
+ * Diacritic-, case-, and separator-insensitive normalization for place matching. The
+ * directory stores `city` as a SLUG ("santa-marta"), so collapsing spaces/underscores/
+ * hyphens to a single space lets a typed "Santa Marta" match it (otherwise a served city
+ * is wrongly rejected as "no encuentro una sede").
+ */
+export function norm(s: string): string {
   return s
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
+    .replace(/[\s_-]+/g, " ")
     .trim();
 }
 
@@ -167,10 +175,17 @@ function splitDateTime(dt: string): { date: string; hour: string } {
 /** Extract the human-readable ES message from a propagated ServiceError. */
 function serviceErrorMessage(e: ServiceError): string {
   const p = e.payload as Record<string, unknown>;
-  const msg = p.shortText ?? p.message ?? p.error;
-  return typeof msg === "string"
-    ? msg
-    : "Ocurrió un error procesando la solicitud.";
+  const shortText = typeof p.shortText === "string" ? p.shortText : undefined;
+  const message = typeof p.message === "string" ? p.message : undefined;
+  const error = typeof p.error === "string" ? p.error : undefined;
+  // Localiza warnings arrive with shortText = the RAW code (e.g. "LLNRRE002") and
+  // a friendly Spanish `message` already mapped by the proxy. Prefer the message
+  // so the user never sees the bare code. Any other error keeps shortText-first.
+  const isRawLocalizaCode = !!shortText && /^LLN[A-Z]+\d+/.test(shortText);
+  const msg = isRawLocalizaCode
+    ? message ?? shortText
+    : shortText ?? message ?? error;
+  return msg ?? "Ocurrió un error procesando la solicitud.";
 }
 
 function errorResult(text: string): CallToolResult {
@@ -258,6 +273,8 @@ export const buscarDisponibilidadOutputSchema = {
       precio_total: z.number(),
       precio_a_pagar: z.number(),
       iva: z.number(),
+      horas_extra: z.number(),
+      precio_hora_extra: z.number(),
       quote: z.string(),
     }),
   ),
@@ -290,6 +307,7 @@ function normalizeHora(h: string | undefined): string | null {
 
 export async function buscarDisponibilidad(
   args: BuscarDisponibilidadArgs,
+  now: Date = new Date(),
 ): Promise<CallToolResult> {
   // Fail loud on a misconfigured signing secret BEFORE any work. Otherwise every
   // per-category encodeQuote below would throw and get skipped, leaving an empty
@@ -325,6 +343,17 @@ export async function buscarDisponibilidad(
 
   const pickupDateTime = `${fecha_recogida}T${horaR}:00`;
   const returnDateTime = `${fecha_devolucion}T${horaD}:00`;
+
+  // Reject a pickup already in the past (Bogota time, UTC-5 no DST). Localiza
+  // rejects it at booking with LLNRRE002; catch it earlier with a clear message
+  // so the bot never quotes an unbookable slot (e.g. "hoy 10:00" once it's 13:00).
+  const pickupInstant = new Date(`${pickupDateTime}-05:00`);
+  if (!Number.isNaN(pickupInstant.getTime()) && pickupInstant.getTime() < now.getTime()) {
+    return errorResult(
+      "La fecha y hora de recogida ya pasaron. Elige una hora más tarde de hoy o una fecha futura.",
+    );
+  }
+
   const selected_days = computeSelectedDays(pickupDateTime, returnDateTime);
 
   // Non-positive duration (same instant, inverted range, or an unparseable date
@@ -358,11 +387,33 @@ export async function buscarDisponibilidad(
     );
   }
 
+  // Drop gamas the dashboard hid for this city (category_city_visibility). Localiza
+  // returns its full fleet per branch; the business restricts some gamas per city
+  // (e.g. CX not offered in Barranquilla). Fail OPEN: any lookup error leaves the
+  // full list rather than blocking a quote.
+  let visibleItems = items;
+  try {
+    const citySlug = directory.find((l) => l.code === code)?.city;
+    if (citySlug) {
+      const hidden = await getHiddenCategoryCodesForCitySlug(citySlug);
+      if (hidden.size > 0) {
+        const filtered = items.filter(
+          (it) => !hidden.has(it.categoryCode.toUpperCase()),
+        );
+        // Only apply if it leaves something — an empty result is more likely a
+        // data gap than "no car is available in this city".
+        if (filtered.length > 0) visibleItems = filtered;
+      }
+    }
+  } catch (e) {
+    console.error("[mcp] category visibility filter failed", e);
+  }
+
   // Build a quote per category. A malformed item (missing numeric field → NaN →
   // encodeQuote's zod rejects it) is SKIPPED, not allowed to crash the whole
   // response — degrade to the categories that priced cleanly.
   const categorias: Array<Record<string, unknown>> = [];
-  for (const item of items) {
+  for (const item of visibleItems) {
     try {
       const pricing = deriveStandardPricing(item);
       const quote = encodeQuote({
@@ -391,6 +442,11 @@ export async function buscarDisponibilidad(
         precio_total: pricing.total_price,
         precio_a_pagar: pricing.total_price_to_pay,
         iva: pricing.iva_fee,
+        // Surfaced so the bot/orchestrator can answer "how much is an extra hour"
+        // directly. Both are baked into precio_total already; these expose the
+        // line item. 0 when the return time is not later than the pickup time.
+        horas_extra: pricing.extra_hours,
+        precio_hora_extra: pricing.extra_hours_price,
         quote,
       });
     } catch {
@@ -474,6 +530,10 @@ interface CrearSolicitudReservaArgs {
   // Defensive: NOT in the input schema (seguro total is out of Phase 1), but
   // guarded at runtime so a direct/forged call can never book with it.
   total_insurance?: boolean;
+  // Issue #199 (Fase 0): server-only override stamped by the chat booking path
+  // (lib/chat/reserva-tool.ts). NOT in the public MCP input schema, so an external
+  // MCP client can never forge the channel — same pattern as `total_insurance`.
+  attribution_channel?: AttributionChannel;
 }
 
 export async function crearSolicitudReserva(
@@ -530,6 +590,7 @@ export async function crearSolicitudReserva(
     flight: args.flight,
     aeroline: args.aeroline,
     flight_number: args.flight_number,
+    attributionChannel: args.attribution_channel,
   };
 
   let result;

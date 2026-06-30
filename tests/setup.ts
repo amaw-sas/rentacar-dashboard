@@ -2,6 +2,11 @@ import "@testing-library/jest-dom/vitest";
 import { afterEach } from "vitest";
 import { cleanup } from "@testing-library/react";
 
+// Default HMAC signing secret so any test that builds a quote (encodeQuote,
+// issue #172) works without per-file setup. Tests that assert the missing/weak
+// secret path save and restore it explicitly.
+process.env.MCP_QUOTE_SECRET ??= "test-quote-secret-0123456789abcdef";
+
 afterEach(() => {
   cleanup();
 });

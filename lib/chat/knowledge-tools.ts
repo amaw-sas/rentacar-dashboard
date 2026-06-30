@@ -4,7 +4,6 @@ import {
   getLocationDirectory,
   type LocationDirectoryItem,
 } from "@/lib/api/location-directory";
-import { bogotaTodayYMD } from "@/lib/date/bogota";
 
 /**
  * Structured knowledge tools for the chat agent (Chat Fase 2 · Incremento 2).
@@ -123,12 +122,14 @@ export async function runInfoSedes(args: {
     };
   }
 
+  // Deliberately omits `pickup_address` and `pickup_map`: the chat must NOT
+  // reveal the exact address or a map. We earn commission on reservations made
+  // through the chat — handing the address sends the customer straight to the
+  // branch and loses the booking. The sede `name` is the only reference shared.
   return {
     sedes: matches.map((l) => ({
       nombre: l.name,
       ciudad: l.city,
-      direccion: l.pickup_address,
-      mapa: l.pickup_map,
       horario: scheduleToText(l.schedule),
     })),
   };
@@ -143,11 +144,37 @@ export const tarifaMensualSchema = {
     .string()
     .min(1)
     .describe("Código o nombre de gama, p. ej. 'C', 'F', 'GC', 'económico'."),
+  fecha_recogida: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "Usa el formato YYYY-MM-DD.")
+    .describe(
+      "Fecha de inicio del alquiler en YYYY-MM-DD. OBLIGATORIA: selecciona la " +
+        "tarifa vigente para ESE mes (las tarifas mensuales cambian por mes). Si el " +
+        "cliente aún no dio la fecha de inicio, pídesela antes de llamar esta herramienta.",
+    ),
+  incluir_seguro: z
+    .boolean()
+    .optional()
+    .describe(
+      "Pásalo como true SOLO si el cliente pregunta por el seguro/seguro total. " +
+        "Por defecto la tarifa NO incluye el valor del seguro total (el básico ya va incluido en el alquiler).",
+    ),
 };
 
 export async function runTarifaMensual(args: {
   gama: string;
+  fecha_recogida: string;
+  incluir_seguro?: boolean;
 }): Promise<unknown> {
+  // The rental month drives the price; we NEVER fall back to today. A missing or
+  // malformed date returns an error so the bot asks for it instead of silently
+  // quoting the wrong month.
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(args.fecha_recogida ?? "")) {
+    return {
+      error:
+        "Necesito la fecha de inicio del alquiler (YYYY-MM-DD) para darte la tarifa mensual correcta.",
+    };
+  }
   const companyId = await getLocalizaCompanyId();
   if (!companyId) {
     return { error: "No pude consultar tarifas en este momento." };
@@ -182,12 +209,15 @@ export async function runTarifaMensual(args: {
     .eq("category_id", cat.id)
     .order("valid_from", { ascending: false });
 
-  const today = bogotaTodayYMD();
+  // Select the pricing row valid for the RENTAL month (validated above), not for
+  // today: monthly rates vary by month, so a quote for August must use August's
+  // row even if the chat runs in June.
+  const refDate = args.fecha_recogida;
   const active = (pricing ?? []).find(
     (p) =>
       p.status === "active" &&
-      (p.valid_from as string) <= today &&
-      (!p.valid_until || (p.valid_until as string) >= today),
+      (p.valid_from as string) <= refDate &&
+      (!p.valid_until || (p.valid_until as string) >= refDate),
   );
   if (!active || active.monthly_1k_price == null) {
     return {
@@ -195,13 +225,18 @@ export async function runTarifaMensual(args: {
     };
   }
 
+  // Only surface the seguro total value when the client explicitly asked for it
+  // (incluir_seguro): otherwise it must NOT appear in a normal monthly quote — the
+  // basic insurance is already included and the total is an optional add-on.
   return {
     gama: cat.code,
     nombre: cat.name,
     mensual_1000km: active.monthly_1k_price,
     mensual_2000km: active.monthly_2k_price,
     mensual_3000km: active.monthly_3k_price,
-    seguro_mensual: active.monthly_insurance_price,
+    ...(args.incluir_seguro
+      ? { seguro_total_mensual: active.monthly_insurance_price }
+      : {}),
     nota: "Kilometraje LIMITADO (1000/2000 km). Mínimo 7 días de anticipación. Valor nacional, no varía por ciudad.",
   };
 }

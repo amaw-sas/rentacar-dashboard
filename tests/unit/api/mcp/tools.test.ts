@@ -1,4 +1,13 @@
-import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from "vitest";
+import {
+  describe,
+  it,
+  expect,
+  vi,
+  beforeEach,
+  afterEach,
+  beforeAll,
+  afterAll,
+} from "vitest";
 import { z } from "zod";
 
 // Issue #72 Steps 6-7: the two MCP tools. Holdout SCEN-108..117.
@@ -129,6 +138,12 @@ describe("resolveLocationCode", () => {
     expect(resolveLocationCode(d, "bogota")).toBe("AABOG01");
     expect(resolveLocationCode(d, "BOGOTÁ")).toBe("AABOG01");
   });
+  it("matches a slug city against a spaced/typed name (Santa Marta → santa-marta)", () => {
+    // The directory stores `city` as the slug; a customer types it with a space.
+    const d = dir([{ city: "santa-marta", code: "AASMR01" }]);
+    expect(resolveLocationCode(d, "Santa Marta")).toBe("AASMR01");
+    expect(resolveLocationCode(d, "santa marta")).toBe("AASMR01");
+  });
   it("narrows by sede when several branches share a city", () => {
     const d = dir([
       { city: "Bogotá", code: "AABOG01", name: "Aeropuerto", slug: "bog-aero" },
@@ -144,9 +159,47 @@ describe("resolveLocationCode", () => {
 describe("buscar_disponibilidad (SCEN-110..112)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Pin "now" so the past-pickup guard is deterministic and the 2026-07-01
+    // fixtures stay in the future regardless of the real clock.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-25T12:00:00.000Z"));
     vi.mocked(getLocationDirectory).mockResolvedValue(
       dir([{ city: "Bogotá", code: "AABOG01" }]),
     );
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("rejects a pickup datetime already in the past (no service call)", async () => {
+    const res = await buscarDisponibilidad({
+      ciudad: "bogota",
+      fecha_recogida: "2026-06-20", // before the pinned now
+      fecha_devolucion: "2026-06-27",
+    });
+    expect(res.isError).toBe(true);
+    expect(textOf(res)).toMatch(/ya pasaron|futura/i);
+    expect(vi.mocked(searchAvailability)).not.toHaveBeenCalled();
+  });
+
+  it("surfaces the friendly Spanish message for a raw Localiza code (LLNRRE002)", async () => {
+    vi.mocked(searchAvailability).mockRejectedValue(
+      new ServiceError(500, {
+        error: "inferior_pickup_date",
+        message: "Selecciona la fecha de recogida igual o posterior a la fecha actual",
+        shortText: "LLNRRE002",
+      }),
+    );
+    const res = await buscarDisponibilidad({
+      ciudad: "bogota",
+      fecha_recogida: "2026-07-01",
+      fecha_devolucion: "2026-07-05",
+    });
+    expect(res.isError).toBe(true);
+    expect(textOf(res)).toBe(
+      "Selecciona la fecha de recogida igual o posterior a la fecha actual",
+    );
+    expect(textOf(res)).not.toMatch(/LLNRRE002/);
   });
 
   // SCEN-110 — happy path: ES categories + a decodable quote per category.
@@ -174,6 +227,9 @@ describe("buscar_disponibilidad (SCEN-110..112)", () => {
     const cat = payload.categorias[0];
     expect(cat.categoria).toBe("C");
     expect(cat.descripcion).toBe("Gama C Económico Mecánico");
+    // Etapa 0: extra-hour line items surfaced so the bot can answer them directly.
+    expect(typeof cat.horas_extra).toBe("number");
+    expect(typeof cat.precio_hora_extra).toBe("number");
 
     // The opaque quote decodes to the derived pricing + computed selected_days.
     const ctx = decodeQuote(cat.quote);

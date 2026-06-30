@@ -36,8 +36,11 @@ export type CotizarResult =
  * Localiza errors). Never throws for the expected error paths; the agent always
  * gets something it can say back to the user.
  */
-export async function runCotizar(args: CotizarArgs): Promise<CotizarResult> {
-  const result = await buscarDisponibilidad(args);
+export async function runCotizar(
+  args: CotizarArgs,
+  now?: Date,
+): Promise<CotizarResult> {
+  const result = await buscarDisponibilidad(args, now);
 
   const text =
     result.content?.[0]?.type === "text" ? result.content[0].text : "";

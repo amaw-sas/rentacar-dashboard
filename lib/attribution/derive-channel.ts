@@ -31,7 +31,11 @@ export type AttributionChannel =
   | "organic"
   | "referral"
   | "direct"
-  | "other";
+  | "other"
+  // Issue #199 (Fase 0): a reservation created by the chat bot. NOT a marketing
+  // channel — never emitted by `deriveAttributionChannel` below; stamped as an
+  // explicit override in `reservation-service.ts` for the chat booking path only.
+  | "chat-bot";
 
 /**
  * Brand + funnel domains. A referrer whose host is one of these (or a subdomain

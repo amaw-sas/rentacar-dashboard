@@ -168,11 +168,17 @@ export async function runTurn(
   let state = input.state;
 
   let blockId = 0;
+  // Did THIS turn put anything on the wire? Drives the end-of-turn safety net. Tracked
+  // separately from blockId because the streaming free-form (writer.merge below) emits
+  // its OWN text blocks WITHOUT going through writeText — counting only writeText made
+  // the net fire on every off-funnel free-form reply, prepending a bogus "se me trabó".
+  let emitted = false;
   const writeText = (text: string) => {
     const id = `blk-${blockId++}`;
     writer.write({ type: "text-start", id });
     writer.write({ type: "text-delta", id, delta: text });
     writer.write({ type: "text-end", id });
+    emitted = true;
   };
 
   // A short, tool-enabled free-form reply for off-funnel messages (the only
@@ -219,6 +225,9 @@ export async function runTurn(
   };
   const freeForm = async (guidance?: string) => {
     writer.merge((await freeFormResult(guidance)).toUIMessageStream());
+    // The merged sub-stream IS the reply (its own text blocks). Mark the turn as having
+    // answered so the end-of-turn safety net doesn't prepend a bogus "se me trabó".
+    emitted = true;
   };
   const freeFormText = async (guidance?: string): Promise<string> => {
     try {
@@ -699,13 +708,13 @@ export async function runTurn(
     }
   }
 
-  // Safety net: if the turn produced NO block at all (e.g. the model hung and the abort
+  // Safety net: if the turn put NOTHING on the wire (e.g. the model hung and the abort
   // signal killed BOTH the extractor/controller and the free-form), the customer would be
   // left mute — the exact "bot no respondió" failure. Emit one neutral, deterministic line
-  // so there is ALWAYS a reply. Never re-greets (greetingBlock owns its own flag); blockId
-  // is 0 only when nothing — text or data part (every data part is paired with a writeText) —
-  // was emitted this turn.
-  if (blockId === 0) {
+  // so there is ALWAYS a reply. Never re-greets (greetingBlock owns its own flag). Uses
+  // `emitted` (set by writeText AND the streaming free-form) — NOT blockId, which the
+  // free-form's merged sub-stream bypasses.
+  if (!emitted) {
     writeText(
       "Disculpa, se me trabó un momento 🙏 ¿Me repites lo último, por favor?",
     );

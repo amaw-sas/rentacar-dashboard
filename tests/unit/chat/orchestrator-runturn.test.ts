@@ -214,6 +214,29 @@ describe("orchestrator runTurn", () => {
     // Free-form path used instead.
     expect(streamText).toHaveBeenCalledOnce();
   });
+
+  it("off-funnel STREAMING free-form does NOT prepend the bogus 'se me trabó'", async () => {
+    // Regression (introduced with the resilience safety net): the net used blockId,
+    // which the streaming free-form (writer.merge) bypasses — so EVERY off-funnel reply
+    // before a quote got a spurious 'Disculpa, se me trabó…' before the real answer.
+    extractSlots.mockResolvedValue({ intent: "tangencial", updates: {} });
+    const greeted: ConversationState = {
+      phase: "collecting",
+      slots: { cliente: {} },
+      flags: { greeted: true, requisitos_shown: false, quote_shown: false },
+    };
+    const { chunks, writer } = fakeWriter();
+    await runTurn(writer, {
+      brand: "alquilatucarro",
+      conversationId: "c1",
+      state: greeted,
+      userMessage: "¿el depósito puede ser en efectivo?",
+      recentContext: [],
+      now: NOW,
+    });
+    expect(streamText).toHaveBeenCalledOnce(); // streaming free-form answered
+    expect(textOf(chunks)).not.toContain("se me trabó"); // no bogus fallback prepended
+  });
 });
 
 // ---------------------------------------------------------------------------

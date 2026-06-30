@@ -65,13 +65,28 @@ export interface QuoteTablePart {
   }>;
 }
 
+/**
+ * Drop the leading "Gama <code>" that Localiza prepends to the descripción, ONLY for the
+ * display payload. The card already prints "Gama {categoria}" next to it, so the raw
+ * provider string echoes it ("Gama C Gama C Económico Mecánico"). The widget contract
+ * expects just "Económico Mecánico" (see rentacar-web useChatConversation.ts). When the
+ * prefix isn't there (e.g. the quote-service fallback where descripcion === categoria),
+ * the string is returned unchanged. The INTERNAL QuoteRow.descripcion is left intact —
+ * bookingSummaryBlock and gamaConflictNote rely on the full "Gama X …" form.
+ */
+function stripGamaPrefix(categoria: string, descripcion: string): string {
+  const esc = categoria.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const out = descripcion.replace(new RegExp(`^\\s*gama\\s+${esc}\\s+`, "i"), "");
+  return out.trim() || descripcion;
+}
+
 export function quoteTableData(table: QuoteTable): QuoteTablePart {
   return {
     sede: table.sede,
     dias: table.dias,
     filas: table.filas.map((f) => ({
       categoria: f.categoria,
-      descripcion: f.descripcion,
+      descripcion: stripGamaPrefix(f.categoria, f.descripcion),
       precioTotal: f.precioTotal,
       horasExtra: f.horasExtra,
       precioHoraExtra: f.precioHoraExtra,

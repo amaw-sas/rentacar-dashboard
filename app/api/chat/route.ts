@@ -359,16 +359,24 @@ export async function POST(request: Request) {
   const latestQuotes = history ? extractLatestQuotes(history) : undefined;
 
   // Persist the assistant reply (shared by both the orchestrator and legacy paths).
-  const persistAssistant = (assistant: UIMessage | undefined) => {
+  // AWAITED (not fire-and-forget). On Vercel the function FREEZES the instant the
+  // streamed response closes, so an unawaited write can fail to flush — the reply
+  // reaches the customer but never gets persisted, and the dashboard then INFERS a
+  // failed turn (last stored message is the customer's) AND the next turn loses the
+  // bot's context. Awaiting it inside an async onFinish keeps the function alive until
+  // the row is written. Same lesson the turn-error writer already follows. Never throws.
+  const persistAssistant = async (assistant: UIMessage | undefined) => {
     if (!conversationId || !assistant || assistant.role !== "assistant") return;
     const row: PersistedMessage = {
       role: "assistant",
       content: extractText(assistant),
       parts: assistant.parts,
     };
-    appendMessages(conversationId, [row]).catch((e) =>
-      console.error("[chat] persist assistant failed", e),
-    );
+    try {
+      await appendMessages(conversationId, [row]);
+    } catch (e) {
+      console.error("[chat] persist assistant failed", e);
+    }
   };
 
   // Build the streamed response. Any throw here (knowledge build, model/gateway
@@ -415,7 +423,9 @@ export async function POST(request: Request) {
         void recordTurnError({ error: e, conversationId, ipHash, brand });
         return "Tuvimos un problema procesando tu mensaje. Intenta de nuevo.";
       },
-      onFinish: ({ responseMessage }) => persistAssistant(responseMessage),
+      onFinish: async ({ responseMessage }) => {
+        await persistAssistant(responseMessage);
+      },
     });
     response = createUIMessageStreamResponse({ stream });
   } else {
@@ -429,8 +439,9 @@ export async function POST(request: Request) {
     result.consumeStream();
     response = result.toUIMessageStreamResponse({
       originalMessages: messages,
-      onFinish: ({ messages: finalMessages }) =>
-        persistAssistant(finalMessages[finalMessages.length - 1]),
+      onFinish: async ({ messages: finalMessages }) => {
+        await persistAssistant(finalMessages[finalMessages.length - 1]);
+      },
       // Mid-stream model/gateway error (legacy path had no handler → the stream tore
       // the connection with no trace). Record it; emit a friendly in-stream message.
       onError: (e) => {

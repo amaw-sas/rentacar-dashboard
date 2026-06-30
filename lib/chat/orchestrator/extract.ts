@@ -1,5 +1,9 @@
 import { generateObject } from "ai";
-import { chatModel, chatProviderOptions } from "@/lib/chat/model-config";
+import {
+  chatAbortSignal,
+  chatModel,
+  chatProviderOptions,
+} from "@/lib/chat/model-config";
 import {
   applyExtraction,
   extractionSchema,
@@ -61,6 +65,7 @@ export async function extractSlots(input: ExtractInput): Promise<Extraction> {
     system: SYSTEM,
     prompt,
     providerOptions: chatProviderOptions(),
+    abortSignal: chatAbortSignal(),
   });
   return object;
 }

@@ -1,6 +1,7 @@
 import type { LocationDirectoryItem } from "@/lib/api/location-directory";
 import { norm, resolveLocationCode } from "@/lib/api/mcp/tools";
 import { parseHoras } from "./hours";
+import { parseFechas } from "./dates";
 import type { Slots } from "./slots";
 
 /**
@@ -45,6 +46,8 @@ export interface GroundingInput {
   /** The raw customer message this turn — the unsupported-vehicle detector reads it. */
   userMessage: string;
   directory: LocationDirectoryItem[];
+  /** Today's date in Colombia (YYYY-MM-DD) — for the deterministic date rescue. */
+  todayYMD: string;
 }
 
 export interface GroundingResult {
@@ -175,6 +178,17 @@ export function groundSlots(input: GroundingInput): GroundingResult {
     let i = 0;
     if (!slots.hora_recogida && i < horas.length) slots.hora_recogida = horas[i++];
     if (!slots.hora_devolucion && i < horas.length) slots.hora_devolucion = horas[i++];
+  }
+
+  // (e) Dates rescue. Same pattern as hours, for the last structured input still on the
+  // LLM. CONSERVATIVE (see parseFechas): only unambiguous forms (named month, ranges,
+  // hoy/mañana) are rescued; bare numbers and ambiguous numeric dates are left to the
+  // model. Fills ONLY blanks, in order (1st→recogida, 2nd→devolución); never overwrites.
+  if (!slots.fecha_recogida || !slots.fecha_devolucion) {
+    const fechas = parseFechas(userMessage, input.todayYMD);
+    let i = 0;
+    if (!slots.fecha_recogida && i < fechas.length) slots.fecha_recogida = fechas[i++];
+    if (!slots.fecha_devolucion && i < fechas.length) slots.fecha_devolucion = fechas[i++];
   }
 
   return { slots, notes };

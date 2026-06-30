@@ -327,7 +327,12 @@ export async function runTurn(
   if (process.env.CHAT_SLOT_GROUNDING === "on") {
     try {
       const directory = await getLocationDirectory();
-      const g = groundSlots({ slots: state.slots, userMessage, directory });
+      const g = groundSlots({
+        slots: state.slots,
+        userMessage,
+        directory,
+        todayYMD: bogotaTodayYMD(now),
+      });
       state = { ...state, slots: g.slots };
       groundingNotes = g.notes;
     } catch (e) {

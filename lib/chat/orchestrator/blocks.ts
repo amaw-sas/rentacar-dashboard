@@ -356,6 +356,34 @@ export function explicitGamaCode(
   return last;
 }
 
+/** Choice-framing words that introduce a gama code (so a bare code mid-sentence is ignored). */
+const GAMA_CHOICE_FRAME = "la|el|gama|quiero|dame|esa|ese|prefiero|quedo con(?:\\s+la)?";
+
+/**
+ * Deterministic gama resolution from a BARE code in the message — the gama counterpart of
+ * `parseHoras`. The LLM intermittently fails to set `gama_elegida` from a lone "cx" (a 2-char
+ * token with no verb), so the funnel re-asks the gama list forever. This maps the code to a
+ * SHOWN-quote row with `findGama`, case-insensitively, independent of the model.
+ *
+ * CONSERVATIVE against the historic false positives ("la cotización"→C, "le doy"→LE): a code
+ * counts ONLY as a CHOICE — the trimmed message IS exactly the code, or it's introduced by a
+ * determiner/choice word ({@link GAMA_CHOICE_FRAME}). A code buried mid-sentence without that
+ * frame is ignored. Returns null when nothing matches OR more than one distinct code matches
+ * (ambiguous → ask, never guess). NEVER reads a bare code that opens a sentence (e.g. "le doy…").
+ */
+export function resolveGamaCode(message: string, table: QuoteTable): string | null {
+  const m = message.trim().toLowerCase();
+  const hits = new Set<string>();
+  for (const f of table.filas) {
+    const code = f.categoria.toLowerCase();
+    if (!code) continue;
+    const esc = code.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const framed = new RegExp(`\\b(?:${GAMA_CHOICE_FRAME})\\s+${esc}\\b`, "i");
+    if (m === code || framed.test(m)) hits.add(f.categoria);
+  }
+  return hits.size === 1 ? [...hits][0]! : null;
+}
+
 /**
  * One-line explanation when a pickup/return HOUR change moves the quote into a different
  * day-count (R1 · Bug 3): keep the chosen gama and tell the customer the new total instead of

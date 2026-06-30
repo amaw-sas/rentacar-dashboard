@@ -130,3 +130,42 @@ describe("hasBookingHours — (d) gate", () => {
     expect(hasBookingHours(slots({}))).toBe(false);
   });
 });
+
+describe("groundSlots — (d) hours rescue", () => {
+  it("rescues both hours from the message when the LLM dropped them", () => {
+    const { slots: out } = ground({}, "9am y lo regreso 9am");
+    expect(out.hora_recogida).toBe("09:00");
+    expect(out.hora_devolucion).toBe("09:00");
+  });
+
+  it("fills only the missing return hour, keeping a good extraction", () => {
+    const { slots: out } = ground(
+      { hora_recogida: "08:00" },
+      "la devuelvo a las 6pm",
+    );
+    expect(out.hora_recogida).toBe("08:00"); // untouched
+    expect(out.hora_devolucion).toBe("18:00");
+  });
+
+  it("never overwrites hours the LLM already set", () => {
+    const { slots: out } = ground(
+      { hora_recogida: "07:00", hora_devolucion: "19:00" },
+      "9am y lo regreso 9am",
+    );
+    expect(out.hora_recogida).toBe("07:00");
+    expect(out.hora_devolucion).toBe("19:00");
+  });
+
+  it("with a single hour given, fills pickup only (gate still asks the return)", () => {
+    const { slots: out } = ground({}, "a las 10am");
+    expect(out.hora_recogida).toBe("10:00");
+    expect(out.hora_devolucion).toBeUndefined();
+    expect(hasBookingHours(out)).toBe(false);
+  });
+
+  it("does not invent hours from a date message", () => {
+    const { slots: out } = ground({}, "del 5 al 9 de julio");
+    expect(out.hora_recogida).toBeUndefined();
+    expect(out.hora_devolucion).toBeUndefined();
+  });
+});

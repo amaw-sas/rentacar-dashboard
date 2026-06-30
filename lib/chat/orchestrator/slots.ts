@@ -108,6 +108,9 @@ export interface ConversationFlags {
    * CONSECUTIVE times — so the data question also escalates instead of repeating verbatim. */
   last_customer_field_asked?: string;
   last_customer_field_ask_count?: number;
+  /** Consecutive times the booking-hours question was asked — escalates askHoursBlock so the
+   * same text doesn't loop when a customer's hour couldn't be parsed. Cleared once hours are set. */
+  last_hours_ask_count?: number;
 }
 
 /** A reservation completed THIS conversation (R3 multi-booking) — feeds the same-responsible /

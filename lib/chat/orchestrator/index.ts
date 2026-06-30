@@ -1049,10 +1049,21 @@ async function advanceBooking(
   const groundingOn = process.env.CHAT_SLOT_GROUNDING === "on";
   const proceedToCustomer = (next: ConversationState): ConversationState => {
     if (groundingOn && !hasBookingHours(next.slots)) {
-      writeText(askHoursBlock());
-      return { ...next, phase: "choosing_gama" };
+      // Escalate the re-ask so a customer whose hour we couldn't parse doesn't get the
+      // identical text on a loop (the repeated-question half of the "9am" bug).
+      const attempt = (next.flags.last_hours_ask_count ?? 0) + 1;
+      writeText(askHoursBlock(attempt));
+      return {
+        ...next,
+        phase: "choosing_gama",
+        flags: { ...next.flags, last_hours_ask_count: attempt },
+      };
     }
-    return progressCustomer(next, writeText);
+    // Hours are set → clear the counter so a later, unrelated re-ask starts fresh.
+    const cleared = next.flags.last_hours_ask_count
+      ? { ...next, flags: { ...next.flags, last_hours_ask_count: undefined } }
+      : next;
+    return progressCustomer(cleared, writeText);
   };
 
   switch (state.phase) {

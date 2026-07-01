@@ -22,7 +22,7 @@ Give operators a persistent notification center (bell + badge) in the dashboard 
 
 The producer is a **database trigger**, not application code. An `AFTER INSERT` on `notification_logs` that, when `NEW.status = 'failed'`, inserts one row into `operator_notifications`.
 
-Why a trigger over app-level insertion: it captures every failed notification regardless of which code path logged it, so no future call site can forget to emit an alert. It is the "capture once" the epic asks for. Idempotent via `unique(source, source_id)`.
+Why a trigger over app-level insertion: it captures every failed notification regardless of which code path logged it, so no future call site can forget to emit an alert. It is the "capture once" the epic asks for. Idempotent via a partial unique index on `(source, source_id) where source_id is not null` (see data model).
 
 ## Data model (migration 078)
 

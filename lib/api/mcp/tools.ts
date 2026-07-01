@@ -364,7 +364,7 @@ export async function buscarDisponibilidad(
   // we turn that into a clean ES error instead of letting encodeQuote throw.
   if (selected_days <= 0) {
     return errorResult(
-      "Revisa las fechas y horas: la devolución debe ser posterior a la recogida.",
+      "Para cotizar necesito la fecha y la hora de devolución, y debe ser posterior a la recogida. ¿Hasta qué día y a qué hora vas a devolver el carro?",
     );
   }
 

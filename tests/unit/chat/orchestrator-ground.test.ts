@@ -39,11 +39,12 @@ const DIRECTORY: LocationDirectoryItem[] = [
 
 const slots = (partial: Partial<Slots>): Slots => ({ cliente: {}, ...partial });
 
-function ground(partial: Partial<Slots>, userMessage = "") {
+function ground(partial: Partial<Slots>, userMessage = "", todayYMD = "2026-06-30") {
   return groundSlots({
     slots: slots(partial),
     userMessage,
     directory: DIRECTORY,
+    todayYMD,
   });
 }
 
@@ -167,5 +168,56 @@ describe("groundSlots — (d) hours rescue", () => {
     const { slots: out } = ground({}, "del 5 al 9 de julio");
     expect(out.hora_recogida).toBeUndefined();
     expect(out.hora_devolucion).toBeUndefined();
+  });
+});
+
+describe("groundSlots — (e) dates rescue", () => {
+  it("rescues a range into pickup + return", () => {
+    const { slots: out } = ground({}, "del 2 al 5 de julio");
+    expect(out.fecha_recogida).toBe("2026-07-02");
+    expect(out.fecha_devolucion).toBe("2026-07-05");
+  });
+
+  it("fills only the missing return date, keeping a good extraction", () => {
+    const { slots: out } = ground({ fecha_recogida: "2026-07-02" }, "la devuelvo el 5 de agosto");
+    expect(out.fecha_recogida).toBe("2026-07-02"); // untouched
+    expect(out.fecha_devolucion).toBe("2026-08-05");
+  });
+
+  it("never overwrites dates the LLM already set", () => {
+    const { slots: out } = ground(
+      { fecha_recogida: "2026-09-01", fecha_devolucion: "2026-09-04" },
+      "del 2 al 5 de julio",
+    );
+    expect(out.fecha_recogida).toBe("2026-09-01");
+    expect(out.fecha_devolucion).toBe("2026-09-04");
+  });
+
+  it("does not invent a date from a non-date / ambiguous message", () => {
+    expect(ground({}, "tengo 5 personas").slots.fecha_recogida).toBeUndefined();
+    expect(ground({}, "el 2").slots.fecha_recogida).toBeUndefined();
+  });
+});
+
+describe("groundSlots — (f) same-day over-fill from a single relative date", () => {
+  it("drops a return date the extractor set equal to pickup with no hours (the 'mañana' bug)", () => {
+    // Extractor over-fills BOTH dates from "mañana" → same-day → 0-day quote → leaked error.
+    const { slots: out } = ground(
+      { ciudad: "bogota", fecha_recogida: "2026-07-01", fecha_devolucion: "2026-07-01" },
+      "Mañana",
+    );
+    expect(out.fecha_recogida).toBe("2026-07-01"); // pickup kept
+    expect(out.fecha_devolucion).toBeUndefined(); // over-fill dropped → funnel asks for it
+  });
+
+  it("keeps a genuine same-day range once explicit hours are present", () => {
+    const { slots: out } = ground({
+      ciudad: "bogota",
+      fecha_recogida: "2026-07-01",
+      fecha_devolucion: "2026-07-01",
+      hora_recogida: "09:00",
+      hora_devolucion: "18:00",
+    });
+    expect(out.fecha_devolucion).toBe("2026-07-01"); // valid same-day rental survives
   });
 });

@@ -56,6 +56,12 @@ const { getLocationDirectory } = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/api/location-directory", () => ({ getLocationDirectory }));
 
+const { runTarifaMensual, runInfoSedes } = vi.hoisted(() => ({
+  runTarifaMensual: vi.fn(),
+  runInfoSedes: vi.fn(),
+}));
+vi.mock("@/lib/chat/knowledge-tools", () => ({ runTarifaMensual, runInfoSedes }));
+
 import { runTurn, looksLikeQuestion } from "@/lib/chat/orchestrator";
 import { initialState, type ConversationState } from "@/lib/chat/orchestrator/slots";
 
@@ -1773,6 +1779,23 @@ describe("orchestrator runTurn — gama integrity (CHAT_GAMA_INTEGRITY)", () => 
     expect(textOf(chunks)).not.toContain("seguimos con la **Gama F**");
   });
 
+  it("(S3) a BARE gama code the LLM didn't tag is resolved deterministically and advances", async () => {
+    // The recurring bug: the LLM leaves gama_elegida null for a lone code, so the funnel
+    // re-asks the list forever. groundGama (resolveGamaCode) resolves it against the quote.
+    extractSlots.mockResolvedValue({ intent: "tangencial", updates: {} });
+    const { chunks, writer } = fakeWriter();
+    await runTurn(writer, {
+      brand: "alquilatucarro",
+      conversationId: "c1",
+      state: quotedState({ phase: "choosing_gama" }),
+      userMessage: "quiero la f",
+      recentContext: [],
+      now: NOW,
+    });
+    expect(lastSaved().slots.gama_elegida).toBe("F"); // resolved without an LLM pick
+    expect(textOf(chunks)).not.toContain("¿Con cuál gama seguimos?"); // no list re-ask
+  });
+
   it("(S2-off) with the flag OFF the same question still mis-commits the camioneta (gate proof)", async () => {
     delete process.env.CHAT_GAMA_INTEGRITY;
     extractSlots.mockResolvedValue({ intent: "pregunta_gama", updates: {} });
@@ -2188,5 +2211,82 @@ describe("orchestrator runTurn — funnel robustness (CHAT_FUNNEL_ROBUSTNESS)", 
       now: NOW,
     });
     expect(lastSaved().slots.tipo_vehiculo).toBe("auto");
+  });
+});
+
+// Monthly suggestion (CHAT_MONTHLY_SUGGEST): for a long stay, surface the monthly rate
+// when it undercuts the day-by-day total. The DB tool runTarifaMensual is mocked.
+describe("orchestrator runTurn — monthly suggestion (CHAT_MONTHLY_SUGGEST)", () => {
+  beforeEach(() => {
+    process.env.CHAT_MONTHLY_SUGGEST = "on";
+  });
+  afterEach(() => {
+    delete process.env.CHAT_MONTHLY_SUGGEST;
+    runTarifaMensual.mockReset();
+  });
+
+  function freshState() {
+    return {
+      ...initialState(),
+      flags: { greeted: true, requisitos_shown: true, quote_shown: false },
+    } as ConversationState;
+  }
+  function mockQuote(dias: number, precioTotal: number) {
+    extractSlots.mockResolvedValue({
+      intent: "cotizar",
+      updates: { ciudad: "bogota", fecha_recogida: "2026-07-01", fecha_devolucion: "2026-07-31" },
+    });
+    getQuoteTable.mockResolvedValue({
+      ok: true,
+      table: {
+        sede: "AABOG01",
+        dias,
+        filas: [
+          { categoria: "C", descripcion: "Económico", precioTotal, horasExtra: 0, precioHoraExtra: 0, quote: "blob-c" },
+        ],
+      },
+    });
+  }
+  const run = async () => {
+    const { chunks, writer } = fakeWriter();
+    await runTurn(writer, {
+      brand: "alquilatucarro",
+      conversationId: "c1",
+      state: freshState(),
+      userMessage: "del 1 al 31 de julio",
+      recentContext: [],
+      now: NOW,
+    });
+    return chunks;
+  };
+
+  it("suggests monthly when it undercuts the day-by-day total (30 days)", async () => {
+    mockQuote(30, 5_000_000);
+    runTarifaMensual.mockResolvedValue({ mensual_1000km: 3_800_000 });
+    const text = textOf(await run());
+    expect(runTarifaMensual).toHaveBeenCalledOnce();
+    expect(text).toContain("tarifa MENSUAL");
+    expect(text).toContain("1.200.000"); // ahorro = 5.000.000 - 3.800.000
+  });
+
+  it("does NOT suggest (nor even query) for a short stay", async () => {
+    mockQuote(3, 300_000);
+    const chunks = await run();
+    expect(runTarifaMensual).not.toHaveBeenCalled();
+    expect(textOf(chunks)).not.toContain("tarifa MENSUAL");
+  });
+
+  it("does NOT suggest when the monthly is not cheaper than the days", async () => {
+    mockQuote(30, 5_000_000);
+    runTarifaMensual.mockResolvedValue({ mensual_1000km: 9_000_000 });
+    expect(textOf(await run())).not.toContain("tarifa MENSUAL");
+  });
+
+  it("best-effort: a tarifa error never breaks the quote", async () => {
+    mockQuote(30, 5_000_000);
+    runTarifaMensual.mockRejectedValue(new Error("db down"));
+    const chunks = await run();
+    expect(dataParts(chunks, "data-quoteTable")).toHaveLength(1); // quote still emitted
+    expect(textOf(chunks)).not.toContain("tarifa MENSUAL");
   });
 });

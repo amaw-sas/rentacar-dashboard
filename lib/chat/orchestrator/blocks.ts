@@ -211,6 +211,28 @@ export function quoteClosingLine(): string {
   return "Reservar hoy te asegura este precio y el cupo —la disponibilidad cambia a diario. ¿Con cuál gama te gustaría seguir?";
 }
 
+/**
+ * Suggestion under a LONG quote when the monthly rate (LIMITED km, national) undercuts the
+ * day-by-day total (UNLIMITED km). The caller only emits this once it confirmed the cross-over
+ * (monthly < daily total). Honest trade-off: cheaper BUT km-capped (compares the cheapest plan,
+ * 1.000 km, and says there are higher-km plans). COP is defined later in the file but read at
+ * call time, so the forward reference is fine.
+ */
+export function monthlySuggestionLine(
+  gamaCode: string,
+  dias: number,
+  totalDiario: number,
+  mensual1000: number,
+): string {
+  const ahorro = totalDiario - mensual1000;
+  return (
+    `💡 Para una estadía tan larga te conviene nuestra tarifa MENSUAL: la Gama ${gamaCode} ` +
+    `sale **$${COP.format(mensual1000)}/mes** con 1.000 km incluidos (hay planes de más km por ` +
+    `un poco más) — más económica que los **$${COP.format(totalDiario)}** de tus ${dias} días ` +
+    `sueltos con km ilimitado: te ahorras ~**$${COP.format(ahorro)}**. ¿Te muestro la opción mensual?`
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Grounding blocks (P0 · CHAT_SLOT_GROUNDING). Deterministic replies for the slot
 // corrections `groundSlots` makes — code-owned so the LLM can't garble them.
@@ -354,6 +376,34 @@ export function explicitGamaCode(
     if (code) last = code; // last explicit, valid mention wins within the message
   }
   return last;
+}
+
+/** Choice-framing words that introduce a gama code (so a bare code mid-sentence is ignored). */
+const GAMA_CHOICE_FRAME = "la|el|gama|quiero|dame|esa|ese|prefiero|quedo con(?:\\s+la)?";
+
+/**
+ * Deterministic gama resolution from a BARE code in the message — the gama counterpart of
+ * `parseHoras`. The LLM intermittently fails to set `gama_elegida` from a lone "cx" (a 2-char
+ * token with no verb), so the funnel re-asks the gama list forever. This maps the code to a
+ * SHOWN-quote row with `findGama`, case-insensitively, independent of the model.
+ *
+ * CONSERVATIVE against the historic false positives ("la cotización"→C, "le doy"→LE): a code
+ * counts ONLY as a CHOICE — the trimmed message IS exactly the code, or it's introduced by a
+ * determiner/choice word ({@link GAMA_CHOICE_FRAME}). A code buried mid-sentence without that
+ * frame is ignored. Returns null when nothing matches OR more than one distinct code matches
+ * (ambiguous → ask, never guess). NEVER reads a bare code that opens a sentence (e.g. "le doy…").
+ */
+export function resolveGamaCode(message: string, table: QuoteTable): string | null {
+  const m = message.trim().toLowerCase();
+  const hits = new Set<string>();
+  for (const f of table.filas) {
+    const code = f.categoria.toLowerCase();
+    if (!code) continue;
+    const esc = code.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const framed = new RegExp(`\\b(?:${GAMA_CHOICE_FRAME})\\s+${esc}\\b`, "i");
+    if (m === code || framed.test(m)) hits.add(f.categoria);
+  }
+  return hits.size === 1 ? [...hits][0]! : null;
 }
 
 /**

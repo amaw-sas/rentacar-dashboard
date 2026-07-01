@@ -411,6 +411,14 @@ describe("buscar_disponibilidad (SCEN-110..112)", () => {
 describe("crear_solicitud_reserva (SCEN-113..117)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Pin "now" so the past-pickup guard is deterministic and the 2026-07-01
+    // fixtures stay in the future regardless of the real clock (mirrors the
+    // buscar_disponibilidad block above).
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-25T12:00:00.000Z"));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   // Build a valid quote through the real codec for the happy path.
@@ -526,9 +534,16 @@ describe("crear_solicitud_reserva (SCEN-113..117)", () => {
 describe("ChatGPT readiness metadata (SCEN-W4..W8)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Pin "now" so the 2026-07-01 fixtures stay in the future regardless of the
+    // real clock (mirrors the buscar_disponibilidad block above).
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-25T12:00:00.000Z"));
     vi.mocked(getLocationDirectory).mockResolvedValue(
       dir([{ city: "Bogotá", code: "AABOG01" }]),
     );
+  });
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   // SCEN-W4 — annotations carry the safety hints ChatGPT reads to allow execution.

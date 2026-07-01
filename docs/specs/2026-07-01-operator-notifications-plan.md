@@ -85,6 +85,24 @@ Acceptance: `/agent-browser` + `/dogfood` run — zero console errors, zero fail
 - Monitoring: the widget is itself the monitor. No cron.
 - Rollback: `drop trigger trg_capture_failed_notification on public.notification_logs` + `drop function public.capture_failed_notification()` + `drop table public.operator_notifications` (isolated; no FK from other tables points in). The UI degrades to absent bell if the query fails (layout error boundary) — acceptable.
 
+## Deferred (post-review, not MVP blockers)
+
+Surfaced by the quality gate (code-reviewer + edge-case + performance), accepted as
+follow-ups rather than scope creep:
+
+- **Retention/prune**: `operator_notifications` grows one row per failed
+  notification, never pruned. Add a daily pg_cron prune of resolved rows older than
+  N days (mirror the search_logs retention effort). Compounds with table-scan cost.
+- **Orphaned alert after a reservation hard-delete**: no FK from
+  `operator_notifications` to `notification_logs`/`reservations` (by design, so #216
+  can write non-reservation alerts). "Ver reserva" 404s and resend errors; the
+  operator can still "Marcar resuelta". Accept for MVP (test-data deletes are the
+  main delete path).
+- **Logical-failure dedup**: dedup is on the log id, so a persistently broken
+  channel that re-logs a new failed row each retry spawns a fresh alert. Consider
+  suppressing a new alert when an unresolved one already exists for the same
+  reservation+type — deferred because it risks hiding a genuinely distinct failure.
+
 ## Risk
 - **Overall**: M. Isolated additive feature; the only shared touch is `app/(dashboard)/layout.tsx` (additive).
 - Main risk: trigger RLS/ownership under MCP apply — mitigated by SECURITY DEFINER (spec §data model, review-confirmed).

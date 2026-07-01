@@ -27,8 +27,13 @@ export function sortUnreadFirst(
   });
 }
 
-/** Exact count of unread alerts — the badge number (SCEN-006). */
-export async function getUnreadCount(): Promise<number> {
+/**
+ * Exact count of unread alerts — the badge number (SCEN-006). Returns `null` (not
+ * 0) when the read itself fails, so the bell can distinguish a healthy empty inbox
+ * from a broken one and surface a degraded state — the safety net must not hide its
+ * own outage (epic #214).
+ */
+export async function getUnreadCount(): Promise<number | null> {
   try {
     const supabase = await createClient();
     const { count, error } = await supabase
@@ -42,23 +47,45 @@ export async function getUnreadCount(): Promise<number> {
       "getUnreadCount failed:",
       e instanceof Error ? e.message : e,
     );
-    return 0;
+    return null;
   }
 }
 
-/** Most recent alerts for the popover, unread first. */
+/**
+ * Most recent alerts for the popover, unread first. Fetches ALL recent unread
+ * (bounded by `limit`) as a dedicated query, then fills the remaining slots with
+ * recent history — so an actionable unread alert is never pushed out of view by a
+ * burst of newer resolved rows (the sort-after-limit hazard). Fails open to [].
+ */
 export async function getRecentNotifications(
   limit = RECENT_LIMIT,
 ): Promise<OperatorNotification[]> {
   try {
     const supabase = await createClient();
-    const { data, error } = await supabase
+
+    const { data: unread, error: unreadError } = await supabase
       .from("operator_notifications")
       .select("*")
+      .eq("status", "unread")
       .order("created_at", { ascending: false })
       .limit(limit);
-    if (error) throw error;
-    return sortUnreadFirst((data ?? []) as OperatorNotification[]);
+    if (unreadError) throw unreadError;
+    const unreadRows = (unread ?? []) as OperatorNotification[];
+
+    let historyRows: OperatorNotification[] = [];
+    const remaining = limit - unreadRows.length;
+    if (remaining > 0) {
+      const { data: history, error: historyError } = await supabase
+        .from("operator_notifications")
+        .select("*")
+        .neq("status", "unread")
+        .order("created_at", { ascending: false })
+        .limit(remaining);
+      if (historyError) throw historyError;
+      historyRows = (history ?? []) as OperatorNotification[];
+    }
+
+    return sortUnreadFirst([...unreadRows, ...historyRows]);
   } catch (e) {
     console.warn(
       "getRecentNotifications failed:",

@@ -41,6 +41,10 @@ function mockClient(opts: {
         data: opts.selectRow ?? null,
         error: opts.selectRow ? null : { message: "not found" },
       }),
+    // maybeSingle returns {data:null, error:null} when nothing matched (the claim
+    // lost / row not unread) — that is the no-op path, not an error.
+    maybeSingle: () =>
+      Promise.resolve({ data: opts.selectRow ?? null, error: null }),
     then: (resolve: (v: unknown) => unknown) =>
       resolve({ error: opts.updateError ?? null }),
   };
@@ -91,8 +95,8 @@ describe("operator-notification actions", () => {
     expect(revalidatePath).toHaveBeenCalledWith("/", "layout");
   });
 
-  it("resendOperatorNotification: on resend success, resolves the alert", async () => {
-    mockClient({
+  it("resendOperatorNotification: claims (unread->resolved) then sends; resolves on success", async () => {
+    const cap = mockClient({
       selectRow: { action: "resend", action_ref: "log-1" },
       updateError: null,
     });
@@ -101,15 +105,26 @@ describe("operator-notification actions", () => {
       "@/lib/actions/operator-notifications"
     );
     const res = await resendOperatorNotification(UUID);
+    // Claim flips to resolved BEFORE the send, guarded by status='unread'.
+    expect(cap.update).toMatchObject({ status: "resolved" });
+    expect(cap.eqs).toContainEqual(["status", "unread"]);
     expect(resendNotification).toHaveBeenCalledWith("log-1");
     expect(res).toEqual({});
     expect(revalidatePath).toHaveBeenCalledWith("/", "layout");
   });
 
-  it("resendOperatorNotification: on resend failure, surfaces the error and does NOT resolve", async () => {
-    mockClient({
-      selectRow: { action: "resend", action_ref: "log-1" },
-    });
+  it("resendOperatorNotification: no-op when the claim is lost (already handled), no send", async () => {
+    mockClient({ selectRow: null }); // maybeSingle → no row claimed
+    const { resendOperatorNotification } = await import(
+      "@/lib/actions/operator-notifications"
+    );
+    const res = await resendOperatorNotification(UUID);
+    expect(res).toEqual({});
+    expect(resendNotification).not.toHaveBeenCalled();
+  });
+
+  it("resendOperatorNotification: on resend failure, surfaces the error and reverts the claim", async () => {
+    mockClient({ selectRow: { action: "resend", action_ref: "log-1" } });
     vi.mocked(resendNotification).mockResolvedValue({
       error: "No se pudo reenviar",
     });
@@ -118,11 +133,11 @@ describe("operator-notification actions", () => {
     );
     const res = await resendOperatorNotification(UUID);
     expect(res).toEqual({ error: "No se pudo reenviar" });
-    // No resolve → no layout revalidate on the failure path.
+    // Failure path reverts the claim; it does not refresh the bell.
     expect(revalidatePath).not.toHaveBeenCalled();
   });
 
-  it("resendOperatorNotification: rejects an alert that does not support resend", async () => {
+  it("resendOperatorNotification: rejects a claimed alert that does not support resend", async () => {
     mockClient({ selectRow: { action: null, action_ref: null } });
     const { resendOperatorNotification } = await import(
       "@/lib/actions/operator-notifications"

@@ -25,16 +25,17 @@ import {
 // resolve actions. Data comes from the server layout; actions revalidate the layout
 // so the badge refreshes.
 
-/** "hace 3 h" / "hace 2 d" — light relative time, computed client-side. */
+/** "hace 3 h" / "hace 2 d" — light relative time, computed client-side. Floors
+ *  each bucket so 90 min reads "hace 1 h", not "hace 2 h". */
 function relativeTime(iso: string): string {
   const then = new Date(iso).getTime();
   const diffMs = Date.now() - then;
-  const min = Math.round(diffMs / 60000);
+  const min = Math.floor(diffMs / 60000);
   if (min < 1) return "ahora";
   if (min < 60) return `hace ${min} min`;
-  const hours = Math.round(min / 60);
+  const hours = Math.floor(min / 60);
   if (hours < 24) return `hace ${hours} h`;
-  const days = Math.round(hours / 24);
+  const days = Math.floor(hours / 24);
   return `hace ${days} d`;
 }
 
@@ -43,8 +44,11 @@ export function NotificationBell({
   unreadCount,
 }: {
   items: OperatorNotification[];
-  unreadCount: number;
+  /** `null` = the unread read failed; show a degraded state, not "all clear". */
+  unreadCount: number | null;
 }) {
+  const unavailable = unreadCount === null;
+  const count = unreadCount ?? 0;
   const [open, setOpen] = useState(false);
   const [pending, startTransition] = useTransition();
 
@@ -71,20 +75,30 @@ export function NotificationBell({
           size="icon"
           className="relative"
           aria-label={
-            unreadCount > 0
-              ? `Notificaciones: ${unreadCount} sin leer`
-              : "Notificaciones"
+            unavailable
+              ? "Notificaciones: no se pudieron cargar"
+              : count > 0
+                ? `Notificaciones: ${count} sin leer`
+                : "Notificaciones"
           }
         >
           <Bell className="size-5" aria-hidden />
-          {unreadCount > 0 && (
-            <Badge
-              variant="destructive"
-              className="absolute -right-1 -top-1 h-5 min-w-5 justify-center rounded-full px-1 text-xs tabular-nums"
-              data-testid="notification-badge"
-            >
-              {unreadCount > 99 ? "99+" : unreadCount}
-            </Badge>
+          {unavailable ? (
+            <span
+              className="absolute -right-0.5 -top-0.5 size-2.5 rounded-full bg-amber-500 ring-2 ring-background"
+              data-testid="notification-unavailable"
+              aria-hidden
+            />
+          ) : (
+            count > 0 && (
+              <Badge
+                variant="destructive"
+                className="absolute -right-1 -top-1 h-5 min-w-5 justify-center rounded-full px-1 text-xs tabular-nums"
+                data-testid="notification-badge"
+              >
+                {count > 99 ? "99+" : count}
+              </Badge>
+            )
           )}
         </Button>
       </PopoverTrigger>
@@ -92,7 +106,7 @@ export function NotificationBell({
       <PopoverContent align="end" className="w-96 p-0">
         <div className="flex items-center justify-between border-b px-4 py-3">
           <span className="text-sm font-medium">Notificaciones</span>
-          {unreadCount > 0 && (
+          {count > 0 && (
             <Button
               type="button"
               variant="ghost"
@@ -111,7 +125,9 @@ export function NotificationBell({
 
         {items.length === 0 ? (
           <p className="px-4 py-8 text-center text-sm text-muted-foreground">
-            Sin alertas
+            {unavailable
+              ? "No se pudieron cargar las notificaciones"
+              : "Sin alertas"}
           </p>
         ) : (
           <ul className="max-h-96 divide-y overflow-y-auto">

@@ -34,6 +34,12 @@ create unique index uq_operator_notifications_source
 create index idx_operator_notifications_status
   on public.operator_notifications (status, created_at desc);
 
+-- Serves the popover's history fill: recent non-unread rows ordered by created_at
+-- with no status prefix (the composite index above cannot serve an unfiltered
+-- ORDER BY created_at as a bounded scan).
+create index idx_operator_notifications_created_at
+  on public.operator_notifications (created_at desc);
+
 alter table public.operator_notifications enable row level security;
 
 -- Reads/updates for authenticated operators (mirrors notification_logs). No insert

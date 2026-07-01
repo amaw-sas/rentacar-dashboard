@@ -54,4 +54,15 @@ describe("NotificationBell (SCEN-006 badge)", () => {
     // The bell itself is still present in the header.
     expect(getByLabelText("Notificaciones")).toBeTruthy();
   });
+
+  it("shows a degraded indicator (not 'all clear') when the count read failed", () => {
+    const { queryByTestId, getByTestId, getByLabelText } = render(
+      <NotificationBell items={[]} unreadCount={null} />,
+    );
+    // No count badge; an amber unavailable marker instead — the safety net must
+    // not look healthy when its own read failed (epic #214).
+    expect(queryByTestId("notification-badge")).toBeNull();
+    expect(getByTestId("notification-unavailable")).toBeTruthy();
+    expect(getByLabelText("Notificaciones: no se pudieron cargar")).toBeTruthy();
+  });
 });

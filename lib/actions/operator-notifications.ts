@@ -53,10 +53,10 @@ export async function resolveNotification(
   if (!parsed.success) return { error: parsed.error.issues[0].message };
 
   const supabase = await createClient();
-  const now = new Date().toISOString();
+  // Only set resolved_at; never clobber an earlier read_at with resolve-time.
   const { error } = await supabase
     .from("operator_notifications")
-    .update({ status: "resolved", resolved_at: now, read_at: now })
+    .update({ status: "resolved", resolved_at: new Date().toISOString() })
     .eq("id", parsed.data);
   if (error) return { error: "No se pudo marcar como resuelta" };
 
@@ -64,11 +64,26 @@ export async function resolveNotification(
   return {};
 }
 
+/** Undo an optimistic claim when the downstream resend never went through. */
+async function revertClaim(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  id: string,
+): Promise<void> {
+  await supabase
+    .from("operator_notifications")
+    .update({ status: "unread", resolved_at: null })
+    .eq("id", id);
+}
+
 /**
  * Resend the client notification behind a 'resend' alert, reusing the existing
- * resendNotification (live email re-render / WhatsApp resend). On success the
- * alert is resolved; on failure its Spanish error is surfaced and the alert stays
- * unread so the operator can retry.
+ * resendNotification (live email re-render / WhatsApp resend).
+ *
+ * Claim-first: atomically flip unread→resolved BEFORE sending, so only the caller
+ * that wins the claim actually sends. Concurrent clicks, two open tabs, or a retry
+ * after the alert was already handled see zero claimed rows and no-op — the live
+ * customer notification never fires twice from this widget. If the send fails the
+ * claim is reverted so the operator can retry.
  */
 export async function resendOperatorNotification(
   id: string,
@@ -77,20 +92,33 @@ export async function resendOperatorNotification(
   if (!parsed.success) return { error: parsed.error.issues[0].message };
 
   const supabase = await createClient();
-  const { data, error } = await supabase
+  const { data: claimed, error: claimError } = await supabase
     .from("operator_notifications")
-    .select("action, action_ref")
+    .update({ status: "resolved", resolved_at: new Date().toISOString() })
     .eq("id", parsed.data)
-    .single();
-  if (error || !data) return { error: "Notificación no encontrada" };
+    .eq("status", "unread")
+    .select("action, action_ref")
+    .maybeSingle();
 
-  const notif = data as { action: string | null; action_ref: string | null };
+  if (claimError) return { error: "No se pudo reenviar" };
+  if (!claimed) {
+    // Already handled (or not unread) → nothing to resend, no duplicate send.
+    refreshBell();
+    return {};
+  }
+
+  const notif = claimed as { action: string | null; action_ref: string | null };
   if (notif.action !== "resend" || !notif.action_ref) {
+    await revertClaim(supabase, parsed.data);
     return { error: "Esta notificación no admite reenvío" };
   }
 
   const res = await resendNotification(notif.action_ref);
-  if (res.error) return { error: res.error };
+  if (res.error) {
+    await revertClaim(supabase, parsed.data);
+    return { error: res.error };
+  }
 
-  return resolveNotification(parsed.data);
+  refreshBell();
+  return {};
 }

@@ -191,6 +191,22 @@ export function groundSlots(input: GroundingInput): GroundingResult {
     if (!slots.fecha_devolucion && i < fechas.length) slots.fecha_devolucion = fechas[i++];
   }
 
+  // (f) Reject a degenerate same-day over-fill. Given a SINGLE relative date ("mañana"),
+  // the LLM extractor often fills fecha_devolucion = fecha_recogida even though the customer
+  // only gave the PICKUP. That passes canQuote (both dates present), so the funnel quotes a
+  // 0-day range and buscarDisponibilidad leaks "la devolución debe ser posterior a la
+  // recogida" verbatim (the prod "mañana" bug). Drop the over-filled devolución — but ONLY
+  // when no hours are set yet, so a real same-day rental with explicit hours survives. With
+  // devolución cleared, canQuote is false → the funnel asks for the return date deterministically.
+  if (
+    slots.fecha_recogida &&
+    slots.fecha_devolucion === slots.fecha_recogida &&
+    !slots.hora_recogida &&
+    !slots.hora_devolucion
+  ) {
+    slots.fecha_devolucion = undefined;
+  }
+
   return { slots, notes };
 }
 

@@ -336,6 +336,10 @@ describe("buscar_disponibilidad (SCEN-110..112)", () => {
     });
     expect(sameDay.isError).toBe(true);
     expect(textOf(sameDay)).toMatch(/posterior a la recogida/i);
+    // Customer-facing: the message must ASK for the missing return date/time, not
+    // leak a bare technical error (the "mañana" prod leak — same-day degenerate range).
+    expect(textOf(sameDay)).toMatch(/\?/);
+    expect(textOf(sameDay)).toMatch(/devolver el carro|hasta qué día/i);
 
     // inverted range
     const inverted = await buscarDisponibilidad({

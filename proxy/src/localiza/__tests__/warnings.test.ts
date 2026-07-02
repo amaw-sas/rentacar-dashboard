@@ -76,6 +76,8 @@ describe("buildLocalizaWarning", () => {
     ["LLNRAG016", "holiday_return_date_error"],
     ["LLNRAG017", "out_of_schedule_return_date_error"],
     ["LLNRRE045", "reservation_cancelled_error"],
+    // Issue #205: one-way inter-branch distance not registered in Localiza.
+    ["LLNRRE003", "one_way_distance_not_registered"],
   ])("maps %s → %s with status 422 and preserves shortText", (shortText, code) => {
     const err = buildLocalizaWarning(shortText);
     expect(err).toBeInstanceOf(LocalizaWarningError);
@@ -84,6 +86,23 @@ describe("buildLocalizaWarning", () => {
     expect(err.httpStatus).toBe(422);
     expect(err.shortText).toBe(shortText);
     expect(err.message).toBe(LOCALIZA_WARNING_MAP[shortText].message);
+  });
+
+  // Issue #205 SCEN-002: the funnel (rentacar-web #271) keys off shortText, so
+  // mapping LLNRRE003 must keep shortText verbatim while giving a semantic code.
+  it("maps LLNRRE003 to a semantic one-way code, 422, and preserves shortText verbatim", () => {
+    const err = buildLocalizaWarning("LLNRRE003");
+    expect(err.code).toBe("one_way_distance_not_registered");
+    expect(err.httpStatus).toBe(422);
+    expect(err.shortText).toBe("LLNRRE003");
+    expect(err.toJSON()).toEqual({
+      error: "one_way_distance_not_registered",
+      message:
+        "La entrega en una sede diferente a la de recogida no está disponible para estas sucursales",
+      shortText: "LLNRRE003",
+    });
+    // Mapped business validation → no unmapped WARN line.
+    expect(warnSpy).not.toHaveBeenCalled();
   });
 
   it("falls back to unknown_error when ShortText is not in the map", () => {

@@ -38,6 +38,16 @@ export const LOCALIZA_WARNING_MAP: Record<string, WarningEntry> = {
     message:
       "Lo sentimos, No se encontraron vehículos disponibles, inténta cambiando el día o la sede de recogida",
   },
+  // Issue #205: Localiza has no registered inter-branch distance for a one-way
+  // pair ("Distância entre cidades não cadastrada"), so it can't compute the
+  // return fee and rejects the quote. This is a business validation, not an
+  // outage — 422 with a stable semantic code. Still thrown (blocks the one-way),
+  // so we never return a price missing the return fee (which would undercharge).
+  LLNRRE003: {
+    code: "one_way_distance_not_registered",
+    message:
+      "La entrega en una sede diferente a la de recogida no está disponible para estas sucursales",
+  },
   LLNRRE010: {
     code: "same_hour_error",
     message: "El día y hora de recogida son iguales a los de devolución",
